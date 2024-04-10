@@ -1,0 +1,11 @@
+@import "./theme-forgejo-dark.css";
+
+:root {
+  --color-diff-removed-word-bg: #693f17;
+  --color-diff-removed-row-border: #693f17;
+  --color-diff-removed-row-bg: #221b17;
+  --color-diff-added-word-bg: #214d88;
+  --color-diff-added-row-border: #214d88;
+  --color-diff-added-row-bg: #13233a;
+  --color-code-bg: #0d1117;
+}

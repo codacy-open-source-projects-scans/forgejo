@@ -1,8 +1,25 @@
 # Release Notes
 
-A Forgejo release is published shortly after a Gitea release is published and they have [matching release numbers](https://codeberg.org/forgejo/forgejo/src/branch/forgejo/CONTRIBUTING/RELEASE.md#release-numbering). Additional Forgejo releases may be published to address urgent security issues or bug fixes.
+A minor or major Forgejo release is published every [three months](https://forgejo.org/docs/latest/user/versions/), with more patch releases in between depending on the severity of the bug and security fixes it contains.
 
-The Forgejo admin should carefully read the required manual actions before upgrading. A point release (e.g. v1.21.1-0 or v1.21.2-0) does not require manual actions but others might (e.g. v1.20, v1.21).
+A [patch or minor release](https://semver.org/spec/v2.0.0.html) (e.g. upgrading from v7.0.0 to v7.0.1 or v7.1.0) does not require manual intervention. But [major releases](https://semver.org/spec/v2.0.0.html#spec-item-8) where the first version number changes (e.g. upgrading from v1.21 to v7.0) contain breaking changes and the release notes explain how to deal with them.
+
+## Upcoming releases (not available yet)
+
+- [8.0.0](/release-notes/8.0.0/)
+
+## 7.0.1
+
+This is a bug fix release. See the documentation for more information on the [upgrade procedure](https://forgejo.org/docs/v7.0/admin/upgrade/).
+
+In addition to the following notable bug fixes, you can browse the [full list of commits](https://codeberg.org/forgejo/forgejo/compare/v7.0.0...v7.0.1) included in this release.
+
+* **Bug fixes:**
+  * [PR](https://codeberg.org/forgejo/forgejo/pulls/3466): LFS data corruption when running the [`forgejo doctor check --fix`](https://forgejo.org/docs/v7.0/admin/command-line/#doctor-check) CLI command or setting [`[cron.gc_lfs].ENABLED=true`](https://forgejo.org/docs/v7.0/admin/config-cheat-sheet/#cron---garbage-collect-lfs-pointers-in-repositories-crongc_lfs) (the default is `false`).
+  * [PR](https://codeberg.org/forgejo/forgejo/pulls/3412): [non backward compatible change](https://codeberg.org/forgejo/forgejo/issues/3399) in the [`forgejo admin user create`](https://forgejo.org/docs/v7.0/admin/command-line/#admin-user-create) CLI command.
+  * [PR](https://codeberg.org/forgejo/forgejo/pulls/3448): error 500 because of an incorrect evaluation of the template when visiting the LFS settings of a repository.
+  * [PR](https://codeberg.org/forgejo/forgejo/pulls/3464): `GET /repos/{owner}/{name}` API endpoint [always returns an empty string for the `object_format_name` field](https://codeberg.org/forgejo/forgejo/issues/3458).
+  * [PR](https://codeberg.org/forgejo/forgejo/pulls/3444): fuzzy search [may fail with bleve](https://codeberg.org/forgejo/forgejo/issues/3443).
 
 ## 7.0.0
 
@@ -12,6 +29,10 @@ The [complete list of commits](https://codeberg.org/forgejo/forgejo/commits/bran
 $ git clone https://codeberg.org/forgejo/forgejo/
 $ git -C forgejo log --oneline --no-merges origin/v1.21/forgejo..origin/v7.0/forgejo
 ```
+
+* **Regressions and workarounds:**
+  * Running the [`forgejo doctor check --fix`](https://forgejo.org/docs/v7.0/admin/command-line/#doctor-check) CLI command or setting [`[cron.gc_lfs].ENABLED=true`](https://forgejo.org/docs/v7.0/admin/config-cheat-sheet/#cron---garbage-collect-lfs-pointers-in-repositories-crongc_lfs) (the default is `false`) will corrupt the LFS storage. The workaround is to not run the doctor CLI command and disable the `cron.gc_lfs`. This regression will be [fixed in 7.0.1](https://codeberg.org/forgejo/forgejo/issues/3438).
+  * The [`forgejo admin user create`](https://forgejo.org/docs/v7.0/admin/command-line/#admin-user-create) CLI command [requires a password](https://codeberg.org/forgejo/forgejo/commit/b122c6ef8b9254120432aed373cbe075331132ac) change by default when creating the first user and the `--admin` flag is not specified. The `--must-change-password=false` argument must be given to not require a password change. This regression will be [fixed in 7.0.1](https://codeberg.org/forgejo/forgejo/issues/3399).
 * **Breaking changes requiring manual intervention:**
   * [MySQL 8.0 or PostgreSQL 12](https://codeberg.org/forgejo/forgejo/commit/e94f9fcafdcf284561e7fb33f60156a69c4ad6a5) are the minimum supported versions. The database must be migrated before upgrading. The requirements regarding SQLite did not change.
   * The `per_page` parameter is [no longer a synonym for `limit`](https://codeberg.org/forgejo/forgejo/commit/0aab2d38a7d91bc8caff332e452364468ce52d9a) in the [/repos/{owner}/{repo}/releases](https://code.forgejo.org/api/swagger/#/repository/repoListReleases) API endpoint.
@@ -30,12 +51,16 @@ $ git -C forgejo log --oneline --no-merges origin/v1.21/forgejo..origin/v7.0/for
   Note that the modifications related to CSS, templates or assets (images, fonts, etc.) are not documented here.
   Although they can be extracted and modified, Forgejo does not provide any guarantee that such changes
   will be portable from one version to another (even a patch version). See also
-  [the developer documentation about interface customization](https://forgejo.org/docs/v1.21/developer/customization/).
+  [the developer documentation about interface customization](https://forgejo.org/docs/v7.0/developer/customization/).
   * [Update checker setting might change](https://codeberg.org/forgejo/forgejo/pulls/2925). The documentation was listing it as enabled by default, however, for a while it was disabled unless it was explicitly specified in the config or on the installation page. Instances migrated from Gitea also had it disabled due to different default value. Since then Forgejo got a privacy-friendly DNS-based update checking mechanism which is now being enabled by default unless explicitly specified [in the config](https://forgejo.org/docs/v7.0/admin/config-cheat-sheet/#cron---check-for-new-forgejo-versions-cronupdate_checker).
   * Language statistics for repositories that use `linguist` attributes in `.gitattributes` *may* show different statistics than previously, because Forgejo recognizes more [linguist attributes](https://forgejo.org/docs/v7.0/user/language-detection/) now.
   * It is [no longer possible to replace the default web editor](https://codeberg.org/forgejo/forgejo/pulls/2916) used to write comments or issues and pull requests with the EasyMDE editor. It is however still available as an alternative to edit releases and wiki pages.
   * [The list of all repositories and the `New Issue` button are no longer available in the user dashboard](https://codeberg.org/forgejo/forgejo/commit/beb71f5ef6e8074dc744ac995c15f7b5947a3f2e) for issues and pull requests.
 * **Migration warning**
+  * If the logs show a line like the following, [run doctor convert](https://forgejo.org/docs/v7.0/admin/command-line/#doctor-convert) to fix it.
+    ```
+    [W] Current database is using a case-insensitive collation "utf8mb4_general_ci"
+    ```
   * Large instances may experience slow migrations when the database is upgraded to support SHA-256 git repositories. For instance, here are the logs from a test migration of the https://codeberg.org production database:
     ```
     [I] Migration[286]: Add support for SHA256 git repositories
@@ -44,6 +69,8 @@ $ git -C forgejo log --oneline --no-merges origin/v1.21/forgejo..origin/v7.0/for
     [W] [Slow SQL Query] ALTER TABLE `release` MODIFY COLUMN `sha1` VARCHAR(64) [] - 22.06241145s
     ```
 * **Features and enhancements**
+  * Repository settings have been refactored, lifting out the repository unit-related settings to their own page. ([#2221](https://codeberg.org/forgejo/forgejo/pulls/2221))
+    - When additional units can be enabled, an "Add more..." link will be displayed for repository admins. This can be turned off. ([#2533](https://codeberg.org/forgejo/forgejo/pulls/2533))
   * Repository administrators can [allow anyone to edit the wiki](https://forgejo.org/docs/v7.0/user/wiki/#activation-and-permissions) in the repository Settings. ([#2001](https://codeberg.org/forgejo/forgejo/pulls/2001))
   * Instance administrators can enable [repository badges](https://forgejo.org/docs/v7.0/user/readme-badges/) in the [configuration file](https://forgejo.org/docs/v7.0/admin/config-cheat-sheet/#badges-badges). This feature depends on a shield generator service such as shields.io, and is disabled by default. ([#2070](https://codeberg.org/forgejo/forgejo/pulls/2070))
   * Instance administrators can configure the additional clone methods displayed on the repository home view. ([gitea#29320](https://github.com/go-gitea/gitea/pull/29320))
@@ -58,8 +85,6 @@ $ git -C forgejo log --oneline --no-merges origin/v1.21/forgejo..origin/v7.0/for
   * Users who signed up, but have not activated their accounts yet, are now able to [change their email before activation](https://codeberg.org/forgejo/forgejo/pulls/1891). ([#1891](https://codeberg.org/forgejo/forgejo/pulls/1891))
   * The "You pushed on branch ...." banner is now displayed for repositories you have a fork of with recently pushed branches too ([#2195](https://codeberg.org/forgejo/forgejo/pulls/2195)), and it will no longer consider branches that share no history with the default branch. ([#2196](https://codeberg.org/forgejo/forgejo/pulls/2196))
   * Forgejo will now highlight signed tags in a similar way it highlights signed commits. ([#2534](https://codeberg.org/forgejo/forgejo/pulls/2534))
-  * Repository settings have been refactored, lifting out the repository unit-related settings to their own page. ([#2221](https://codeberg.org/forgejo/forgejo/pulls/2221))
-    - When additional units can be enabled, an "Add more..." link will be displayed for repository admins. This can be turned off. ([#2533](https://codeberg.org/forgejo/forgejo/pulls/2533))
   * Forgejo gained support for the more recent GitHub-style alert blocks. ([#2348](https://codeberg.org/forgejo/forgejo/pulls/2348))
     - The older style remains supported too.
   * [[ACTIONS] Add vars context to cron jobs](https://codeberg.org/forgejo/forgejo/pulls/3059)

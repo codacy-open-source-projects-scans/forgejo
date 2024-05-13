@@ -60,7 +60,9 @@
     {
       "description": "Group nodejs packages",
       "matchDepNames": ["node", "docker.io/node", "docker.io/library/node"],
-      "groupName": "nodejs packages"
+      "groupName": "nodejs packages",
+      "versionCompatibility": "^(?<version>[^-]+)(?<compatibility>-.*)?$",
+      "versioning": "node"
     },
     {
       "description": "Automerge renovate updates",
@@ -71,18 +73,12 @@
     },
     {
       "description": "Split minor and patch updates",
-      "matchDepNames": [
-        "github.com/urfave/cli/v2",
-        "swagger-ui-dist"
-      ],
+      "matchDepNames": ["vue", "github.com/urfave/cli/v2", "swagger-ui-dist"],
       "separateMinorPatch": true
     },
     {
       "description": "Automerge patch updates",
-      "matchDepNames": [
-        "github.com/urfave/cli/v2",
-        "swagger-ui-dist"
-      ],
+      "matchDepNames": ["vue", "github.com/urfave/cli/v2", "swagger-ui-dist"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
     },
@@ -99,9 +95,23 @@
       "enabled": false
     },
     {
-      "description": "Automerge some packages when ci succeeds",
-      "extends": ["packages:linters"],
-      "matchDepNames": ["vitest"],
+      "description": "Automerge some packages when CI succeeds",
+      "extends": ["packages:linters", "packages:test"],
+      "matchDepNames": [
+          "github.com/golangci/golangci-lint/cmd/golangci-lint",
+          "github.com/PuerkitoBio/goquery",
+          "happy-dom",
+          "markdownlint-cli",
+          "updates",
+          "vite-string-plugin",
+          "@vue/test-utils"
+      ],
+      "matchPackagePrefixes": [
+          "@eslint-community/",
+          "@playwright/",
+          "@stoplight/spectral-cli",
+          "@stylistic/"
+      ],
       "automerge": true
     },
     {

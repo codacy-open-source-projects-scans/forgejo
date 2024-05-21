@@ -19,6 +19,7 @@
   "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths", "npmDedupe"],
   "prConcurrentLimit": 5,
   "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
   "packageRules": [
     {
       "description": "Require approval for go and python minor version",
@@ -110,7 +111,10 @@
           "@eslint-community/",
           "@playwright/",
           "@stoplight/spectral-cli",
-          "@stylistic/"
+          "@stylistic/",
+          "ghcr.io/devcontainers/features/",
+          "ghcr.io/devcontainers-contrib/features/",
+          "mcr.microsoft.com/devcontainers/"
       ],
       "automerge": true
     },

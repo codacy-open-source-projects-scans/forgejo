@@ -3,11 +3,12 @@ module code.gitea.io/gitea
 go 1.22.3
 
 require (
+	code.forgejo.org/forgejo/reply v1.0.1
 	code.gitea.io/actions-proto-go v0.4.0
 	code.gitea.io/gitea-vet v0.2.3
 	code.gitea.io/sdk/gitea v0.17.1
 	codeberg.org/gusted/mcaptcha v0.0.0-20220723083913-4f3072e1d570
-	connectrpc.com/connect v1.16.1
+	connectrpc.com/connect v1.16.2
 	gitea.com/go-chi/binding v0.0.0-20240430071103-39a851e106ed
 	gitea.com/go-chi/cache v0.2.0
 	gitea.com/go-chi/captcha v0.0.0-20240315150714-fb487f629098
@@ -23,7 +24,6 @@ require (
 	github.com/buildkite/terminal-to-html/v3 v3.10.1
 	github.com/caddyserver/certmagic v0.21.0
 	github.com/chi-middleware/proxy v1.1.1
-	github.com/dimiro1/reply v0.0.0-20200315094148-d0136a4c9e21
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
 	github.com/dsnet/compress v0.0.2-0.20210315054119-f66993602bf5
@@ -39,7 +39,7 @@ require (
 	github.com/go-chi/chi/v5 v5.0.11
 	github.com/go-chi/cors v1.2.1
 	github.com/go-co-op/gocron v1.37.0
-	github.com/go-enry/go-enry/v2 v2.8.7
+	github.com/go-enry/go-enry/v2 v2.8.8
 	github.com/go-fed/httpsig v1.1.1-0.20201223112313-55836744818e
 	github.com/go-git/go-billy/v5 v5.5.0
 	github.com/go-git/go-git/v5 v5.11.0

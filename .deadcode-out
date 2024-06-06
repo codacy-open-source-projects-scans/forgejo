@@ -77,7 +77,7 @@ package "code.gitea.io/gitea/models/perm/access"
 	func GetRepoWriters
 
 package "code.gitea.io/gitea/models/project"
-	func UpdateBoardSorting
+	func UpdateColumnSorting
 	func ChangeProjectStatus
 
 package "code.gitea.io/gitea/models/repo"
@@ -136,10 +136,6 @@ package "code.gitea.io/gitea/models/user"
 	func DeleteUserSetting
 	func GetUserEmailsByNames
 	func GetUserNamesByIDs
-	func DeleteFederatedUser
-
-package "code.gitea.io/gitea/modules/activitypub"
-	func (*Client).Post
 
 package "code.gitea.io/gitea/modules/assetfs"
 	func Bindata
@@ -169,7 +165,6 @@ package "code.gitea.io/gitea/modules/eventsource"
 	func (*Event).String
 
 package "code.gitea.io/gitea/modules/forgefed"
-	func NewForgeLike
 	func GetItemByType
 	func JSONUnmarshalerFn
 	func NotEmpty

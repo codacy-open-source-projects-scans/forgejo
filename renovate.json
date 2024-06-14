@@ -20,6 +20,7 @@
   "prConcurrentLimit": 5,
   "internalChecksFilter": "strict",
   "osvVulnerabilityAlerts": true,
+  "labels": ["dependency-upgrade"],
   "packageRules": [
     {
       "description": "Require approval for go and python minor version",
@@ -46,7 +47,10 @@
     },
     {
       "description": "Schedule some deps less frequently",
-      "matchDepNames": ["github.com/google/pprof"],
+      "matchDepNames": [
+        "github.com/google/pprof",
+        "github.com/golangci/misspell/cmd/misspell"
+      ],
       "extends": ["schedule:quarterly"]
     },
     {
@@ -97,11 +101,17 @@
       "description": "Update renovate with higher prio to come through rate limit",
       "matchDatasources": ["docker"],
       "matchDepNames": ["ghcr.io/visualon/renovate"],
+      "extends": ["schedule:weekly"],
       "prPriority": 10
     },
     {
       "description": "Update go patch with higher prio to come through rate limit",
-      "matchDepNames": ["go", "golang", "docker.io/golang", "docker.io/library/golang"],
+      "matchDepNames": [
+        "go",
+        "golang",
+        "docker.io/golang",
+        "docker.io/library/golang"
+      ],
       "matchUpdateTypes": ["patch"],
       "prPriority": 10,
       "schedule": ["at any time"]

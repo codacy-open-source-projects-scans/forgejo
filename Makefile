@@ -39,6 +39,7 @@ GOVULNCHECK_PACKAGE ?= golang.org/x/vuln/cmd/govulncheck@v1 # renovate: datasour
 DEADCODE_PACKAGE ?= golang.org/x/tools/cmd/deadcode@v0.22.0 # renovate: datasource=go
 GOMOCK_PACKAGE ?= go.uber.org/mock/mockgen@v0.4.0 # renovate: datasource=go
 GOPLS_PACKAGE ?= golang.org/x/tools/gopls@v0.15.3 # renovate: datasource=go
+RENOVATE_NPM_PACKAGE ?= renovate@37.413.4 # renovate: datasource=npm
 
 DOCKER_IMAGE ?= gitea/gitea
 DOCKER_TAG ?= latest
@@ -124,6 +125,8 @@ LINUX_ARCHS ?= linux/amd64,linux/386,linux/arm-5,linux/arm-6,linux/arm64
 ifeq ($(HAS_GO), yes)
 	GO_TEST_PACKAGES ?= $(filter-out $(shell $(GO) list code.gitea.io/gitea/models/migrations/...) $(shell $(GO) list code.gitea.io/gitea/models/forgejo_migrations/...) code.gitea.io/gitea/tests/integration/migration-test code.gitea.io/gitea/tests code.gitea.io/gitea/tests/integration code.gitea.io/gitea/tests/e2e,$(shell $(GO) list ./... | grep -v /vendor/))
 endif
+REMOTE_CACHER_MODULES ?= cache nosql session queue
+GO_TEST_REMOTE_CACHER_PACKAGES ?= $(addprefix code.gitea.io/gitea/modules/,$(REMOTE_CACHER_MODULES))
 
 FOMANTIC_WORK_DIR := web_src/fomantic
 
@@ -237,6 +240,7 @@ help:
 	@echo " - lint-md                          lint markdown files"
 	@echo " - lint-swagger                     lint swagger files"
 	@echo " - lint-templates                   lint template files"
+	@echo " - lint-renovate                    lint renovate files"
 	@echo " - lint-yaml                        lint yaml files"
 	@echo " - lint-spell                       lint spelling"
 	@echo " - lint-spell-fix                   lint spelling and fix issues"
@@ -248,6 +252,7 @@ help:
 	@echo " - show-version-major               show major release number only"
 	@echo " - test-frontend                    test frontend files"
 	@echo " - test-backend                     test backend files"
+	@echo " - test-remote-cacher               test backend files that use a remote cache"
 	@echo " - test-e2e-sqlite[\#name.test.e2e] test end to end using playwright and sqlite"
 	@echo " - webpack                          build webpack files"
 	@echo " - svg                              build svg files"
@@ -395,7 +400,7 @@ lint-frontend: lint-js lint-css
 lint-frontend-fix: lint-js-fix lint-css-fix
 
 .PHONY: lint-backend
-lint-backend: lint-go lint-go-vet lint-editorconfig
+lint-backend: lint-go lint-go-vet lint-editorconfig lint-renovate
 
 .PHONY: lint-backend-fix
 lint-backend-fix: lint-go-fix lint-go-vet lint-editorconfig
@@ -431,6 +436,12 @@ lint-css-fix: node_modules
 .PHONY: lint-swagger
 lint-swagger: node_modules
 	npx spectral lint -q -F hint $(SWAGGER_SPEC)
+
+.PHONY: lint-renovate
+lint-renovate: node_modules
+	npx --yes --package $(RENOVATE_NPM_PACKAGE) -- renovate-config-validator --strict > .lint-renovate 2>&1 || true
+	@if grep --quiet --extended-regexp -e '^( WARN:|ERROR:)' .lint-renovate ; then cat .lint-renovate ; rm .lint-renovate ; exit 1 ; fi
+	@rm .lint-renovate
 
 .PHONY: lint-md
 lint-md: node_modules
@@ -508,6 +519,11 @@ test: test-frontend test-backend
 test-backend:
 	@echo "Running go test with $(GOTESTFLAGS) -tags '$(TEST_TAGS)'..."
 	@$(GO) test $(GOTESTFLAGS) -tags='$(TEST_TAGS)' $(GO_TEST_PACKAGES)
+
+.PHONY: test-remote-cacher
+test-remote-cacher:
+	@echo "Running go test with $(GOTESTFLAGS) -tags '$(TEST_TAGS)'..."
+	@$(GO) test $(GOTESTFLAGS) -tags='$(TEST_TAGS)' $(GO_TEST_REMOTE_CACHER_PACKAGES)
 
 .PHONY: test-frontend
 test-frontend: node_modules

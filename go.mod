@@ -5,6 +5,7 @@ go 1.22.0
 toolchain go1.22.4
 
 require (
+	code.forgejo.org/f3/gof3/v3 v3.4.0
 	code.forgejo.org/forgejo/reply v1.0.2
 	code.gitea.io/actions-proto-go v0.4.0
 	code.gitea.io/gitea-vet v0.2.3
@@ -38,7 +39,7 @@ require (
 	github.com/gliderlabs/ssh v0.3.7
 	github.com/go-ap/activitypub v0.0.0-20231114162308-e219254dc5c9
 	github.com/go-ap/jsonld v0.0.0-20221030091449-f2a191312c73
-	github.com/go-chi/chi/v5 v5.0.11
+	github.com/go-chi/chi/v5 v5.0.13
 	github.com/go-chi/cors v1.2.1
 	github.com/go-co-op/gocron v1.37.0
 	github.com/go-enry/go-enry/v2 v2.8.8
@@ -57,7 +58,7 @@ require (
 	github.com/google/go-github/v57 v57.0.0
 	github.com/google/pprof v0.0.0-20240528025155-186aa0362fba
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/feeds v1.1.2
+	github.com/gorilla/feeds v1.2.0
 	github.com/gorilla/sessions v1.2.2
 	github.com/h2non/gock v1.2.0
 	github.com/hashicorp/go-version v1.6.0
@@ -100,7 +101,7 @@ require (
 	github.com/valyala/fastjson v1.6.4
 	github.com/xanzy/go-gitlab v0.96.0
 	github.com/yohcop/openid-go v1.0.1
-	github.com/yuin/goldmark v1.7.0
+	github.com/yuin/goldmark v1.7.2
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	github.com/yuin/goldmark-meta v1.1.0
 	go.uber.org/mock v0.4.0
@@ -202,6 +203,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/go-tpm v0.9.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190910122728-9d188e94fb99 // indirect
@@ -257,6 +259,7 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
@@ -300,8 +303,6 @@ replace github.com/hashicorp/go-version => github.com/6543/go-version v1.3.1
 replace github.com/shurcooL/vfsgen => github.com/lunny/vfsgen v0.0.0-20220105142115-2c99e1ffdfa0
 
 replace github.com/nektos/act => gitea.com/gitea/act v0.261.1
-
-replace github.com/gorilla/feeds => github.com/yardenshoham/feeds v0.0.0-20240110072658-f3d0c21c0bd5
 
 exclude github.com/gofrs/uuid v3.2.0+incompatible
 

@@ -38,8 +38,8 @@ GO_LICENSES_PACKAGE ?= github.com/google/go-licenses@v1.6.0 # renovate: datasour
 GOVULNCHECK_PACKAGE ?= golang.org/x/vuln/cmd/govulncheck@v1 # renovate: datasource=go
 DEADCODE_PACKAGE ?= golang.org/x/tools/cmd/deadcode@v0.22.0 # renovate: datasource=go
 GOMOCK_PACKAGE ?= go.uber.org/mock/mockgen@v0.4.0 # renovate: datasource=go
-GOPLS_PACKAGE ?= golang.org/x/tools/gopls@v0.15.3 # renovate: datasource=go
-RENOVATE_NPM_PACKAGE ?= renovate@37.413.4 # renovate: datasource=npm
+GOPLS_PACKAGE ?= golang.org/x/tools/gopls@v0.16.0 # renovate: datasource=go
+RENOVATE_NPM_PACKAGE ?= renovate@37.421.2 # renovate: datasource=docker packageName=ghcr.io/visualon/renovate
 
 DOCKER_IMAGE ?= gitea/gitea
 DOCKER_TAG ?= latest
@@ -251,6 +251,7 @@ help:
 	@echo " - show-version-full                show the same version as the API endpoint"
 	@echo " - show-version-major               show major release number only"
 	@echo " - test-frontend                    test frontend files"
+	@echo " - test-frontend-coverage           test frontend files and display code coverage"
 	@echo " - test-backend                     test backend files"
 	@echo " - test-remote-cacher               test backend files that use a remote cache"
 	@echo " - test-e2e-sqlite[\#name.test.e2e] test end to end using playwright and sqlite"
@@ -528,6 +529,10 @@ test-remote-cacher:
 .PHONY: test-frontend
 test-frontend: node_modules
 	npx vitest
+
+.PHONY: test-frontend-coverage
+test-frontend-coverage: node_modules
+	npx vitest --coverage --coverage.include 'web_src/**'
 
 .PHONY: test-check
 test-check:

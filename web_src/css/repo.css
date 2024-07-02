@@ -79,6 +79,11 @@
   white-space: nowrap;
 }
 
+.repository .issue-content-right .filter.menu {
+  max-height: 500px;
+  overflow-x: auto;
+}
+
 .repository .filter.menu.labels .label-filter .menu .info {
   display: inline-block;
   padding: 0.5rem 0;
@@ -581,11 +586,6 @@ td .commit-summary {
   font-size: 14px;
 }
 
-.repository.new.issue .comment.form .issue-content-right .filter.menu {
-  max-height: 500px;
-  overflow-x: auto;
-}
-
 .repository.view.issue .instruct-toggle {
   display: inline-block;
 }
@@ -601,7 +601,8 @@ td .commit-summary {
   align-items: center;
 }
 
-.repository.view.issue .top-right-buttons {
+.repository.view.issue .button-row,
+.repository.releases .button-row {
   display: flex;
 }
 
@@ -609,7 +610,7 @@ td .commit-summary {
   .repository.view.issue .issue-title {
     flex-direction: column;
   }
-  .repository.view.issue .top-right-buttons {
+  .repository.view.issue .button-row {
     width: 100%;
     margin-top: .5rem;
     justify-content: space-between;

@@ -24,7 +24,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb
 	github.com/blevesearch/bleve/v2 v2.4.1
-	github.com/buildkite/terminal-to-html/v3 v3.13.0
+	github.com/buildkite/terminal-to-html/v3 v3.14.0
 	github.com/caddyserver/certmagic v0.21.0
 	github.com/chi-middleware/proxy v1.1.1
 	github.com/djherbis/buffer v1.2.0
@@ -49,7 +49,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.6
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/go-swagger/go-swagger v0.30.5
-	github.com/go-testfixtures/testfixtures/v3 v3.11.0
+	github.com/go-testfixtures/testfixtures/v3 v3.12.0
 	github.com/go-webauthn/webauthn v0.10.0
 	github.com/gobwas/glob v0.2.3
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f
@@ -68,7 +68,6 @@ require (
 	github.com/jhillyerd/enmime v1.2.0
 	github.com/json-iterator/go v1.1.12
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
-	github.com/keybase/go-crypto v0.0.0-20200123153347-de78d2cb44f4
 	github.com/klauspost/compress v1.17.9
 	github.com/klauspost/cpuid/v2 v2.2.8
 	github.com/lib/pq v1.10.9
@@ -78,7 +77,7 @@ require (
 	github.com/meilisearch/meilisearch-go v0.26.1
 	github.com/mholt/archiver/v3 v3.5.1
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/minio/minio-go/v7 v7.0.73
+	github.com/minio/minio-go/v7 v7.0.74
 	github.com/msteinert/pam v1.2.0
 	github.com/nektos/act v0.2.52
 	github.com/niklasfasching/go-org v1.7.0
@@ -90,7 +89,7 @@ require (
 	github.com/quasoft/websspi v1.1.2
 	github.com/redis/go-redis/v9 v9.5.2
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	github.com/sassoftware/go-rpmutils v0.2.1-0.20240124161140-277b154961dd
 	github.com/sergi/go-diff v1.3.1
 	github.com/shurcooL/vfsgen v0.0.0-20230704071429-0000e147ea92
@@ -110,7 +109,7 @@ require (
 	golang.org/x/oauth2 v0.21.0
 	golang.org/x/sys v0.22.0
 	golang.org/x/text v0.16.0
-	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d
+	golang.org/x/tools v0.23.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.1
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
@@ -128,7 +127,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	git.sr.ht/~mariusor/go-xsd-duration v0.0.0-20220703122237-02e73435a078 // indirect
 	github.com/ClickHouse/ch-go v0.61.5 // indirect
-	github.com/ClickHouse/clickhouse-go/v2 v2.24.0 // indirect
+	github.com/ClickHouse/clickhouse-go/v2 v2.26.0 // indirect
 	github.com/DataDog/zstd v1.5.5 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.2.1 // indirect
@@ -259,7 +258,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
@@ -289,7 +287,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a // indirect
-	golang.org/x/mod v0.17.0 // indirect
+	golang.org/x/mod v0.19.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect

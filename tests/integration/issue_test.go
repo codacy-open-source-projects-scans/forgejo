@@ -1126,3 +1126,21 @@ func TestIssueUnsubscription(t *testing.T) {
 		session.MakeRequest(t, req, http.StatusOK)
 	})
 }
+
+func TestIssueLabelList(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	// The label list should always be present. When no labels are selected, .no-select is visible, otherwise hidden.
+	labelListSelector := ".labels.list .labels-list"
+	hiddenClass := "tw-hidden"
+
+	t.Run("Test label list", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		req := NewRequest(t, "GET", "/user2/repo1/issues/1")
+		resp := MakeRequest(t, req, http.StatusOK)
+		htmlDoc := NewHTMLParser(t, resp.Body)
+
+		htmlDoc.AssertElement(t, labelListSelector, true)
+		htmlDoc.AssertElement(t, ".labels.list .no-select."+hiddenClass, true)
+	})
+}

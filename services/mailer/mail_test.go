@@ -62,7 +62,7 @@ func prepareMailerTest(t *testing.T) (doer *user_model.User, repo *repo_model.Re
 }
 
 func TestComposeIssueCommentMessage(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	doer, _, issue, comment := prepareMailerTest(t)
 
 	markup.Init(&markup.ProcessorHelper{
@@ -117,7 +117,7 @@ func TestComposeIssueCommentMessage(t *testing.T) {
 }
 
 func TestComposeIssueMessage(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	doer, _, issue, _ := prepareMailerTest(t)
 
 	recipients := []*user_model.User{{Name: "Test", Email: "test@gitea.com"}, {Name: "Test2", Email: "test2@gitea.com"}}
@@ -146,7 +146,7 @@ func TestComposeIssueMessage(t *testing.T) {
 }
 
 func TestMailerIssueTemplate(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	assert.NoError(t, unittest.PrepareTestDatabase())
 
 	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
@@ -160,7 +160,7 @@ func TestMailerIssueTemplate(t *testing.T) {
 		for _, s := range expected {
 			assert.Contains(t, wholemsg, s)
 		}
-		assertTranslatedLocale(t, wholemsg, "mail.issue")
+		AssertTranslatedLocale(t, wholemsg, "mail.issue")
 	}
 
 	testCompose := func(t *testing.T, ctx *mailCommentContext) *Message {
@@ -241,7 +241,7 @@ func TestMailerIssueTemplate(t *testing.T) {
 }
 
 func TestTemplateSelection(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	doer, repo, issue, comment := prepareMailerTest(t)
 	recipients := []*user_model.User{{Name: "Test", Email: "test@gitea.com"}}
 
@@ -296,7 +296,7 @@ func TestTemplateSelection(t *testing.T) {
 }
 
 func TestTemplateServices(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	doer, _, issue, comment := prepareMailerTest(t)
 	assert.NoError(t, issue.LoadRepo(db.DefaultContext))
 
@@ -349,7 +349,7 @@ func testComposeIssueCommentMessage(t *testing.T, ctx *mailCommentContext, recip
 }
 
 func TestGenerateAdditionalHeaders(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	doer, _, issue, _ := prepareMailerTest(t)
 
 	ctx := &mailCommentContext{Context: context.TODO() /* TODO: use a correct context */, Issue: issue, Doer: doer}
@@ -382,7 +382,7 @@ func TestGenerateAdditionalHeaders(t *testing.T) {
 }
 
 func Test_createReference(t *testing.T) {
-	defer mockMailSettings(nil)()
+	defer MockMailSettings(nil)()
 	_, _, issue, comment := prepareMailerTest(t)
 	_, _, pullIssue, _ := prepareMailerTest(t)
 	pullIssue.IsPull = true
@@ -488,4 +488,52 @@ func Test_createReference(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFromDisplayName(t *testing.T) {
+	template, err := texttmpl.New("mailFrom").Parse("{{ .DisplayName }}")
+	assert.NoError(t, err)
+	setting.MailService = &setting.Mailer{FromDisplayNameFormatTemplate: template}
+	defer func() { setting.MailService = nil }()
+
+	tests := []struct {
+		userDisplayName string
+		fromDisplayName string
+	}{{
+		userDisplayName: "test",
+		fromDisplayName: "test",
+	}, {
+		userDisplayName: "Hi Its <Mee>",
+		fromDisplayName: "Hi Its <Mee>",
+	}, {
+		userDisplayName: "Æsir",
+		fromDisplayName: "=?utf-8?q?=C3=86sir?=",
+	}, {
+		userDisplayName: "new😀user",
+		fromDisplayName: "=?utf-8?q?new=F0=9F=98=80user?=",
+	}}
+
+	for _, tc := range tests {
+		t.Run(tc.userDisplayName, func(t *testing.T) {
+			user := &user_model.User{FullName: tc.userDisplayName, Name: "tmp"}
+			got := fromDisplayName(user)
+			assert.EqualValues(t, tc.fromDisplayName, got)
+		})
+	}
+
+	t.Run("template with all available vars", func(t *testing.T) {
+		template, err = texttmpl.New("mailFrom").Parse("{{ .DisplayName }} (by {{ .AppName }} on [{{ .Domain }}])")
+		assert.NoError(t, err)
+		setting.MailService = &setting.Mailer{FromDisplayNameFormatTemplate: template}
+		oldAppName := setting.AppName
+		setting.AppName = "Code IT"
+		oldDomain := setting.Domain
+		setting.Domain = "code.it"
+		defer func() {
+			setting.AppName = oldAppName
+			setting.Domain = oldDomain
+		}()
+
+		assert.EqualValues(t, "Mister X (by Code IT on [code.it])", fromDisplayName(&user_model.User{FullName: "Mister X", Name: "tmp"}))
+	})
 }

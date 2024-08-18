@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"code.gitea.io/gitea/modules/setting"
 )
@@ -53,28 +54,29 @@ func GrepSearch(ctx context.Context, repo *Repository, search string, opts GrepO
 	}()
 
 	/*
-	 The output is like this ( "^@" means \x00):
+	 The output is like this ("^@" means \x00; the first number denotes the line,
+	 the second number denotes the column of the first match in line):
 
 	 HEAD:.air.toml
-	 6^@bin = "gitea"
+	 6^@8^@bin = "gitea"
 
 	 HEAD:.changelog.yml
-	 2^@repo: go-gitea/gitea
+	 2^@10^@repo: go-gitea/gitea
 	*/
 	var results []*GrepResult
+	// -I skips binary files
 	cmd := NewCommand(ctx, "grep",
-		"--null", "--break", "--heading", "--column",
+		"-I", "--null", "--break", "--heading", "--column",
 		"--fixed-strings", "--line-number", "--ignore-case", "--full-name")
 	cmd.AddOptionValues("--context", fmt.Sprint(opts.ContextLineNumber))
-	if opts.MatchesPerFile > 0 {
-		cmd.AddOptionValues("--max-count", fmt.Sprint(opts.MatchesPerFile))
-	}
+	opts.MatchesPerFile = cmp.Or(opts.MatchesPerFile, 20)
+	cmd.AddOptionValues("--max-count", fmt.Sprint(opts.MatchesPerFile))
 	words := []string{search}
 	if opts.IsFuzzy {
 		words = strings.Fields(search)
 	}
 	for _, word := range words {
-		cmd.AddOptionValues("-e", strings.TrimLeft(word, "-"))
+		cmd.AddGitGrepExpression(word)
 	}
 
 	// pathspec
@@ -93,6 +95,8 @@ func GrepSearch(ctx context.Context, repo *Repository, search string, opts GrepO
 	opts.MaxResultLimit = cmp.Or(opts.MaxResultLimit, 50)
 	stderr := bytes.Buffer{}
 	err = cmd.Run(&RunOpts{
+		Timeout: time.Duration(setting.Git.Timeout.Grep) * time.Second,
+
 		Dir:    repo.Path,
 		Stdout: stdoutWriter,
 		Stderr: &stderr,

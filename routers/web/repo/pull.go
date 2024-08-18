@@ -294,7 +294,7 @@ func ForkPost(ctx *context.Context) {
 		}
 	}
 
-	repo, err := repo_service.ForkRepository(ctx, ctx.Doer, ctxUser, repo_service.ForkRepoOptions{
+	repo, err := repo_service.ForkRepositoryAndUpdates(ctx, ctx.Doer, ctxUser, repo_service.ForkRepoOptions{
 		BaseRepo:     forkRepo,
 		Name:         form.RepoName,
 		Description:  form.Description,
@@ -1525,8 +1525,7 @@ func CompareAndPullRequestPost(ctx *context.Context) {
 
 	if err := pull_service.NewPullRequest(ctx, repo, pullIssue, labelIDs, attachments, pullRequest, assigneeIDs); err != nil {
 		if errors.Is(err, user_model.ErrBlockedByUser) {
-			ctx.Flash.Error(ctx.Tr("repo.pulls.blocked_by_user"))
-			ctx.Redirect(ctx.Link)
+			ctx.JSONError(ctx.Tr("repo.pulls.blocked_by_user"))
 			return
 		} else if repo_model.IsErrUserDoesNotHaveAccessToRepo(err) {
 			ctx.Error(http.StatusBadRequest, "UserDoesNotHaveAccessToRepo", err.Error())

@@ -12,7 +12,7 @@ jobs:
     if: ${{ !startsWith(vars.ROLE, 'forgejo-') }}
     runs-on: docker
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     steps:
       - name: event info
         run: |
@@ -29,7 +29,7 @@ jobs:
     if: ${{ !startsWith(vars.ROLE, 'forgejo-') }}
     runs-on: docker
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v3
       - run: make deps-frontend
@@ -42,15 +42,15 @@ jobs:
     runs-on: docker
     needs: [backend-checks, frontend-checks]
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     services:
       elasticsearch:
-        image: elasticsearch:7.17.22
+        image: docker.io/bitnami/elasticsearch:7
         env:
           discovery.type: single-node
           ES_JAVA_OPTS: "-Xms512m -Xmx512m"
       minio:
-        image: bitnami/minio:2024.3.30
+        image: docker.io/bitnami/minio:2024.8.3
         options: >-
           --hostname gitea.minio
         env:
@@ -96,18 +96,18 @@ jobs:
     runs-on: docker
     needs: [backend-checks, frontend-checks]
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     strategy:
       matrix:
         cacher:
           # redis
-          - image: redis:7.2
+          - image: docker.io/bitnami/redis:7.2
             port: 6379
           # redict
           - image: registry.redict.io/redict:7.3.0-scratch
             port: 6379
           # valkey
-          - image: docker.io/valkey/valkey:7.2.5-alpine3.19
+          - image: docker.io/bitnami/valkey:7.2
             port: 6379
           # garnet
           - image: ghcr.io/microsoft/garnet-alpine:1.0.14
@@ -151,17 +151,17 @@ jobs:
     runs-on: docker
     needs: [backend-checks, frontend-checks]
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     services:
       mysql:
-        image: 'docker.io/mysql:8-debian'
+        image: 'docker.io/bitnami/mysql:8.4'
         env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          ALLOW_EMPTY_PASSWORD: yes
           MYSQL_DATABASE: testgitea
-        #
-        # See also https://codeberg.org/forgejo/forgejo/issues/976
-        #
-        cmd: ['mysqld', '--innodb-adaptive-flushing=OFF', '--innodb-buffer-pool-size=4G', '--innodb-log-buffer-size=128M', '--innodb-flush-log-at-trx-commit=0', '--innodb-flush-log-at-timeout=30', '--innodb-flush-method=nosync', '--innodb-fsync-threshold=1000000000']
+          #
+          # See also https://codeberg.org/forgejo/forgejo/issues/976
+          #
+          MYSQL_EXTRA_FLAGS: --innodb-adaptive-flushing=OFF --innodb-buffer-pool-size=4G --innodb-log-buffer-size=128M --innodb-flush-log-at-trx-commit=0 --innodb-flush-log-at-timeout=30 --innodb-flush-method=nosync --innodb-fsync-threshold=1000000000
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v3
       - uses: https://code.forgejo.org/actions/setup-go@v4
@@ -197,17 +197,17 @@ jobs:
     runs-on: docker
     needs: [backend-checks, frontend-checks]
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     services:
       minio:
-        image: bitnami/minio:2024.3.30
+        image: docker.io/bitnami/minio:2024.8.3
         env:
           MINIO_ROOT_USER: 123456
           MINIO_ROOT_PASSWORD: 12345678
       ldap:
         image: docker.io/gitea/test-openldap:latest
       pgsql:
-        image: 'docker.io/postgres:15'
+        image: 'code.forgejo.org/oci/postgres:15'
         env:
           POSTGRES_DB: test
           POSTGRES_PASSWORD: postgres
@@ -248,7 +248,7 @@ jobs:
     runs-on: docker
     needs: [backend-checks, frontend-checks]
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v3
       - uses: https://code.forgejo.org/actions/setup-go@v4
@@ -291,7 +291,7 @@ jobs:
       - test-remote-cacher
       - test-unit
     container:
-      image: 'docker.io/node:20-bookworm'
+      image: 'code.forgejo.org/oci/node:20-bookworm'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v3
       - uses: https://code.forgejo.org/actions/setup-go@v4

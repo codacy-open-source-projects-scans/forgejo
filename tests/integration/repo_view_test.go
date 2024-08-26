@@ -47,7 +47,7 @@ func createRepoAndGetContext(t *testing.T, files []string, deleteMdReadme bool) 
 	}
 
 	// README.md is already added by auto init
-	repo, _, f := CreateDeclarativeRepo(t, user, "readmetest", []unit_model.Type{unit_model.TypeCode}, nil, changeFiles)
+	repo, _, f := tests.CreateDeclarativeRepo(t, user, "readmetest", []unit_model.Type{unit_model.TypeCode}, nil, changeFiles)
 
 	ctx, _ := contexttest.MockContext(t, "user1/readmetest")
 	ctx.SetParams(":id", fmt.Sprint(repo.ID))
@@ -158,7 +158,7 @@ func TestRepoView_FindReadme(t *testing.T) {
 func TestRepoViewFileLines(t *testing.T) {
 	onGiteaRun(t, func(t *testing.T, _ *url.URL) {
 		user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-		repo, _, f := CreateDeclarativeRepo(t, user, "file-lines", []unit_model.Type{unit_model.TypeCode}, nil, []*files_service.ChangeRepoFile{
+		repo, _, f := tests.CreateDeclarativeRepo(t, user, "file-lines", []unit_model.Type{unit_model.TypeCode}, nil, []*files_service.ChangeRepoFile{
 			{
 				Operation:     "create",
 				TreePath:      "test-1",
@@ -179,43 +179,47 @@ func TestRepoViewFileLines(t *testing.T) {
 				TreePath:      "test-4",
 				ContentReader: strings.NewReader("Really two\nlines\n"),
 			},
+			{
+				Operation:     "create",
+				TreePath:      "empty",
+				ContentReader: strings.NewReader(""),
+			},
+			{
+				Operation:     "create",
+				TreePath:      "seemingly-empty",
+				ContentReader: strings.NewReader("\n"),
+			},
 		})
 		defer f()
 
-		t.Run("No EOL", func(t *testing.T) {
-			defer tests.PrintCurrentTest(t)()
-
-			req := NewRequest(t, "GET", repo.Link()+"/src/branch/main/test-1")
+		testEOL := func(t *testing.T, filename string, hasEOL bool) {
+			t.Helper()
+			req := NewRequestf(t, "GET", "%s/src/branch/main/%s", repo.Link(), filename)
 			resp := MakeRequest(t, req, http.StatusOK)
 			htmlDoc := NewHTMLParser(t, resp.Body)
 
 			fileInfo := htmlDoc.Find(".file-info").Text()
-			assert.Contains(t, fileInfo, "No EOL")
+			if hasEOL {
+				assert.NotContains(t, fileInfo, "No EOL")
+			} else {
+				assert.Contains(t, fileInfo, "No EOL")
+			}
+		}
 
-			req = NewRequest(t, "GET", repo.Link()+"/src/branch/main/test-3")
-			resp = MakeRequest(t, req, http.StatusOK)
-			htmlDoc = NewHTMLParser(t, resp.Body)
+		t.Run("No EOL", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
 
-			fileInfo = htmlDoc.Find(".file-info").Text()
-			assert.Contains(t, fileInfo, "No EOL")
+			testEOL(t, "test-1", false)
+			testEOL(t, "test-3", false)
 		})
 
 		t.Run("With EOL", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 
-			req := NewRequest(t, "GET", repo.Link()+"/src/branch/main/test-2")
-			resp := MakeRequest(t, req, http.StatusOK)
-			htmlDoc := NewHTMLParser(t, resp.Body)
-
-			fileInfo := htmlDoc.Find(".file-info").Text()
-			assert.NotContains(t, fileInfo, "No EOL")
-
-			req = NewRequest(t, "GET", repo.Link()+"/src/branch/main/test-4")
-			resp = MakeRequest(t, req, http.StatusOK)
-			htmlDoc = NewHTMLParser(t, resp.Body)
-
-			fileInfo = htmlDoc.Find(".file-info").Text()
-			assert.NotContains(t, fileInfo, "No EOL")
+			testEOL(t, "test-2", true)
+			testEOL(t, "test-4", true)
+			testEOL(t, "empty", true)
+			testEOL(t, "seemingly-empty", true)
 		})
 	})
 }

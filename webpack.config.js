@@ -38,9 +38,8 @@ if (isProduction) {
     production: true,
     onlyAllow: 'Apache-2.0; 0BSD; BSD-2-Clause; BSD-3-Clause; BlueOak-1.0.0; MIT; ISC; Unlicense; CC-BY-4.0',
     // argparse@2.0.1 - Python-2.0. It's used in the CLI file of markdown-it and js-yaml and not in the library code.
-    // elkjs@0.9.3 - EPL-2.0. See https://github.com/mermaid-js/mermaid/pull/5654
     // idiomorph@0.3.0. See https://github.com/bigskysoftware/idiomorph/pull/37
-    excludePackages: 'argparse@2.0.1;elkjs@0.9.3;idiomorph@0.3.0',
+    excludePackages: 'argparse@2.0.1;idiomorph@0.3.0',
   }, (err, dependencies) => {
     if (err) {
       throw err;
@@ -56,7 +55,7 @@ if (isProduction) {
       const licenseText = (licenseFile && !licenseFile.toLowerCase().includes('readme')) ? readFileSync(licenseFile) : '[no license file]';
       return {name: packageName, licenseName: licenses, body: formatLicenseText(licenseText)};
     });
-    const modules = [...goModules, ...jsModules].sort((a, b) => a.name.localeCompare(b.name));
+    const modules = [...goModules, ...jsModules];
     const licenseTxt = modules.map(({name, licenseName, body}) => {
       const title = licenseName ? `${name} - ${licenseName}` : name;
       return `${line}\n${title}\n${line}\n${body}`;
@@ -108,14 +107,6 @@ const filterCssImport = (url, ...args) => {
 
 /** @type {import("webpack").Configuration} */
 export default {
-  externals: [
-    function ({request}, callback) {
-      if (/elkjs/.test(request)) {
-        return callback(null, `commonjs ${request}`);
-      }
-      callback();
-    },
-  ],
   mode: isProduction ? 'production' : 'development',
   entry: {
     index: [

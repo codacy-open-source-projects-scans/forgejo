@@ -8,6 +8,7 @@ import (
 	"bytes"
 	gocontext "context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html/template"
 	"image"
@@ -239,14 +240,12 @@ func getFileReader(ctx gocontext.Context, repoID int64, blob *git.Blob) ([]byte,
 	}
 
 	meta, err := git_model.GetLFSMetaObjectByOid(ctx, repoID, pointer.Oid)
-	if err != nil && err != git_model.ErrLFSObjectNotExist { // fallback to plain file
+	if err != nil { // fallback to plain file
+		log.Warn("Unable to access LFS pointer %s in repo %d: %v", pointer.Oid, repoID, err)
 		return buf, dataRc, &fileInfo{isTextFile, false, blob.Size(), nil, st}, nil
 	}
 
 	dataRc.Close()
-	if err != nil {
-		return nil, nil, nil, err
-	}
 
 	dataRc, err = lfs.ReadMetaObject(pointer)
 	if err != nil {
@@ -563,15 +562,16 @@ func renderFile(ctx *context.Context, entry *git.TreeEntry) {
 			//   empty: 0 lines; "a": 1 line; "a\n": 1 line; "a\nb": 2 lines;
 			//   When rendering, the last empty line is not rendered in U and isn't counted towards the number of lines.
 			//   To tell users that the file not contains a trailing EOL, text with a tooltip is displayed in the file header.
+			//   Trailing EOL is only considered if the file has content.
 			// This NumLines is only used for the display on the UI: "xxx lines"
-			hasTrailingEOL := bytes.HasSuffix(buf, []byte{'\n'})
-			ctx.Data["HasTrailingEOL"] = hasTrailingEOL
-			ctx.Data["HasTrailingEOLSet"] = true
 			if len(buf) == 0 {
 				ctx.Data["NumLines"] = 0
 			} else {
+				hasNoTrailingEOL := !bytes.HasSuffix(buf, []byte{'\n'})
+				ctx.Data["HasNoTrailingEOL"] = hasNoTrailingEOL
+
 				numLines := bytes.Count(buf, []byte{'\n'})
-				if !hasTrailingEOL {
+				if hasNoTrailingEOL {
 					numLines++
 				}
 				ctx.Data["NumLines"] = numLines
@@ -753,12 +753,12 @@ func checkHomeCodeViewable(ctx *context.Context) {
 		}
 
 		if firstUnit != nil {
-			ctx.Redirect(fmt.Sprintf("%s%s", ctx.Repo.Repository.Link(), firstUnit.URI))
+			ctx.Redirect(ctx.Repo.Repository.Link() + firstUnit.URI)
 			return
 		}
 	}
 
-	ctx.NotFound("Home", fmt.Errorf(ctx.Locale.TrString("units.error.no_unit_allowed_repo")))
+	ctx.NotFound("Home", errors.New(ctx.Locale.TrString("units.error.no_unit_allowed_repo")))
 }
 
 func checkCitationFile(ctx *context.Context, entry *git.TreeEntry) {
@@ -781,7 +781,8 @@ func checkCitationFile(ctx *context.Context, entry *git.TreeEntry) {
 			if content, err := entry.Blob().GetBlobContent(setting.UI.MaxDisplayFileSize); err != nil {
 				log.Error("checkCitationFile: GetBlobContent: %v", err)
 			} else {
-				ctx.Data["CitiationExist"] = true
+				ctx.Data["CitationExist"] = true
+				ctx.Data["CitationFile"] = entry.Name()
 				ctx.PageData["citationFileContent"] = content
 				break
 			}

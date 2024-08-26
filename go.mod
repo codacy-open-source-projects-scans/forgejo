@@ -1,9 +1,9 @@
 module code.gitea.io/gitea
 
-go 1.22.5
+go 1.23.0
 
 require (
-	code.forgejo.org/f3/gof3/v3 v3.4.0
+	code.forgejo.org/f3/gof3/v3 v3.7.0
 	code.forgejo.org/forgejo/reply v1.0.2
 	code.gitea.io/actions-proto-go v0.4.0
 	code.gitea.io/gitea-vet v0.2.3
@@ -28,7 +28,7 @@ require (
 	github.com/chi-middleware/proxy v1.1.1
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
-	github.com/dsnet/compress v0.0.2-0.20210315054119-f66993602bf5
+	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707
 	github.com/dustin/go-humanize v1.0.1
 	github.com/editorconfig/editorconfig-core-go/v2 v2.6.2
 	github.com/emersion/go-imap v1.2.1
@@ -52,7 +52,7 @@ require (
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f
 	github.com/gogs/go-gogs-client v0.0.0-20210131175652-1d7215cd8d85
 	github.com/golang-jwt/jwt/v5 v5.2.0
-	github.com/google/go-github/v63 v63.0.0
+	github.com/google/go-github/v64 v64.0.0
 	github.com/google/pprof v0.0.0-20240528025155-186aa0362fba
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/feeds v1.2.0
@@ -71,7 +71,7 @@ require (
 	github.com/markbates/goth v1.80.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-sqlite3 v1.14.22
-	github.com/meilisearch/meilisearch-go v0.27.2
+	github.com/meilisearch/meilisearch-go v0.28.0
 	github.com/mholt/archiver/v3 v3.5.1
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/minio/minio-go/v7 v7.0.74
@@ -95,7 +95,7 @@ require (
 	github.com/ulikunitz/xz v0.5.12
 	github.com/urfave/cli/v2 v2.27.2
 	github.com/valyala/fastjson v1.6.4
-	github.com/xanzy/go-gitlab v0.96.0
+	github.com/xanzy/go-gitlab v0.106.0
 	github.com/yohcop/openid-go v1.0.1
 	github.com/yuin/goldmark v1.7.4
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
@@ -272,8 +272,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/toqueteos/webbrowser v1.2.0 // indirect
 	github.com/unknwon/com v1.0.1 // indirect
-	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
@@ -300,7 +298,7 @@ replace github.com/hashicorp/go-version => github.com/6543/go-version v1.3.1
 
 replace github.com/shurcooL/vfsgen => github.com/lunny/vfsgen v0.0.0-20220105142115-2c99e1ffdfa0
 
-replace github.com/nektos/act => gitea.com/gitea/act v0.261.1
+replace github.com/nektos/act => code.forgejo.org/forgejo/act v1.21.2
 
 exclude github.com/gofrs/uuid v3.2.0+incompatible
 

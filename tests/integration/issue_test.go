@@ -338,7 +338,7 @@ func TestIssueDependencies(t *testing.T) {
 	session := loginUser(t, owner.Name)
 	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteIssue)
 
-	repo, _, f := CreateDeclarativeRepoWithOptions(t, owner, DeclarativeRepoOptions{})
+	repo, _, f := tests.CreateDeclarativeRepoWithOptions(t, owner, tests.DeclarativeRepoOptions{})
 	defer f()
 
 	createIssue := func(t *testing.T, title string) api.Issue {
@@ -1005,6 +1005,66 @@ func TestUpdateIssueDeadline(t *testing.T) {
 	assert.EqualValues(t, "2022-04-06", apiIssue.Deadline.Format("2006-01-02"))
 }
 
+func TestUpdateIssueTitle(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	issueBefore := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: issueBefore.RepoID})
+	owner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
+
+	require.NoError(t, issueBefore.LoadAttributes(db.DefaultContext))
+	assert.Equal(t, "issue1", issueBefore.Title)
+
+	issueTitleUpdateTests := []struct {
+		title            string
+		expectedHTTPCode int
+	}{
+		{
+			title:            "normal-title",
+			expectedHTTPCode: http.StatusOK,
+		},
+		{
+			title:            "extra-long-title-with-exactly-255-chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectedHTTPCode: http.StatusOK,
+		},
+		{
+			title:            "",
+			expectedHTTPCode: http.StatusBadRequest,
+		},
+		{
+			title:            " ",
+			expectedHTTPCode: http.StatusBadRequest,
+		},
+		{
+			title:            "extra-long-title-over-255-chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectedHTTPCode: http.StatusBadRequest,
+		},
+	}
+
+	session := loginUser(t, owner.Name)
+	issueURL := fmt.Sprintf("%s/%s/issues/%d", owner.Name, repo.Name, issueBefore.Index)
+	urlStr := issueURL + "/title"
+
+	for _, issueTitleUpdateTest := range issueTitleUpdateTests {
+		req := NewRequestWithValues(t, "POST", urlStr, map[string]string{
+			"title": issueTitleUpdateTest.title,
+			"_csrf": GetCSRF(t, session, issueURL),
+		})
+
+		resp := session.MakeRequest(t, req, issueTitleUpdateTest.expectedHTTPCode)
+
+		// JSON data is received only if the request succeeds
+		if issueTitleUpdateTest.expectedHTTPCode == http.StatusOK {
+			issueAfter := struct {
+				Title string `json:"title"`
+			}{}
+
+			DecodeJSON(t, resp, &issueAfter)
+			assert.EqualValues(t, issueTitleUpdateTest.title, issueAfter.Title)
+		}
+	}
+}
+
 func TestIssueReferenceURL(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	session := loginUser(t, "user2")
@@ -1106,17 +1166,33 @@ func TestCommitRefComment(t *testing.T) {
 func TestIssueFilterNoFollow(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 
-	req := NewRequest(t, "GET", "/user2/repo1/issues")
-	resp := MakeRequest(t, req, http.StatusOK)
-	htmlDoc := NewHTMLParser(t, resp.Body)
-
 	// Check that every link in the filter list has rel="nofollow".
-	filterLinks := htmlDoc.Find(".issue-list-toolbar-right a[href*=\"?q=\"]")
-	assert.Positive(t, filterLinks.Length())
-	filterLinks.Each(func(i int, link *goquery.Selection) {
-		rel, has := link.Attr("rel")
-		assert.True(t, has)
-		assert.Equal(t, "nofollow", rel)
+	t.Run("Issue lists", func(t *testing.T) {
+		req := NewRequest(t, "GET", "/user2/repo1/issues")
+		resp := MakeRequest(t, req, http.StatusOK)
+		htmlDoc := NewHTMLParser(t, resp.Body)
+
+		filterLinks := htmlDoc.Find(".issue-list-toolbar-right a[href*=\"?q=\"], .labels-list a[href*=\"?q=\"]")
+		assert.Positive(t, filterLinks.Length())
+		filterLinks.Each(func(i int, link *goquery.Selection) {
+			rel, has := link.Attr("rel")
+			assert.True(t, has)
+			assert.Equal(t, "nofollow", rel)
+		})
+	})
+
+	t.Run("Issue page", func(t *testing.T) {
+		req := NewRequest(t, "GET", "/user2/repo1/issues/1")
+		resp := MakeRequest(t, req, http.StatusOK)
+		htmlDoc := NewHTMLParser(t, resp.Body)
+
+		filterLinks := htmlDoc.Find(".timeline .labels-list a[href*=\"?labels=\"], .issue-content-right .labels-list a[href*=\"?labels=\"]")
+		assert.Positive(t, filterLinks.Length())
+		filterLinks.Each(func(i int, link *goquery.Selection) {
+			rel, has := link.Attr("rel")
+			assert.True(t, has)
+			assert.Equal(t, "nofollow", rel)
+		})
 	})
 }
 
@@ -1124,7 +1200,7 @@ func TestIssueForm(t *testing.T) {
 	onGiteaRun(t, func(t *testing.T, u *url.URL) {
 		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 		session := loginUser(t, user2.Name)
-		repo, _, f := CreateDeclarativeRepo(t, user2, "",
+		repo, _, f := tests.CreateDeclarativeRepo(t, user2, "",
 			[]unit_model.Type{unit_model.TypeCode, unit_model.TypeIssues}, nil,
 			[]*files_service.ChangeRepoFile{
 				{
@@ -1174,7 +1250,7 @@ func TestIssueUnsubscription(t *testing.T) {
 		defer tests.PrepareTestEnv(t)()
 
 		user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
-		repo, _, f := CreateDeclarativeRepoWithOptions(t, user, DeclarativeRepoOptions{
+		repo, _, f := tests.CreateDeclarativeRepoWithOptions(t, user, tests.DeclarativeRepoOptions{
 			AutoInit: optional.Some(false),
 		})
 		defer f()

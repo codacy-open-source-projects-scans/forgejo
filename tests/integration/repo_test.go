@@ -444,7 +444,7 @@ func TestViewRepoDirectory(t *testing.T) {
 	repoSummary := htmlDoc.doc.Find(".repository-summary")
 
 	repoFilesTable := htmlDoc.doc.Find("#repo-files-table")
-	assert.NotZero(t, len(repoFilesTable.Nodes))
+	assert.NotEmpty(t, repoFilesTable.Nodes)
 
 	assert.Zero(t, description.Length())
 	assert.Zero(t, repoTopics.Length())
@@ -834,7 +834,7 @@ func TestRepoFilesList(t *testing.T) {
 		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 
 		// create the repo
-		repo, _, f := CreateDeclarativeRepo(t, user2, "",
+		repo, _, f := tests.CreateDeclarativeRepo(t, user2, "",
 			[]unit_model.Type{unit_model.TypeCode}, nil,
 			[]*files_service.ChangeRepoFile{
 				{

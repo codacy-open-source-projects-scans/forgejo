@@ -39,7 +39,7 @@ GOVULNCHECK_PACKAGE ?= golang.org/x/vuln/cmd/govulncheck@v1 # renovate: datasour
 DEADCODE_PACKAGE ?= golang.org/x/tools/cmd/deadcode@v0.24.0 # renovate: datasource=go
 GOMOCK_PACKAGE ?= go.uber.org/mock/mockgen@v0.4.0 # renovate: datasource=go
 GOPLS_PACKAGE ?= golang.org/x/tools/gopls@v0.16.1 # renovate: datasource=go
-RENOVATE_NPM_PACKAGE ?= renovate@38.39.6 # renovate: datasource=docker packageName=code.forgejo.org/forgejo-contrib/renovate
+RENOVATE_NPM_PACKAGE ?= renovate@38.59.2 # renovate: datasource=docker packageName=code.forgejo.org/forgejo-contrib/renovate
 
 ifeq ($(HAS_GO), yes)
 	CGO_EXTRA_CFLAGS := -DSQLITE_MAX_VARIABLE_NUMBER=32766
@@ -1003,7 +1003,7 @@ generate-gitignore:
 
 .PHONY: generate-gomock
 generate-gomock:
-	$(GO) run $(GOMOCK_PACKAGE) -package mock -destination ./modules/queue/mock/redisuniversalclient.go  github.com/redis/go-redis/v9 UniversalClient
+	$(GO) run $(GOMOCK_PACKAGE) -package mock -destination ./modules/queue/mock/redisuniversalclient.go code.gitea.io/gitea/modules/nosql RedisClient
 
 .PHONY: generate-images
 generate-images: | node_modules

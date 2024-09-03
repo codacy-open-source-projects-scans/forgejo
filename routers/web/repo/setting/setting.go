@@ -92,6 +92,7 @@ func SettingsCtxData(ctx *context.Context) {
 		return
 	}
 	ctx.Data["PushMirrors"] = pushMirrors
+	ctx.Data["CanUseSSHMirroring"] = git.HasSSHExecutable
 }
 
 // Units show a repositorys unit settings page
@@ -480,7 +481,8 @@ func SettingsPost(ctx *context.Context) {
 		}
 		remoteAddress, err := util.SanitizeURL(address)
 		if err != nil {
-			ctx.ServerError("SanitizeURL", err)
+			ctx.Data["Err_MirrorAddress"] = true
+			handleSettingRemoteAddrError(ctx, err, form)
 			return
 		}
 		pullMirror.RemoteAddress = remoteAddress
@@ -643,6 +645,11 @@ func SettingsPost(ctx *context.Context) {
 			return
 		}
 
+		if form.PushMirrorUseSSH && !git.HasSSHExecutable {
+			ctx.RenderWithErr(ctx.Tr("repo.mirror_use_ssh.not_available"), tplSettingsOptions, &form)
+			return
+		}
+
 		address, err := forms.ParseRemoteAddr(form.PushMirrorAddress, form.PushMirrorUsername, form.PushMirrorPassword)
 		if err == nil {
 			err = migrations.IsMigrateURLAllowed(address, ctx.Doer)
@@ -661,7 +668,8 @@ func SettingsPost(ctx *context.Context) {
 
 		remoteAddress, err := util.SanitizeURL(address)
 		if err != nil {
-			ctx.ServerError("SanitizeURL", err)
+			ctx.Data["Err_PushMirrorAddress"] = true
+			handleSettingRemoteAddrError(ctx, err, form)
 			return
 		}
 

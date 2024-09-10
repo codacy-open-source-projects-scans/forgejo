@@ -1,13 +1,13 @@
 module code.gitea.io/gitea
 
-go 1.23.0
+go 1.23.1
 
 require (
 	code.forgejo.org/f3/gof3/v3 v3.7.0
 	code.forgejo.org/forgejo/reply v1.0.2
 	code.forgejo.org/go-chi/cache v0.0.0-20240827192127-5331da376831
-	code.forgejo.org/go-chi/captcha v0.0.0-20240827192619-ac88f17cdd8e
-	code.forgejo.org/go-chi/session v0.0.0-20240825010209-bd25d509c8bf
+	code.forgejo.org/go-chi/captcha v0.0.0-20240905153133-df43b9250ed5
+	code.forgejo.org/go-chi/session v0.0.0-20240905153124-557e3de77cd2
 	code.gitea.io/actions-proto-go v0.4.0
 	code.gitea.io/gitea-vet v0.2.3
 	code.gitea.io/sdk/gitea v0.17.1
@@ -18,12 +18,12 @@ require (
 	github.com/42wim/sshsig v0.0.0-20211121163825-841cf5bbc121
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358
 	github.com/ProtonMail/go-crypto v1.0.0
-	github.com/PuerkitoBio/goquery v1.9.2
+	github.com/PuerkitoBio/goquery v1.10.0
 	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.7.2
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb
 	github.com/blevesearch/bleve/v2 v2.4.2
-	github.com/buildkite/terminal-to-html/v3 v3.15.0
+	github.com/buildkite/terminal-to-html/v3 v3.16.0
 	github.com/caddyserver/certmagic v0.21.0
 	github.com/chi-middleware/proxy v1.1.1
 	github.com/djherbis/buffer v1.2.0
@@ -100,12 +100,12 @@ require (
 	github.com/yuin/goldmark v1.7.4
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	go.uber.org/mock v0.4.0
-	golang.org/x/crypto v0.26.0
-	golang.org/x/image v0.18.0
-	golang.org/x/net v0.28.0
-	golang.org/x/oauth2 v0.22.0
-	golang.org/x/sys v0.24.0
-	golang.org/x/text v0.17.0
+	golang.org/x/crypto v0.27.0
+	golang.org/x/image v0.20.0
+	golang.org/x/net v0.29.0
+	golang.org/x/oauth2 v0.23.0
+	golang.org/x/sys v0.25.0
+	golang.org/x/text v0.18.0
 	golang.org/x/tools v0.24.0
 	google.golang.org/grpc v1.66.0
 	google.golang.org/protobuf v1.34.1

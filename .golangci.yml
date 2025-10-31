@@ -1,0 +1,174 @@
+version: "2"
+output:
+  sort-order:
+    - file
+linters:
+  default: none
+  enable:
+    - bidichk
+    - depguard
+    - dupl
+    - errcheck
+    - forbidigo
+    - gocritic
+    - govet
+    - ineffassign
+    - nakedret
+    - nolintlint
+    - revive
+    - staticcheck
+    - testifylint
+    - unconvert
+    - unparam
+    - unused
+    - usetesting
+    - wastedassign
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: encoding/json
+              desc: use gitea's modules/json instead of encoding/json
+            - pkg: github.com/unknwon/com
+              desc: use gitea's util and replacements
+            - pkg: io/ioutil
+              desc: use os or io instead
+            - pkg: golang.org/x/exp
+              desc: it's experimental and unreliable
+            - pkg: forgejo.org/modules/git/internal
+              desc: do not use the internal package, use AddXxx function instead
+            - pkg: gopkg.in/ini.v1
+              desc: do not use the ini package, use gitea's config system instead
+            - pkg: github.com/minio/sha256-simd
+              desc: use crypto/sha256 instead, see https://codeberg.org/forgejo/forgejo/pulls/1528
+            - pkg: github.com/go-git/go-git
+              desc: use forgejo.org/modules/git instead, see https://codeberg.org/forgejo/forgejo/pulls/4941
+            - pkg: gopkg.in/yaml.v3
+              desc: use go.yaml.in/yaml instead, see https://codeberg.org/forgejo/forgejo/pulls/8956
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+    revive:
+      severity: error
+      rules:
+        - name: atomic
+        - name: bare-return
+        - name: blank-imports
+        - name: constant-logical-expr
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: duplicated-imports
+        - name: empty-lines
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: identical-branches
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: modifies-value-receiver
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: string-of-int
+        - name: superfluous-else
+        - name: time-naming
+        - name: unconditional-recursion
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
+          arguments:
+            - []
+            - []
+            - - skip-package-name-checks: true
+        - name: redefines-builtin-id
+          disabled: true
+    staticcheck:
+      checks:
+        - all
+    testifylint:
+      disable:
+        - error-is-as
+        - go-require
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - nolintlint
+        path: models/db/sql_postgres_with_schema.go
+      - linters:
+          - dupl
+          - errcheck
+          - gocyclo
+          - gosec
+          - staticcheck
+          - unparam
+        path: _test\.go
+      - linters:
+          - dupl
+          - errcheck
+          - gocyclo
+          - gosec
+        path: models/gitea_migrations/v
+      - linters:
+          - forbidigo
+        path: cmd
+      - linters:
+          - dupl
+        text: (?i)webhook
+      - linters:
+          - gocritic
+        text: (?i)`ID' should not be capitalized
+      - linters:
+          - deadcode
+          - unused
+        text: (?i)swagger
+      - linters:
+          - staticcheck
+        text: (?i)argument x is overwritten before first use
+      - linters:
+          - gocritic
+        text: '(?i)commentFormatting: put a space between `//` and comment text'
+      - linters:
+          - gocritic
+        text: '(?i)exitAfterDefer:'
+      - linters:
+          - staticcheck
+        text: "(ST1005|ST1003|QF1001):"
+    paths:
+      - node_modules
+      - public
+      - web_src
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+  settings:
+    gofumpt:
+      extra-rules: true
+  exclusions:
+    generated: lax
+    paths:
+      - node_modules
+      - public
+      - web_src
+      - third_party$
+      - builtin$
+      - examples$

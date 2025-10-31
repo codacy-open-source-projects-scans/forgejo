@@ -1,0 +1,22 @@
+// Copyright 2022 The Gitea Authors. All rights reserved.
+// SPDX-License-Identifier: MIT
+
+package swagger
+
+import (
+	api "forgejo.org/modules/structs"
+)
+
+// ActivityPub
+// swagger:response ActivityPub
+type swaggerResponseActivityPub struct {
+	// in:body
+	Body api.ActivityPub `json:"body"`
+}
+
+// Personfeed
+// swagger:response PersonFeed
+type swaggerResponsePersonFeed struct {
+	// in:body
+	Body []api.APPersonFollowItem `json:"body"`
+}

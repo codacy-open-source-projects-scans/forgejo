@@ -1,0 +1,76 @@
+// Copyright 2019 The Gitea Authors. All rights reserved.
+// SPDX-License-Identifier: MIT
+
+package context
+
+import (
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"testing"
+
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/test"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestGenAPILinks(t *testing.T) {
+	defer test.MockVariableValue(&setting.AppURL, "http://localhost:3000/")()
+	kases := map[string][]string{
+		"api/v1/repos/jerrykan/example-repo/issues?state=all": {
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=2&state=all>; rel="next"`,
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=5&state=all>; rel="last"`,
+		},
+		"api/v1/repos/jerrykan/example-repo/issues?state=all&page=1": {
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=2&state=all>; rel="next"`,
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=5&state=all>; rel="last"`,
+		},
+		"api/v1/repos/jerrykan/example-repo/issues?state=all&page=2": {
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=3&state=all>; rel="next"`,
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=5&state=all>; rel="last"`,
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=1&state=all>; rel="first"`,
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=1&state=all>; rel="prev"`,
+		},
+		"api/v1/repos/jerrykan/example-repo/issues?state=all&page=5": {
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=1&state=all>; rel="first"`,
+			`<http://localhost:3000/api/v1/repos/jerrykan/example-repo/issues?page=4&state=all>; rel="prev"`,
+		},
+	}
+
+	for req, response := range kases {
+		u, err := url.Parse(setting.AppURL + req)
+		require.NoError(t, err)
+
+		p := u.Query().Get("page")
+		curPage, _ := strconv.Atoi(p)
+
+		links := genAPILinks(u, 100, 20, curPage)
+
+		assert.Equal(t, links, response)
+	}
+}
+
+func TestAcceptsGithubResponse(t *testing.T) {
+	t.Run("Normal", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		resp := httptest.NewRecorder()
+		base, baseCleanUp := NewBaseContext(resp, req)
+		t.Cleanup(baseCleanUp)
+		ctx := &APIContext{Base: base}
+
+		assert.False(t, ctx.AcceptsGithubResponse())
+	})
+
+	t.Run("Accepts Github", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Add("Accept", "application/vnd.github+json")
+		resp := httptest.NewRecorder()
+		base, baseCleanUp := NewBaseContext(resp, req)
+		t.Cleanup(baseCleanUp)
+		ctx := &APIContext{Base: base}
+
+		assert.True(t, ctx.AcceptsGithubResponse())
+	})
+}

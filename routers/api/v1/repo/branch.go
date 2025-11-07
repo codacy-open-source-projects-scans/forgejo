@@ -6,25 +6,24 @@ package repo
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
-	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	"code.gitea.io/gitea/models/organization"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/optional"
-	repo_module "code.gitea.io/gitea/modules/repository"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
-	pull_service "code.gitea.io/gitea/services/pull"
-	repo_service "code.gitea.io/gitea/services/repository"
+	"forgejo.org/models"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	"forgejo.org/models/organization"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/optional"
+	repo_module "forgejo.org/modules/repository"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
+	pull_service "forgejo.org/services/pull"
+	repo_service "forgejo.org/services/repository"
 )
 
 // GetBranch get a branch of a repository
@@ -133,11 +132,6 @@ func DeleteBranch(ctx *context.APIContext) {
 
 	branchName := ctx.Params("*")
 
-	if ctx.Repo.Repository.IsEmpty {
-		ctx.Error(http.StatusForbidden, "", "Git Repository is empty.")
-		return
-	}
-
 	// check whether branches of this repository has been synced
 	totalNumOfBranches, err := db.Count[git_model.Branch](ctx, git_model.FindBranchOptions{
 		RepoID:          ctx.Repo.Repository.ID,
@@ -156,7 +150,7 @@ func DeleteBranch(ctx *context.APIContext) {
 	}
 
 	if ctx.Repo.Repository.IsMirror {
-		ctx.Error(http.StatusForbidden, "IsMirrored", fmt.Errorf("can not delete branch of an mirror repository"))
+		ctx.Error(http.StatusForbidden, "IsMirrored", errors.New("can not delete branch of an mirror repository"))
 		return
 	}
 
@@ -165,9 +159,9 @@ func DeleteBranch(ctx *context.APIContext) {
 		case git.IsErrBranchNotExist(err):
 			ctx.NotFound(err)
 		case errors.Is(err, repo_service.ErrBranchIsDefault):
-			ctx.Error(http.StatusForbidden, "DefaultBranch", fmt.Errorf("can not delete default branch"))
+			ctx.Error(http.StatusForbidden, "DefaultBranch", errors.New("can not delete default branch"))
 		case errors.Is(err, git_model.ErrBranchIsProtected):
-			ctx.Error(http.StatusForbidden, "IsProtectedBranch", fmt.Errorf("branch protected"))
+			ctx.Error(http.StatusForbidden, "IsProtectedBranch", errors.New("branch protected"))
 		default:
 			ctx.Error(http.StatusInternalServerError, "DeleteBranch", err)
 		}
@@ -236,9 +230,9 @@ func CreateBranch(ctx *context.APIContext) {
 			ctx.Error(http.StatusInternalServerError, "GetCommit", err)
 			return
 		}
-	} else if len(opt.OldBranchName) > 0 { //nolint
-		if ctx.Repo.GitRepo.IsBranchExist(opt.OldBranchName) { //nolint
-			oldCommit, err = ctx.Repo.GitRepo.GetBranchCommit(opt.OldBranchName) //nolint
+	} else if len(opt.OldBranchName) > 0 { //nolint:staticcheck
+		if ctx.Repo.GitRepo.IsBranchExist(opt.OldBranchName) { //nolint:staticcheck
+			oldCommit, err = ctx.Repo.GitRepo.GetBranchCommit(opt.OldBranchName) //nolint:staticcheck
 			if err != nil {
 				ctx.Error(http.StatusInternalServerError, "GetBranchCommit", err)
 				return
@@ -398,6 +392,77 @@ func ListBranches(ctx *context.APIContext) {
 	ctx.JSON(http.StatusOK, apiBranches)
 }
 
+// UpdateBranch updates a repository's branch.
+func UpdateBranch(ctx *context.APIContext) {
+	// swagger:operation PATCH /repos/{owner}/{repo}/branches/{branch} repository repoUpdateBranch
+	// ---
+	// summary: Update a branch
+	// consumes:
+	// - application/json
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: owner
+	//   in: path
+	//   description: owner of the repo
+	//   type: string
+	//   required: true
+	// - name: repo
+	//   in: path
+	//   description: name of the repo
+	//   type: string
+	//   required: true
+	// - name: branch
+	//   in: path
+	//   description: name of the branch
+	//   type: string
+	//   required: true
+	// - name: body
+	//   in: body
+	//   schema:
+	//     "$ref": "#/definitions/UpdateBranchRepoOption"
+	// responses:
+	//   "204":
+	//     "$ref": "#/responses/empty"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	//   "422":
+	//     "$ref": "#/responses/validationError"
+
+	opt := web.GetForm(ctx).(*api.UpdateBranchRepoOption)
+
+	oldName := ctx.Params("*")
+	repo := ctx.Repo.Repository
+
+	if repo.IsEmpty {
+		ctx.Error(http.StatusNotFound, "", "Git Repository is empty.")
+		return
+	}
+
+	if repo.IsMirror {
+		ctx.Error(http.StatusForbidden, "", "Git Repository is a mirror.")
+		return
+	}
+
+	msg, err := repo_service.RenameBranch(ctx, repo, ctx.Doer, ctx.Repo.GitRepo, oldName, opt.Name)
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, "RenameBranch", err)
+		return
+	}
+	if msg == "target_exist" {
+		ctx.Error(http.StatusUnprocessableEntity, "", "Cannot rename a branch using the same name or rename to a branch that already exists.")
+		return
+	}
+	if msg == "from_not_exist" {
+		ctx.Error(http.StatusNotFound, "", "Branch doesn't exist.")
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
 // GetBranchProtection gets a branch protection
 func GetBranchProtection(ctx *context.APIContext) {
 	// swagger:operation GET /repos/{owner}/{repo}/branch_protections/{name} repository repoGetBranchProtection
@@ -529,7 +594,7 @@ func CreateBranchProtection(ctx *context.APIContext) {
 	isPlainRule := !git_model.IsRuleNameSpecial(ruleName)
 	var isBranchExist bool
 	if isPlainRule {
-		isBranchExist = git.IsBranchExist(ctx.Req.Context(), ctx.Repo.Repository.RepoPath(), ruleName)
+		isBranchExist = ctx.Repo.GitRepo.IsBranchExist(ruleName)
 	}
 
 	protectBranch, err := git_model.GetProtectedBranchRuleByName(ctx, repo.ID, ruleName)
@@ -917,7 +982,7 @@ func EditBranchProtection(ctx *context.APIContext) {
 	isPlainRule := !git_model.IsRuleNameSpecial(bpName)
 	var isBranchExist bool
 	if isPlainRule {
-		isBranchExist = git.IsBranchExist(ctx.Req.Context(), ctx.Repo.Repository.RepoPath(), bpName)
+		isBranchExist = ctx.Repo.GitRepo.IsBranchExist(bpName)
 	}
 
 	if isBranchExist {

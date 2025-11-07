@@ -70,15 +70,17 @@
 <div class="js-branch-tag-selector {{if .ContainerClasses}}{{.ContainerClasses}}{{end}}">
 	{{/* show dummy elements before Vue componment is mounted, this code must match the code in BranchTagSelector.vue */}}
 	<div class="ui dropdown custom">
-		<button class="branch-dropdown-button gt-ellipsis ui basic small compact button tw-flex tw-m-2">
+		<button class="branch-dropdown-button gt-ellipsis ui basic small compact button tw-flex tw-m-0">
 			<span class="text tw-flex tw-items-center tw-mr-1 gt-ellipsis">
 				{{if .release}}
 					{{ctx.Locale.Tr "repo.release.compare"}}
 				{{else}}
 					{{if eq $type "tag"}}
 						{{svg "octicon-tag"}}
-					{{else}}
+					{{else if eq $type "branch"}}
 						{{svg "octicon-git-branch"}}
+					{{else}}
+						{{svg "octicon-git-commit"}}
 					{{end}}
 					<strong ref="dropdownRefName" class="tw-ml-2 tw-inline-block gt-ellipsis">{{if and .root.IsViewTag (not .noTag)}}{{.root.TagName}}{{else if .root.IsViewBranch}}{{.root.BranchName}}{{else}}{{ShortSha .root.CommitID}}{{end}}</strong>
 				{{end}}

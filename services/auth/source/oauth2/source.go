@@ -4,8 +4,10 @@
 package oauth2
 
 import (
-	"code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/modules/json"
+	"strings"
+
+	"forgejo.org/models/auth"
+	"forgejo.org/modules/json"
 )
 
 // Source holds configuration for the OAuth2 login source.
@@ -17,15 +19,17 @@ type Source struct {
 	CustomURLMapping              *CustomURLMapping
 	IconURL                       string
 
-	Scopes              []string
-	RequiredClaimName   string
-	RequiredClaimValue  string
-	GroupClaimName      string
-	AdminGroup          string
-	GroupTeamMap        string
-	GroupTeamMapRemoval bool
-	RestrictedGroup     string
-	SkipLocalTwoFA      bool `json:",omitempty"`
+	Scopes                []string
+	AttributeSSHPublicKey string
+	RequiredClaimName     string
+	RequiredClaimValue    string
+	GroupClaimName        string
+	AdminGroup            string
+	GroupTeamMap          string
+	GroupTeamMapRemoval   bool
+	RestrictedGroup       string
+	SkipLocalTwoFA        bool `json:",omitempty"`
+	AllowUsernameChange   bool
 
 	// reference to the authSource
 	authSource *auth.Source
@@ -36,9 +40,14 @@ func (source *Source) FromDB(bs []byte) error {
 	return json.UnmarshalHandleDoubleEncode(bs, &source)
 }
 
-// ToDB exports an OAuth2Config to a serialized format.
+// ToDB exports an SMTPConfig to a serialized format.
 func (source *Source) ToDB() ([]byte, error) {
 	return json.Marshal(source)
+}
+
+// ProvidesSSHKeys returns if this source provides SSH Keys
+func (source *Source) ProvidesSSHKeys() bool {
+	return len(strings.TrimSpace(source.AttributeSSHPublicKey)) > 0
 }
 
 // SetAuthSource sets the related AuthSource

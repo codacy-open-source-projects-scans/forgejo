@@ -1,36 +1,71 @@
 <script>
 import {SvgIcon} from '../svg.js';
 import ActionRunStatus from './ActionRunStatus.vue';
-import {createApp} from 'vue';
 import {toggleElem} from '../utils/dom.js';
 import {formatDatetime} from '../utils/time.js';
 import {renderAnsi} from '../render/ansi.js';
 import {GET, POST, DELETE} from '../modules/fetch.js';
 
-const sfc = {
+export default {
   name: 'RepoActionView',
   components: {
     SvgIcon,
     ActionRunStatus,
   },
   props: {
-    runIndex: String,
-    jobIndex: String,
-    actionsURL: String,
-    workflowName: String,
-    workflowURL: String,
-    locale: Object,
+    initialJobData: {
+      type: Object,
+      required: true,
+    },
+    initialArtifactData: {
+      type: Object,
+      required: true,
+    },
+    runIndex: {
+      type: String,
+      required: true,
+    },
+    runID: {
+      type: String,
+      required: true,
+    },
+    jobIndex: {
+      type: String,
+      required: true,
+    },
+    attemptNumber: {
+      type: String,
+      required: true,
+    },
+    actionsURL: {
+      type: String,
+      required: true,
+    },
+    workflowName: {
+      type: String,
+      required: true,
+    },
+    workflowURL: {
+      type: String,
+      required: true,
+    },
+    locale: {
+      type: Object,
+      required: true,
+    },
   },
 
   data() {
     return {
       // internal state
       loading: false,
+      initialLoadComplete: false,
+      needLoadingWithLogCursors: null,
       intervalID: null,
+      lineNumberOffset: [],
       currentJobStepsStates: [],
       artifacts: [],
-      onHoverRerunIndex: -1,
-      menuVisible: false,
+      menuVisible: undefined,
       isFullScreen: false,
       timeVisible: {
         'log-time-stamp': false,
@@ -41,11 +76,13 @@ const sfc = {
       run: {
         link: '',
         title: '',
+        titleHTML: '',
         status: '',
         canCancel: false,
         canApprove: false,
         canRerun: false,
         done: false,
+        preExecutionError: '',
         jobs: [
           // {
           //   id: 0,
@@ -81,15 +118,76 @@ const sfc = {
           //   status: '',
           // }
         ],
+        // All available attempts for the job we're currently viewing.
+        //
+        // initial value here is configured so that currentingViewingMostRecentAttempt() -> true on the default `data()`, so that the
+        // initial render (before `loadJob`'s first execution is complete) doesn't display "You are viewing an
+        // out-of-date run..."
+        allAttempts: new Array(parseInt(this.attemptNumber)).fill({index: 0, time_since_started_html: '', status: 'success'}),
       },
     };
   },
 
+  computed: {
+    shouldShowAttemptDropdown() {
+      return this.initialLoadComplete && this.currentJob.allAttempts && this.currentJob.allAttempts.length > 1;
+    },
+
+    displayOtherJobs() {
+      return this.currentingViewingMostRecentAttempt;
+    },
+
+    canApprove() {
+      return this.currentingViewingMostRecentAttempt && this.run.canApprove;
+    },
+
+    canCancel() {
+      return this.currentingViewingMostRecentAttempt && this.run.canCancel;
+    },
+
+    canRerun() {
+      return this.currentingViewingMostRecentAttempt && this.run.canRerun;
+    },
+
+    viewingAttemptNumber() {
+      return parseInt(this.attemptNumber);
+    },
+
+    viewingAttempt() {
+      const fallback = {index: 0, time_since_started_html: '', status: 'success'};
+      if (!this.currentJob.allAttempts) {
+        return fallback;
+      }
+      const attempt = this.currentJob.allAttempts.find((attempt) => attempt.number === this.viewingAttemptNumber);
+      return attempt || fallback;
+    },
+
+    currentingViewingMostRecentAttempt() {
+      if (!this.currentJob.allAttempts) {
+        return true;
+      }
+      return this.viewingAttemptNumber === this.currentJob.allAttempts.length;
+    },
+
+    displayGearDropdown() {
+      return this.menuVisible === 'gear';
+    },
+
+    displayAttemptDropdown() {
+      return this.menuVisible === 'attempt';
+    },
+
+    viewingOutOfDateRunLabel() {
+      return this.locale.viewingOutOfDateRun
+        .replace('%[1]s', this.viewingAttempt.time_since_started_html);
+    },
+  },
+
   async mounted() {
-    // load job data and then auto-reload periodically
-    // need to await first loadJob so this.currentJobStepsStates is initialized and can be used in hashChangeListener
-    await this.loadJob();
-    this.intervalID = setInterval(this.loadJob, 1000);
+    // Need to await first loadJob so this.currentJobStepsStates is initialized and can be used in hashChangeListener,
+    // but with the initializing data being passed in this should end up as a synchronous invocation.  loadJob is
+    // responsible for setting up its refresh interval during this first invocation.
+    await this.loadJob({initialJobData: this.initialJobData, initialArtifactData: this.initialArtifactData});
     document.body.addEventListener('click', this.closeDropdown);
     this.hashChangeListener();
     window.addEventListener('hashchange', this.hashChangeListener);
@@ -114,7 +212,9 @@ const sfc = {
     toggleStepLogs(idx) {
       this.currentJobStepsStates[idx].expanded = !this.currentJobStepsStates[idx].expanded;
       if (this.currentJobStepsStates[idx].expanded) {
-        this.loadJob(); // try to load the data immediately instead of waiting for next timer interval
+        // request data load immediately instead of waiting for next timer interval (which, if the job is done, will
+        // never happen because the interval will have been disabled)
+        this.loadJob();
       }
     },
     // cancel a run
@@ -129,23 +229,20 @@ const sfc = {
     toggleGroupLogs(event) {
       const line = event.target.parentElement;
       const list = line.nextSibling;
-      if (event.newState === 'open') {
-        list.classList.remove('hidden');
-      } else {
-        list.classList.add('hidden');
-      }
+      list.classList.toggle('hidden', event.newState !== 'open');
     },
 
     createLogLine(line, startTime, stepIndex, group) {
+      const lineNo = line.index - this.lineNumberOffset[stepIndex];
       const div = document.createElement('div');
       div.classList.add('job-log-line');
-      div.setAttribute('id', `jobstep-${stepIndex}-${line.index}`);
+      div.setAttribute('id', `jobstep-${stepIndex}-${lineNo}`);
       div._jobLogTime = line.timestamp;
 
       const lineNumber = document.createElement('a');
       lineNumber.classList.add('line-num', 'muted');
-      lineNumber.textContent = line.index;
-      lineNumber.setAttribute('href', `#jobstep-${stepIndex}-${line.index}`);
+      lineNumber.textContent = lineNo;
+      lineNumber.setAttribute('href', `#jobstep-${stepIndex}-${lineNo}`);
       div.append(lineNumber);
 
       // for "Show timestamps"
@@ -164,6 +261,13 @@ const sfc = {
 
       let logMessage = document.createElement('span');
       logMessage.innerHTML = renderAnsi(line.message);
+      // If the input to renderAnsi is not empty and the output is empty we can
+      // assume the input was only ANSI escape codes that have been removed. In
+      // that case we should not display this message
+      if (line.message !== '' && logMessage.innerHTML === '') {
+        this.lineNumberOffset[stepIndex]++;
+        return [];
+      }
       if (group.isHeader) {
         const details = document.createElement('details');
         details.addEventListener('toggle', this.toggleGroupLogs);
@@ -205,8 +309,7 @@ const sfc = {
           el.append(logLine);
 
           const list = document.createElement('div');
-          list.classList.add('job-log-list');
-          list.classList.add('hidden');
+          list.classList.add('job-log-list', 'hidden');
           list.setAttribute('data-group', group.index);
           groupStack.push(list);
           el.append(list);
@@ -229,33 +332,72 @@ const sfc = {
       await this.loadJob();
     },
 
-    async fetchJob() {
-      const logCursors = this.currentJobStepsStates.map((it, idx) => {
+    getLogCursors() {
+      return this.currentJobStepsStates.map((it, idx) => {
         // cursor is used to indicate the last position of the logs
         // it's only used by backend, frontend just reads it and passes it back, it and can be any type.
         // for example: make cursor=null means the first time to fetch logs, cursor=eof means no more logs, etc
         return {step: idx, cursor: it.cursor, expanded: it.expanded};
       });
-      const resp = await POST(`${this.actionsURL}/runs/${this.runIndex}/jobs/${this.jobIndex}`, {
-        data: {logCursors},
-      });
+    },
+
+    async fetchJob(logCursors) {
+      const resp = await POST(
+        `${this.actionsURL}/runs/${this.runIndex}/jobs/${this.jobIndex}/attempt/${this.attemptNumber}`,
+        {data: {logCursors}},
+      );
       return await resp.json();
     },
 
-    async loadJob() {
-      if (this.loading) return;
+    async loadJob(initializationData) {
+      const isInitializing = initializationData !== undefined;
+      let myLoadingLogCursors = this.getLogCursors();
+      if (this.loading) {
+        // loadJob is already executing; but it's possible that our log cursor request has changed since it started.  If
+        // the interval load is active, that problem would solve itself, but if it isn't (say we're viewing a "done"
+        // job), then the change to the requested cursors may never be loaded.  To address this we set our newest
+        // requested log cursors into a state property and rely on loadJob to retry at the end of its execution if it
+        // notices these have changed.
+        this.needLoadingWithLogCursors = myLoadingLogCursors;
+        return;
+      }
+
       try {
         this.loading = true;
+        // Since no async operations occurred since fetching myLoadingLogCursors, we can be sure that we have the most
+        // recent needed log cursors, so we can reset needLoadingWithLogCursors -- it could be stale if exceptions
+        // occurred in previous load attempts.
+        this.needLoadingWithLogCursors = null;
 
         let job, artifacts;
-        try {
-          [job, artifacts] = await Promise.all([
-            this.fetchJob(),
-            this.fetchArtifacts(), // refresh artifacts if upload-artifact step done
-          ]);
-        } catch (err) {
-          if (err instanceof TypeError) return; // avoid network error while unloading page
-          throw err;
+
+        while (true) {
+          try {
+            if (initializationData) {
+              job = initializationData.initialJobData;
+              artifacts = initializationData.initialArtifactData;
+              // don't think it's possible that we loop retrying for 'needLoadingWithLogCursors' during initialization,
+              // but just in case, we'll ensure initializationData can only be used once and go to the network on retry
+              initializationData = undefined;
+            } else {
+              [job, artifacts] = await Promise.all([
+                this.fetchJob(myLoadingLogCursors),
+                this.fetchArtifacts(), // refresh artifacts if upload-artifact step done
+              ]);
+            }
+          } catch (err) {
+            if (err instanceof TypeError) return; // avoid network error while unloading page
+            throw err;
+          }
+
+          // We can be done as long as needLoadingWithLogCursors is null, or the same as what we just loaded.
+          if (this.needLoadingWithLogCursors === null || JSON.stringify(this.needLoadingWithLogCursors) === JSON.stringify(myLoadingLogCursors)) {
+            this.needLoadingWithLogCursors = null;
+            break;
+          }
+
+          // Otherwise we need to retry that.
+          myLoadingLogCursors = this.needLoadingWithLogCursors;
         }
 
         this.artifacts = artifacts['artifacts'] || [];
@@ -274,17 +416,34 @@ const sfc = {
         // append logs to the UI
         for (const logs of job.logs.stepsLog) {
           // save the cursor, it will be passed to backend next time
+          this.lineNumberOffset[logs.step] = 0;
           this.currentJobStepsStates[logs.step].cursor = logs.cursor;
           this.appendLogs(logs.step, logs.lines, logs.started);
         }
 
-        if (this.run.done && this.intervalID) {
-          clearInterval(this.intervalID);
-          this.intervalID = null;
+        if (this.run.done) {
+          if (this.intervalID) {
+            clearInterval(this.intervalID);
+            this.intervalID = null;
+          }
+        } else if (isInitializing) {
+          // Begin refresh interval since we know this job isn't done.
+          this.intervalID = setInterval(this.loadJob, 1000);
         }
       } finally {
         this.loading = false;
+        this.initialLoadComplete = true;
       }
+    },
+
+    navigateToAttempt(attempt) {
+      const url = `${this.actionsURL}/runs/${this.runIndex}/jobs/${this.jobIndex}/attempt/${attempt.number}`;
+      window.location.href = url;
+    },
+
+    navigateToMostRecentAttempt() {
+      const url = `${this.actionsURL}/runs/${this.runIndex}/jobs/${this.jobIndex}`;
+      window.location.href = url;
     },
 
     isDone(status) {
@@ -295,8 +454,24 @@ const sfc = {
       return ['success', 'running', 'failure', 'cancelled'].includes(status);
     },
 
+    toggleAttemptDropdown() {
+      if (this.menuVisible === 'attempt') {
+        this.menuVisible = undefined;
+      } else {
+        this.menuVisible = 'attempt';
+      }
+    },
+
+    toggleGearDropdown() {
+      if (this.menuVisible === 'gear') {
+        this.menuVisible = undefined;
+      } else {
+        this.menuVisible = 'gear';
+      }
+    },
+
     closeDropdown() {
-      if (this.menuVisible) this.menuVisible = false;
+      this.menuVisible = undefined;
     },
 
     toggleTimeDisplay(type) {
@@ -339,70 +514,43 @@ const sfc = {
       if (!logLine) return;
       logLine.querySelector('.line-num').click();
     },
+
+    runAttemptLabel(attempt) {
+      if (!attempt) {
+        return '';
+      }
+      return this.locale.runAttemptLabel
+        .replace('%[1]s', attempt.number)
+        .replace('%[2]s', attempt.time_since_started_html);
+    },
   },
 };
-
-export default sfc;
-
-export function initRepositoryActionView() {
-  const el = document.getElementById('repo-action-view');
-  if (!el) return;
-
-  // TODO: the parent element's full height doesn't work well now,
-  // but we can not pollute the global style at the moment, only fix the height problem for pages with this component
-  const parentFullHeight = document.querySelector('body > div.full.height');
-  if (parentFullHeight) parentFullHeight.style.paddingBottom = '0';
-
-  const view = createApp(sfc, {
-    runIndex: el.getAttribute('data-run-index'),
-    jobIndex: el.getAttribute('data-job-index'),
-    actionsURL: el.getAttribute('data-actions-url'),
-    workflowName: el.getAttribute('data-workflow-name'),
-    workflowURL: el.getAttribute('data-workflow-url'),
-    locale: {
-      approve: el.getAttribute('data-locale-approve'),
-      cancel: el.getAttribute('data-locale-cancel'),
-      rerun: el.getAttribute('data-locale-rerun'),
-      artifactsTitle: el.getAttribute('data-locale-artifacts-title'),
-      areYouSure: el.getAttribute('data-locale-are-you-sure'),
-      confirmDeleteArtifact: el.getAttribute('data-locale-confirm-delete-artifact'),
-      rerun_all: el.getAttribute('data-locale-rerun-all'),
-      showTimeStamps: el.getAttribute('data-locale-show-timestamps'),
-      showLogSeconds: el.getAttribute('data-locale-show-log-seconds'),
-      showFullScreen: el.getAttribute('data-locale-show-full-screen'),
-      downloadLogs: el.getAttribute('data-locale-download-logs'),
-      status: {
-        unknown: el.getAttribute('data-locale-status-unknown'),
-        waiting: el.getAttribute('data-locale-status-waiting'),
-        running: el.getAttribute('data-locale-status-running'),
-        success: el.getAttribute('data-locale-status-success'),
-        failure: el.getAttribute('data-locale-status-failure'),
-        cancelled: el.getAttribute('data-locale-status-cancelled'),
-        skipped: el.getAttribute('data-locale-status-skipped'),
-        blocked: el.getAttribute('data-locale-status-blocked'),
-      },
-    },
-  });
-  view.mount(el);
-}
 </script>
 <template>
-  <div class="ui container action-view-container">
+  <div class="ui container fluid padded action-view-container" :class="{ 'interval-pending': intervalID }">
+    <div class="action-view-header job-out-of-date-warning" v-if="!currentingViewingMostRecentAttempt">
+      <div class="ui warning message">
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <span v-html="viewingOutOfDateRunLabel"/>
+        <button class="tw-ml-8 ui basic small compact button" @click="navigateToMostRecentAttempt()">
+          {{ locale.viewMostRecentRun }}
+        </button>
+      </div>
+    </div>
     <div class="action-view-header">
       <div class="action-info-summary">
         <div class="action-info-summary-title">
           <ActionRunStatus :locale-status="locale.status[run.status]" :status="run.status" :size="20"/>
-          <h2 class="action-info-summary-title-text">
-            {{ run.title }}
-          </h2>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <h2 class="action-info-summary-title-text" v-html="run.titleHTML"/>
         </div>
-        <button class="ui basic small compact button primary" @click="approveRun()" v-if="run.canApprove">
+        <button class="ui basic small compact button primary" @click="approveRun()" v-if="canApprove">
           {{ locale.approve }}
         </button>
-        <button class="ui basic small compact button red" @click="cancelRun()" v-else-if="run.canCancel">
+        <button class="ui basic small compact button red" @click="cancelRun()" v-else-if="canCancel">
           {{ locale.cancel }}
         </button>
-        <button class="ui basic small compact button tw-mr-0 tw-whitespace-nowrap link-action" :data-url="`${run.link}/rerun`" v-else-if="run.canRerun">
+        <button class="ui basic small compact button tw-mr-0 tw-whitespace-nowrap link-action" :data-url="`${run.link}/rerun`" v-else-if="canRerun">
           {{ locale.rerun_all }}
         </button>
       </div>
@@ -412,25 +560,32 @@ export function initRepositoryActionView() {
         {{ run.commit.localePushedBy }}
         <a class="muted" :href="run.commit.pusher.link">{{ run.commit.pusher.displayName }}</a>
         <span class="ui label tw-max-w-full" v-if="run.commit.shortSHA">
-          <a class="gt-ellipsis" :href="run.commit.branch.link">{{ run.commit.branch.name }}</a>
+          <span v-if="run.commit.branch.isDeleted" class="gt-ellipsis tw-line-through" :data-tooltip-content="run.commit.branch.name">{{ run.commit.branch.name }}</span>
+          <a v-else class="gt-ellipsis" :href="run.commit.branch.link" :data-tooltip-content="run.commit.branch.name">{{ run.commit.branch.name }}</a>
         </span>
       </div>
       <div class="action-summary">
         {{ run.commit.localeWorkflow }}
         <a class="muted" :href="workflowURL">{{ workflowName }}</a>
       </div>
+      <div class="ui error message pre-execution-error" v-if="run.preExecutionError">
+        <div class="header">
+          {{ locale.preExecutionError }}
+        </div>
+        {{ run.preExecutionError }}
+      </div>
     </div>
     <div class="action-view-body">
-      <div class="action-view-left">
+      <div class="action-view-left" v-if="displayOtherJobs">
         <div class="job-group-section">
           <div class="job-brief-list">
-            <a class="job-brief-item" :href="run.link+'/jobs/'+index" :class="parseInt(jobIndex) === index ? 'selected' : ''" v-for="(job, index) in run.jobs" :key="job.id" @mouseenter="onHoverRerunIndex = job.id" @mouseleave="onHoverRerunIndex = -1">
+            <a class="job-brief-item" :href="run.link+'/jobs/'+index" :class="parseInt(jobIndex) === index ? 'selected' : ''" v-for="(job, index) in run.jobs" :key="job.id">
               <div class="job-brief-item-left">
                 <ActionRunStatus :locale-status="locale.status[job.status]" :status="job.status"/>
                 <span class="job-brief-name tw-mx-2 gt-ellipsis">{{ job.name }}</span>
               </div>
               <span class="job-brief-item-right">
-                <SvgIcon name="octicon-sync" role="button" :data-tooltip-content="locale.rerun" class="job-brief-rerun tw-mx-2 link-action" :data-url="`${run.link}/jobs/${index}/rerun`" v-if="job.canRerun && onHoverRerunIndex === job.id"/>
+                <SvgIcon name="octicon-sync" role="button" :data-tooltip-content="locale.rerun" class="job-brief-rerun tw-mx-3 link-action" :data-url="`${run.link}/jobs/${index}/rerun`" v-if="job.canRerun"/>
                 <span class="step-summary-duration">{{ job.duration }}</span>
               </span>
             </a>
@@ -442,7 +597,7 @@ export function initRepositoryActionView() {
           </div>
           <ul class="job-artifacts-list">
             <li class="job-artifacts-item" v-for="artifact in artifacts" :key="artifact.name">
-              <a class="job-artifacts-link" target="_blank" :href="run.link+'/artifacts/'+artifact.name">
+              <a class="job-artifacts-link" target="_blank" :href="actionsURL+'/runs/'+runID+'/artifacts/'+artifact.name">
                 <SvgIcon name="octicon-file" class="ui text black job-artifacts-icon"/>{{ artifact.name }}
               </a>
               <a v-if="run.canDeleteArtifact" @click="deleteArtifact(artifact.name)" class="job-artifacts-delete">
@@ -463,12 +618,29 @@ export function initRepositoryActionView() {
               {{ currentJob.detail }}
             </p>
           </div>
+          <div class="job-info-header-right job-attempt-dropdown tw-mr-8" v-if="shouldShowAttemptDropdown" v-cloak>
+            <div class="ui dropdown selection" @click.stop="toggleAttemptDropdown()">
+              <SvgIcon name="octicon-triangle-down" class="dropdown icon"/>
+              <div class="default text">
+                <ActionRunStatus :locale-status="locale.status[viewingAttempt.status]" :status="viewingAttempt.status" :inline="true"/>
+                <!-- eslint-disable-next-line vue/no-v-html -->
+                <span class="tw-ml-2" v-html="runAttemptLabel(viewingAttempt)"/>
+              </div>
+              <div class="menu transition action-job-menu" :class="{visible: displayAttemptDropdown}" v-if="displayAttemptDropdown" v-cloak>
+                <a tabindex="0" :class="{ item: true, selected: attempt.number === viewingAttemptNumber }" v-for="attempt in currentJob.allAttempts" :key="attempt.number" @click="navigateToAttempt(attempt)">
+                  <ActionRunStatus :locale-status="locale.status[attempt.status]" :status="attempt.status" :inline="true"/>
+                  <!-- eslint-disable-next-line vue/no-v-html -->
+                  <span class="tw-ml-2" v-html="runAttemptLabel(attempt)"/>
+                </a>
+              </div>
+            </div>
+          </div>
           <div class="job-info-header-right">
-            <div class="ui top right pointing dropdown custom jump item" @click.stop="menuVisible = !menuVisible">
+            <div class="ui top right pointing dropdown dark-dropdown custom jump item job-gear-dropdown" @click.stop="toggleGearDropdown()">
               <button class="btn gt-interact-bg tw-p-2">
                 <SvgIcon name="octicon-gear" :size="18"/>
               </button>
-              <div class="menu transition action-job-menu" :class="{visible: menuVisible}" v-if="menuVisible" v-cloak>
+              <div class="menu transition action-job-menu" :class="{visible: displayGearDropdown}" v-if="displayGearDropdown" v-cloak>
                 <a class="item" tabindex="0" @click="toggleTimeDisplay('seconds')" @keyup.space="toggleTimeDisplay('seconds')" @keyup.enter="toggleTimeDisplay('seconds')">
                   <i class="icon"><SvgIcon :name="timeVisible['log-time-seconds'] ? 'octicon-check' : 'gitea-empty-checkbox'"/></i>
                   {{ locale.showLogSeconds }}
@@ -537,11 +709,13 @@ export function initRepositoryActionView() {
 
 .action-info-summary-title {
   display: flex;
+  align-items: center;
+  gap: 0.5em;
 }
 
 .action-info-summary-title-text {
   font-size: 20px;
-  margin: 0 0 0 8px;
+  margin: 0;
   flex: 1;
   overflow-wrap: anywhere;
 }
@@ -701,30 +875,30 @@ export function initRepositoryActionView() {
 
 /* begin fomantic dropdown menu overrides */
 
-.action-view-right .ui.dropdown .menu {
+.action-view-right .ui.dropdown.dark-dropdown .menu {
   background: var(--color-console-menu-bg);
   border-color: var(--color-console-menu-border);
 }
 
-.action-view-right .ui.dropdown .menu > .item {
+.action-view-right .ui.dropdown.dark-dropdown .menu > .item {
   color: var(--color-console-fg);
 }
 
-.action-view-right .ui.dropdown .menu > .item:hover {
+.action-view-right .ui.dropdown.dark-dropdown .menu > .item:hover {
   color: var(--color-console-fg);
   background: var(--color-console-hover-bg);
 }
 
-.action-view-right .ui.dropdown .menu > .item:active {
+.action-view-right .ui.dropdown.dark-dropdown .menu > .item:active {
   color: var(--color-console-fg);
   background: var(--color-console-active-bg);
 }
 
-.action-view-right .ui.dropdown .menu > .divider {
+.action-view-right .ui.dropdown.dark-dropdown .menu > .divider {
   border-top-color: var(--color-console-menu-border);
 }
 
-.action-view-right .ui.pointing.dropdown > .menu:not(.hidden)::after {
+.action-view-right .ui.pointing.dropdown.dark-dropdown > .menu:not(.hidden)::after {
   background: var(--color-console-menu-bg);
   box-shadow: -1px -1px 0 0 var(--color-console-menu-border);
 }
@@ -879,6 +1053,7 @@ export function initRepositoryActionView() {
   white-space: break-spaces;
   margin-left: 10px;
   overflow-wrap: anywhere;
+  color: var(--color-console-fg);
 }
 
 /* selectors here are intentionally exact to only match fullscreen */

@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"code.gitea.io/gitea/models/auth"
-	issues_model "code.gitea.io/gitea/models/issues"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/structs"
+	"forgejo.org/models/auth"
+	issues_model "forgejo.org/models/issues"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/structs"
 
 	"github.com/markbates/goth"
 )
@@ -71,14 +71,14 @@ func LinkAccountToUser(ctx context.Context, user *user_model.User, gothUser goth
 	return nil
 }
 
-// EnsureLinkExternalToUser link the gothUser to the user
-func EnsureLinkExternalToUser(ctx context.Context, user *user_model.User, gothUser goth.User) error {
+// UpdateExternalUser updates external user's information
+func UpdateExternalUser(ctx context.Context, user *user_model.User, gothUser goth.User) error {
 	externalLoginUser, err := toExternalLoginUser(ctx, user, gothUser)
 	if err != nil {
 		return err
 	}
 
-	return user_model.EnsureLinkExternalToUser(ctx, externalLoginUser)
+	return user_model.UpdateExternalUserByExternalID(ctx, externalLoginUser)
 }
 
 // UpdateMigrationsByType updates all migrated repositories' posterid from gitServiceType to replace originalAuthorID to posterID

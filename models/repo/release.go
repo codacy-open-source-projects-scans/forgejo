@@ -13,13 +13,13 @@ import (
 	"strconv"
 	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/container"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/container"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
 )
@@ -77,7 +77,7 @@ type Release struct {
 	Target               string
 	TargetBehind         string `xorm:"-"` // to handle non-existing or empty target
 	Title                string
-	Sha1                 string `xorm:"VARCHAR(64)"`
+	Sha1                 string `xorm:"INDEX VARCHAR(64)"`
 	HideArchiveLinks     bool   `xorm:"NOT NULL DEFAULT false"`
 	NumCommits           int64
 	NumCommitsBehind     int64                            `xorm:"-"`
@@ -97,13 +97,11 @@ func init() {
 
 // LoadAttributes load repo and publisher attributes for a release
 func (r *Release) LoadAttributes(ctx context.Context) error {
-	var err error
-	if r.Repo == nil {
-		r.Repo, err = GetRepositoryByID(ctx, r.RepoID)
-		if err != nil {
-			return err
-		}
+	err := r.LoadRepo(ctx)
+	if err != nil {
+		return err
 	}
+
 	if r.Publisher == nil {
 		r.Publisher, err = user_model.GetUserByID(ctx, r.PublisherID)
 		if err != nil {
@@ -123,11 +121,42 @@ func (r *Release) LoadAttributes(ctx context.Context) error {
 	return GetReleaseAttachments(ctx, r)
 }
 
+// LoadRepo load repo attribute for release
+func (r *Release) LoadRepo(ctx context.Context) error {
+	if r.Repo != nil {
+		return nil
+	}
+
+	var err error
+	r.Repo, err = GetRepositoryByID(ctx, r.RepoID)
+
+	return err
+}
+
 // LoadArchiveDownloadCount loads the download count for the source archives
 func (r *Release) LoadArchiveDownloadCount(ctx context.Context) error {
 	var err error
 	r.ArchiveDownloadCount, err = GetArchiveDownloadCount(ctx, r.RepoID, r.ID)
 	return err
+}
+
+// GetTotalDownloadCount returns the summary of all download count of files attached to the release
+func (r *Release) GetTotalDownloadCount(ctx context.Context) (int64, error) {
+	var archiveCount int64
+	if !r.HideArchiveLinks {
+		_, err := db.GetEngine(ctx).SQL("SELECT SUM(count) FROM repo_archive_download_count WHERE release_id = ?", r.ID).Get(&archiveCount)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	var attachmentCount int64
+	_, err := db.GetEngine(ctx).SQL("SELECT SUM(download_count) FROM attachment WHERE release_id = ?", r.ID).Get(&attachmentCount)
+	if err != nil {
+		return 0, err
+	}
+
+	return archiveCount + attachmentCount, nil
 }
 
 // APIURL the api url for a release. release must have attributes loaded
@@ -151,13 +180,31 @@ func (r *Release) HTMLURL() string {
 }
 
 // APIUploadURL the api url to upload assets to a release. release must have attributes loaded
-func (r *Release) APIUploadURL() string {
+// If `githubFormat` is true, then `{?name,label}` is added to match the Github API.
+func (r *Release) APIUploadURL(githubFormat bool) string {
+	if githubFormat {
+		return r.APIURL() + "/assets{?name,label}"
+	}
 	return r.APIURL() + "/assets"
 }
 
 // Link the relative url for a release on the web UI. release must have attributes loaded
 func (r *Release) Link() string {
 	return r.Repo.Link() + "/releases/tag/" + util.PathEscapeSegments(r.TagName)
+}
+
+// SummaryCardURL returns the absolute URL to an image providing a summary of the release
+func (r *Release) SummaryCardURL() string {
+	return fmt.Sprintf("%s/releases/summary-card/%s", r.Repo.HTMLURL(), util.PathEscapeSegments(r.TagName))
+}
+
+// DisplayName returns the name of the release
+func (r *Release) DisplayName() string {
+	if r.IsTag && r.Title == "" {
+		return r.TagName
+	}
+
+	return r.Title
 }
 
 // IsReleaseExist returns true if release with given tag name already exists.
@@ -171,6 +218,7 @@ func IsReleaseExist(ctx context.Context, repoID int64, tagName string) (bool, er
 
 // UpdateRelease updates all columns of a release
 func UpdateRelease(ctx context.Context, rel *Release) error {
+	rel.Title, _ = util.SplitStringAtByteN(rel.Title, 255)
 	_, err := db.GetEngine(ctx).ID(rel.ID).AllCols().Update(rel)
 	return err
 }
@@ -249,6 +297,7 @@ type FindReleasesOptions struct {
 	IsDraft       optional.Option[bool]
 	TagNames      []string
 	HasSha1       optional.Option[bool] // useful to find draft releases which are created with existing tags
+	Keyword       string
 }
 
 func (opts FindReleasesOptions) ToConds() builder.Cond {
@@ -276,6 +325,15 @@ func (opts FindReleasesOptions) ToConds() builder.Cond {
 			cond = cond.And(builder.Eq{"sha1": ""})
 		}
 	}
+
+	if opts.Keyword != "" {
+		keywordCond := builder.NewCond()
+		keywordCond = keywordCond.Or(builder.Like{"lower_tag_name", strings.ToLower(opts.Keyword)})
+		keywordCond = keywordCond.Or(db.BuildCaseInsensitiveLike("title", opts.Keyword))
+		keywordCond = keywordCond.Or(db.BuildCaseInsensitiveLike("note", opts.Keyword))
+		cond = cond.And(keywordCond)
+	}
+
 	return cond
 }
 
@@ -563,4 +621,18 @@ func InsertReleases(ctx context.Context, rels ...*Release) error {
 	}
 
 	return committer.Commit()
+}
+
+func FindTagsByCommitIDs(ctx context.Context, repoID int64, commitIDs ...string) (map[string][]*Release, error) {
+	releases := make([]*Release, 0, len(commitIDs))
+	if err := db.GetEngine(ctx).Where("repo_id=?", repoID).
+		In("sha1", commitIDs).
+		Find(&releases); err != nil {
+		return nil, err
+	}
+	res := make(map[string][]*Release, len(releases))
+	for _, r := range releases {
+		res[r.Sha1] = append(res[r.Sha1], r)
+	}
+	return res, nil
 }

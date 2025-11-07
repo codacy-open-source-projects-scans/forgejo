@@ -8,13 +8,12 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/modules/avatar"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/storage"
+	"forgejo.org/models/db"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/modules/avatar"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/storage"
 )
 
 // UploadAvatar saves custom avatar for repository.
@@ -107,7 +106,18 @@ func RemoveRandomAvatars(ctx context.Context) error {
 
 // generateAvatar generates the avatar from a template repository
 func generateAvatar(ctx context.Context, templateRepo, generateRepo *repo_model.Repository) error {
-	generateRepo.Avatar = strings.Replace(templateRepo.Avatar, strconv.FormatInt(templateRepo.ID, 10), strconv.FormatInt(generateRepo.ID, 10), 1)
+	file, err := storage.RepoAvatars.Open(templateRepo.CustomAvatarRelativePath())
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return err
+	}
+
+	generateRepo.Avatar = avatar.HashAvatar(generateRepo.ID, data)
 	if _, err := storage.Copy(storage.RepoAvatars, generateRepo.CustomAvatarRelativePath(), storage.RepoAvatars, templateRepo.CustomAvatarRelativePath()); err != nil {
 		return err
 	}

@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"net/http"
 
-	activities_model "code.gitea.io/gitea/models/activities"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	activities_model "forgejo.org/models/activities"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/structs"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
 // Search search users
@@ -33,6 +33,11 @@ func Search(ctx *context.APIContext) {
 	//   description: ID of the user to search for
 	//   type: integer
 	//   format: int64
+	// - name: sort
+	//   in: query
+	//   description: sort order of results
+	//   type: string
+	//   enum: [oldest, newest, alphabetically, reversealphabetically, recentupdate, leastupdate]
 	// - name: page
 	//   in: query
 	//   description: page number of results to return (1-based)
@@ -46,6 +51,7 @@ func Search(ctx *context.APIContext) {
 	//     description: "SearchResults of a successful search"
 	//     schema:
 	//       type: object
+	//       title: "UserSearchResults"
 	//       properties:
 	//         ok:
 	//           type: boolean
@@ -81,6 +87,7 @@ func Search(ctx *context.APIContext) {
 			SearchByEmail: true,
 			Visible:       visible,
 			ListOptions:   listOptions,
+			OrderBy:       utils.GetDbSearchOrder(ctx),
 		})
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, map[string]any{
@@ -137,6 +144,10 @@ func GetAuthenticatedUser(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/User"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 
 	ctx.JSON(http.StatusOK, convert.ToUser(ctx, ctx.Doer, ctx.Doer))
 }
@@ -244,6 +255,10 @@ func ListBlockedUsers(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/BlockedUserList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 
 	utils.ListUserBlockedUsers(ctx, ctx.Doer)
 }
@@ -252,7 +267,7 @@ func ListBlockedUsers(ctx *context.APIContext) {
 func BlockUser(ctx *context.APIContext) {
 	// swagger:operation PUT /user/block/{username} user userBlockUser
 	// ---
-	// summary: Blocks a user from the doer.
+	// summary: Blocks a user from the doer
 	// produces:
 	// - application/json
 	// parameters:
@@ -264,6 +279,10 @@ func BlockUser(ctx *context.APIContext) {
 	// responses:
 	//   "204":
 	//     "$ref": "#/responses/empty"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 	//   "422":
@@ -281,7 +300,7 @@ func BlockUser(ctx *context.APIContext) {
 func UnblockUser(ctx *context.APIContext) {
 	// swagger:operation PUT /user/unblock/{username} user userUnblockUser
 	// ---
-	// summary: Unblocks a user from the doer.
+	// summary: Unblocks a user from the doer
 	// produces:
 	// - application/json
 	// parameters:
@@ -293,6 +312,10 @@ func UnblockUser(ctx *context.APIContext) {
 	// responses:
 	//   "204":
 	//     "$ref": "#/responses/empty"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 	//   "422":

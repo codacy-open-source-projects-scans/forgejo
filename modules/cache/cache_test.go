@@ -4,11 +4,11 @@
 package cache
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 	"time"
 
-	"code.gitea.io/gitea/modules/setting"
+	"forgejo.org/modules/setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,22 +45,22 @@ func TestGetString(t *testing.T) {
 	createTestCache()
 
 	data, err := GetString("key", func() (string, error) {
-		return "", fmt.Errorf("some error")
+		return "", errors.New("some error")
 	})
 	require.Error(t, err)
-	assert.Equal(t, "", data)
+	assert.Empty(t, data)
 
 	data, err = GetString("key", func() (string, error) {
 		return "", nil
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "", data)
+	assert.Empty(t, data)
 
 	data, err = GetString("key", func() (string, error) {
 		return "some data", nil
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "", data)
+	assert.Empty(t, data)
 	Remove("key")
 
 	data, err = GetString("key", func() (string, error) {
@@ -70,7 +70,7 @@ func TestGetString(t *testing.T) {
 	assert.Equal(t, "some data", data)
 
 	data, err = GetString("key", func() (string, error) {
-		return "", fmt.Errorf("some error")
+		return "", errors.New("some error")
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "some data", data)
@@ -81,7 +81,7 @@ func TestGetInt(t *testing.T) {
 	createTestCache()
 
 	data, err := GetInt("key", func() (int, error) {
-		return 0, fmt.Errorf("some error")
+		return 0, errors.New("some error")
 	})
 	require.Error(t, err)
 	assert.Equal(t, 0, data)
@@ -106,7 +106,7 @@ func TestGetInt(t *testing.T) {
 	assert.Equal(t, 100, data)
 
 	data, err = GetInt("key", func() (int, error) {
-		return 0, fmt.Errorf("some error")
+		return 0, errors.New("some error")
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 100, data)
@@ -117,7 +117,7 @@ func TestGetInt64(t *testing.T) {
 	createTestCache()
 
 	data, err := GetInt64("key", func() (int64, error) {
-		return 0, fmt.Errorf("some error")
+		return 0, errors.New("some error")
 	})
 	require.Error(t, err)
 	assert.EqualValues(t, 0, data)
@@ -142,7 +142,7 @@ func TestGetInt64(t *testing.T) {
 	assert.EqualValues(t, 100, data)
 
 	data, err = GetInt64("key", func() (int64, error) {
-		return 0, fmt.Errorf("some error")
+		return 0, errors.New("some error")
 	})
 	require.NoError(t, err)
 	assert.EqualValues(t, 100, data)

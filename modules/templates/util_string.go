@@ -8,7 +8,7 @@ import (
 	"html/template"
 	"strings"
 
-	"code.gitea.io/gitea/modules/base"
+	"forgejo.org/modules/base"
 )
 
 type StringUtils struct{}
@@ -17,6 +17,10 @@ var stringUtils = StringUtils{}
 
 func NewStringUtils() *StringUtils {
 	return &stringUtils
+}
+
+func (su *StringUtils) Make(arr ...string) []string {
+	return arr
 }
 
 func (su *StringUtils) HasPrefix(s any, prefix string) bool {

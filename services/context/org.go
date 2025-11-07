@@ -1,5 +1,6 @@
 // Copyright 2014 The Gogs Authors. All rights reserved.
-// Copyright 2020 The Gitea Authors.
+// Copyright 2020 The Gitea Authors. All rights reserved.
+// Copyright 2025 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package context
@@ -7,14 +8,15 @@ package context
 import (
 	"strings"
 
-	"code.gitea.io/gitea/models/organization"
-	"code.gitea.io/gitea/models/perm"
-	"code.gitea.io/gitea/models/unit"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/markup/markdown"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/structs"
+	"forgejo.org/models/organization"
+	"forgejo.org/models/perm"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/markup/markdown"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/structs"
+	redirect_service "forgejo.org/services/redirect"
 )
 
 // Organization contains organization context
@@ -26,7 +28,6 @@ type Organization struct {
 	Organization     *organization.Organization
 	OrgLink          string
 	CanCreateOrgRepo bool
-	PublicMemberOnly bool // Only display public members
 
 	Team  *organization.Team
 	Teams []*organization.Team
@@ -48,13 +49,13 @@ func GetOrganizationByParams(ctx *Context) {
 	ctx.Org.Organization, err = organization.GetOrgByName(ctx, orgName)
 	if err != nil {
 		if organization.IsErrOrgNotExist(err) {
-			redirectUserID, err := user_model.LookupUserRedirect(ctx, orgName)
+			redirectUserID, err := redirect_service.LookupUserRedirect(ctx, ctx.Doer, orgName)
 			if err == nil {
 				RedirectToUser(ctx.Base, orgName, redirectUserID)
 			} else if user_model.IsErrUserRedirectNotExist(err) {
 				ctx.NotFound("GetUserByName", err)
 			} else {
-				ctx.ServerError("LookupUserRedirect", err)
+				ctx.ServerError("LookupRedirect", err)
 			}
 		} else {
 			ctx.ServerError("GetUserByName", err)
@@ -166,6 +167,7 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 	ctx.Data["IsOrganizationMember"] = ctx.Org.IsMember
 	ctx.Data["IsPackageEnabled"] = setting.Packages.Enabled
 	ctx.Data["IsRepoIndexerEnabled"] = setting.Indexer.RepoIndexerEnabled
+	ctx.Data["IsModerationEnabled"] = setting.Moderation.Enabled
 	ctx.Data["IsPublicMember"] = func(uid int64) bool {
 		is, _ := organization.IsPublicMembership(ctx, ctx.Org.Organization.ID, uid)
 		return is
@@ -176,10 +178,10 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 	ctx.Data["OrgLink"] = ctx.Org.OrgLink
 
 	// Member
-	ctx.Org.PublicMemberOnly = ctx.Doer == nil || !ctx.Org.IsMember && !ctx.Doer.IsAdmin
 	opts := &organization.FindOrgMembersOpts{
-		OrgID:      org.ID,
-		PublicOnly: ctx.Org.PublicMemberOnly,
+		Doer:         ctx.Doer,
+		OrgID:        org.ID,
+		IsDoerMember: ctx.Org.IsMember,
 	}
 	ctx.Data["NumMembers"], err = organization.CountOrgMembers(ctx, opts)
 	if err != nil {

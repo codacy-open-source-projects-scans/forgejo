@@ -12,12 +12,12 @@ import (
 	"net/http"
 	"testing"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/packages"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	cran_module "code.gitea.io/gitea/modules/packages/cran"
-	"code.gitea.io/gitea/tests"
+	"forgejo.org/models/db"
+	"forgejo.org/models/packages"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	cran_module "forgejo.org/modules/packages/cran"
+	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,6 +112,14 @@ func TestPackageCran(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 
 			req := NewRequest(t, "GET", fmt.Sprintf("%s/src/contrib/%s_%s.tar.gz", url, packageName, packageVersion)).
+				AddBasicAuth(user.Name)
+			MakeRequest(t, req, http.StatusOK)
+		})
+
+		t.Run("DownloadArchived", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+
+			req := NewRequest(t, "GET", fmt.Sprintf("%s/src/contrib/Archive/%s/%s_%s.tar.gz", url, packageName, packageName, packageVersion)).
 				AddBasicAuth(user.Name)
 			MakeRequest(t, req, http.StatusOK)
 		})

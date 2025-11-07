@@ -141,7 +141,7 @@ func TxContext(parentCtx context.Context) (*Context, Committer, error) {
 		return nil, nil, err
 	}
 
-	return newContext(DefaultContext, sess, true), sess, nil
+	return newContext(parentCtx, sess, true), sess, nil
 }
 
 // WithTx represents executing database operations on a transaction, if the transaction exist,
@@ -269,6 +269,9 @@ func FindIDs(ctx context.Context, tableName, idCol string, cond builder.Cond) ([
 // DecrByIDs decreases the given column for entities of the "bean" type with one of the given ids by one
 // Timestamps of the entities won't be updated
 func DecrByIDs(ctx context.Context, ids []int64, decrCol string, bean any) error {
+	if len(ids) == 0 {
+		return nil
+	}
 	_, err := GetEngine(ctx).Decr(decrCol).In("id", ids).NoAutoCondition().NoAutoTime().Update(bean)
 	return err
 }
@@ -289,6 +292,31 @@ func TruncateBeans(ctx context.Context, beans ...any) (err error) {
 	e := GetEngine(ctx)
 	for i := range beans {
 		if _, err = e.Truncate(beans[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TruncateBeansCascade deletes all given beans. Beans MUST NOT contain delete conditions, as tables related by foreign
+// keys will also be truncated.
+func TruncateBeansCascade(ctx context.Context, beans ...any) (err error) {
+	// Expand the list of beans to any other table with a foreign key reference to the beans
+	cascadeTables, err := extendBeansForCascade(beans)
+	if err != nil {
+		return err
+	}
+
+	// Sort the beans in inverse foreign key delete order
+	cascadeSorted, err := sortBeans(cascadeTables, foreignKeySortDelete)
+	if err != nil {
+		return err
+	}
+
+	// Execute the truncate
+	e := GetEngine(ctx)
+	for i := range cascadeSorted {
+		if _, err = e.Truncate(cascadeSorted[i]); err != nil {
 			return err
 		}
 	}

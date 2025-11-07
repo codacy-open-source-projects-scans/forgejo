@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/container"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/lfs"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/container"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/lfs"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
 )
 
 /*
@@ -90,11 +90,11 @@ func SyncReleasesWithTags(ctx context.Context, repo *repo_model.Repository, gitR
 			if rel.IsDraft {
 				continue
 			}
-			commitID, err := gitRepo.GetTagCommitID(rel.TagName)
+			commit, err := gitRepo.GetTagCommit(rel.TagName)
 			if err != nil && !git.IsErrNotExist(err) {
 				return fmt.Errorf("unable to GetTagCommitID for %q in Repo[%d:%s/%s]: %w", rel.TagName, repo.ID, repo.OwnerName, repo.Name, err)
 			}
-			if git.IsErrNotExist(err) || commitID != rel.Sha1 {
+			if git.IsErrNotExist(err) || commit.ID.String() != rel.Sha1 {
 				if err := repo_model.PushUpdateDeleteTag(ctx, repo, rel.TagName); err != nil {
 					return fmt.Errorf("unable to PushUpdateDeleteTag: %q in Repo[%d:%s/%s]: %w", rel.TagName, repo.ID, repo.OwnerName, repo.Name, err)
 				}
@@ -164,6 +164,7 @@ func PushUpdateAddTag(ctx context.Context, repo *repo_model.Repository, gitRepo 
 		NumCommits:   commitsCount,
 		CreatedUnix:  timeutil.TimeStamp(createdAt.Unix()),
 		IsTag:        true,
+		Note:         tag.Message,
 	}
 	if author != nil {
 		rel.PublisherID = author.ID
@@ -182,11 +183,12 @@ func StoreMissingLfsObjectsInRepository(ctx context.Context, repo *repo_model.Re
 
 	downloadObjects := func(pointers []lfs.Pointer) error {
 		err := lfsClient.Download(ctx, pointers, func(p lfs.Pointer, content io.ReadCloser, objectError error) error {
+			if errors.Is(objectError, lfs.ErrObjectNotExist) {
+				log.Warn("Ignoring missing upstream LFS object %-v: %v", p, objectError)
+				return nil
+			}
+
 			if objectError != nil {
-				if errors.Is(objectError, lfs.ErrObjectNotExist) {
-					log.Warn("Repo[%-v]: Ignore missing LFS object %-v: %v", repo, p, objectError)
-					return nil
-				}
 				return objectError
 			}
 
@@ -341,9 +343,10 @@ func pullMirrorReleaseSync(ctx context.Context, repo *repo_model.Repository, git
 
 		for _, tag := range updates {
 			if _, err := db.GetEngine(ctx).Where("repo_id = ? AND lower_tag_name = ?", repo.ID, strings.ToLower(tag.Name)).
-				Cols("sha1").
+				Cols("sha1", "created_unix").
 				Update(&repo_model.Release{
-					Sha1: tag.Object.String(),
+					Sha1:        tag.Object.String(),
+					CreatedUnix: timeutil.TimeStamp(tag.Tagger.When.Unix()),
 				}); err != nil {
 				return fmt.Errorf("unable to update tag %s for pull-mirror Repo[%d:%s/%s]: %w", tag.Name, repo.ID, repo.OwnerName, repo.Name, err)
 			}

@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/modules/git"
-	giturl "code.gitea.io/gitea/modules/git/url"
-	"code.gitea.io/gitea/modules/keying"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	"forgejo.org/modules/git"
+	giturl "forgejo.org/modules/git/url"
+	"forgejo.org/modules/keying"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
 )
@@ -32,6 +32,7 @@ type PushMirror struct {
 	Repo          *Repository `xorm:"-"`
 	RemoteName    string
 	RemoteAddress string `xorm:"VARCHAR(2048)"`
+	BranchFilter  string `xorm:"VARCHAR(2048)"`
 
 	// A keypair formatted in OpenSSH format.
 	PublicKey  string `xorm:"VARCHAR(100)"`
@@ -119,6 +120,11 @@ func UpdatePushMirror(ctx context.Context, m *PushMirror) error {
 // UpdatePushMirrorInterval updates the push-mirror
 func UpdatePushMirrorInterval(ctx context.Context, m *PushMirror) error {
 	_, err := db.GetEngine(ctx).ID(m.ID).Cols("interval").Update(m)
+	return err
+}
+
+func UpdatePushMirrorBranchFilter(ctx context.Context, m *PushMirror) error {
+	_, err := db.GetEngine(ctx).ID(m.ID).Cols("branch_filter").Update(m)
 	return err
 }
 

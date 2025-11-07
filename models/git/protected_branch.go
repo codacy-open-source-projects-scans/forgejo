@@ -10,16 +10,16 @@ import (
 	"slices"
 	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/organization"
-	"code.gitea.io/gitea/models/perm"
-	access_model "code.gitea.io/gitea/models/perm/access"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unit"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	"forgejo.org/models/organization"
+	"forgejo.org/models/perm"
+	access_model "forgejo.org/models/perm/access"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"github.com/gobwas/glob"
 	"github.com/gobwas/glob/syntax"
@@ -79,14 +79,20 @@ func IsRuleNameSpecial(ruleName string) bool {
 }
 
 func (protectBranch *ProtectedBranch) loadGlob() {
-	if protectBranch.globRule == nil {
-		var err error
-		protectBranch.globRule, err = glob.Compile(protectBranch.RuleName, '/')
-		if err != nil {
-			log.Warn("Invalid glob rule for ProtectedBranch[%d]: %s %v", protectBranch.ID, protectBranch.RuleName, err)
-			protectBranch.globRule = glob.MustCompile(glob.QuoteMeta(protectBranch.RuleName), '/')
-		}
-		protectBranch.isPlainName = !IsRuleNameSpecial(protectBranch.RuleName)
+	if protectBranch.isPlainName || protectBranch.globRule != nil {
+		return
+	}
+	// detect if it is not glob
+	if !IsRuleNameSpecial(protectBranch.RuleName) {
+		protectBranch.isPlainName = true
+		return
+	}
+	// now we load the glob
+	var err error
+	protectBranch.globRule, err = glob.Compile(protectBranch.RuleName, '/')
+	if err != nil {
+		log.Warn("Invalid glob rule for ProtectedBranch[%d]: %s %v", protectBranch.ID, protectBranch.RuleName, err)
+		protectBranch.globRule = glob.MustCompile(glob.QuoteMeta(protectBranch.RuleName), '/')
 	}
 }
 

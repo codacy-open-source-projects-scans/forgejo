@@ -1,5 +1,6 @@
 // Copyright 2014 The Gogs Authors. All rights reserved.
 // Copyright 2018 The Gitea Authors. All rights reserved.
+// Copyright 2025 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package repo
@@ -10,29 +11,29 @@ import (
 	"net/http"
 	"strings"
 
-	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/models/asymkey"
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unit"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/container"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/markup/markdown"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/web/feed"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/context/upload"
-	"code.gitea.io/gitea/services/forms"
-	releaseservice "code.gitea.io/gitea/services/release"
+	"forgejo.org/models"
+	"forgejo.org/models/asymkey"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/container"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/markup/markdown"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/web/feed"
+	"forgejo.org/services/context"
+	"forgejo.org/services/context/upload"
+	"forgejo.org/services/forms"
+	releaseservice "forgejo.org/services/release"
 )
 
 const (
@@ -168,6 +169,10 @@ func Releases(ctx *context.Context) {
 	// Disable the showCreateNewBranch form in the dropdown on this page.
 	ctx.Data["CanCreateBranch"] = false
 	ctx.Data["HideBranchesInDropdown"] = true
+	ctx.Data["ShowReleaseSearch"] = true
+
+	keyword := ctx.FormTrim("q")
+	ctx.Data["Keyword"] = keyword
 
 	listOptions := db.ListOptions{
 		Page:     ctx.FormInt("page"),
@@ -188,6 +193,7 @@ func Releases(ctx *context.Context) {
 		// only show draft releases for users who can write, read-only users shouldn't see draft releases.
 		IncludeDrafts: writeAccess,
 		RepoID:        ctx.Repo.Repository.ID,
+		Keyword:       keyword,
 	})
 	if err != nil {
 		ctx.ServerError("getReleaseInfos", err)
@@ -244,7 +250,7 @@ func addVerifyTagToContext(ctx *context.Context) {
 		if verification == nil {
 			return false
 		}
-		return verification.Reason != "gpg.error.not_signed_commit"
+		return verification.Reason != asymkey.NotSigned
 	}
 }
 
@@ -258,6 +264,10 @@ func TagsList(ctx *context.Context) {
 	ctx.Data["CanCreateBranch"] = false
 	ctx.Data["HideBranchesInDropdown"] = true
 	ctx.Data["CanCreateRelease"] = ctx.Repo.CanWrite(unit.TypeReleases) && !ctx.Repo.Repository.IsArchived
+	ctx.Data["ShowReleaseSearch"] = true
+
+	keyword := ctx.FormTrim("q")
+	ctx.Data["Keyword"] = keyword
 
 	listOptions := db.ListOptions{
 		Page:     ctx.FormInt("page"),
@@ -278,6 +288,7 @@ func TagsList(ctx *context.Context) {
 		IncludeTags:   true,
 		HasSha1:       optional.Some(true),
 		RepoID:        ctx.Repo.Repository.ID,
+		Keyword:       keyword,
 	}
 
 	releases, err := db.Find[repo_model.Release](ctx, opts)
@@ -355,11 +366,7 @@ func SingleRelease(ctx *context.Context) {
 	addVerifyTagToContext(ctx)
 
 	ctx.Data["PageIsSingleTag"] = release.IsTag
-	if release.IsTag {
-		ctx.Data["Title"] = release.TagName
-	} else {
-		ctx.Data["Title"] = release.Title
-	}
+	ctx.Data["Title"] = release.DisplayName()
 
 	err = release.LoadArchiveDownloadCount(ctx)
 	if err != nil {
@@ -368,6 +375,13 @@ func SingleRelease(ctx *context.Context) {
 	}
 
 	ctx.Data["Releases"] = releases
+
+	ctx.Data["OpenGraphTitle"] = fmt.Sprintf("%s - %s", release.DisplayName(), release.Repo.FullName())
+	ctx.Data["OpenGraphDescription"] = base.EllipsisString(release.Note, 300)
+	ctx.Data["OpenGraphURL"] = release.HTMLURL()
+	ctx.Data["OpenGraphImageURL"] = release.SummaryCardURL()
+	ctx.Data["OpenGraphImageAltText"] = ctx.Tr("repo.release.summary_card_alt", release.DisplayName(), release.Repo.FullName())
+
 	ctx.HTML(http.StatusOK, tplReleasesList)
 }
 

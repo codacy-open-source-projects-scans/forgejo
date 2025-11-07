@@ -11,30 +11,30 @@ import (
 	"strconv"
 	"strings"
 
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/modules/analyze"
-	"code.gitea.io/gitea/modules/charset"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/indexer/code/internal"
-	indexer_internal "code.gitea.io/gitea/modules/indexer/internal"
-	inner_elasticsearch "code.gitea.io/gitea/modules/indexer/internal/elasticsearch"
-	"code.gitea.io/gitea/modules/json"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/typesniffer"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/modules/analyze"
+	"forgejo.org/modules/charset"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/indexer/code/internal"
+	indexer_internal "forgejo.org/modules/indexer/internal"
+	inner_elasticsearch "forgejo.org/modules/indexer/internal/elasticsearch"
+	"forgejo.org/modules/json"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/typesniffer"
 
 	"github.com/go-enry/go-enry/v2"
 	"github.com/olivere/elastic/v7"
 )
 
 const (
-	esRepoIndexerLatestVersion = 1
+	esRepoIndexerLatestVersion = 2
 	// multi-match-types, currently only 2 types are used
 	// Reference: https://www.elastic.co/guide/en/elasticsearch/reference/7.0/query-dsl-multi-match-query.html#multi-match-types
-	esMultiMatchTypeBestFields   = "best_fields"
-	esMultiMatchTypePhrasePrefix = "phrase_prefix"
+	esMultiMatchTypeBestFields = "best_fields"
+	esMultiMatchTypePhrase     = "phrase"
 )
 
 var _ internal.Indexer = &Indexer{}
@@ -57,6 +57,21 @@ func NewIndexer(url, indexerName string) *Indexer {
 
 const (
 	defaultMapping = `{
+		"settings": {
+			"analysis": {
+				"analyzer": {
+					"custom_path_tree": {
+						"tokenizer": "custom_hierarchy"
+					}
+				},
+				"tokenizer": {
+					"custom_hierarchy": {
+						"type": "path_hierarchy",
+						"delimiter": "/"
+					}
+				}
+			}
+		},
 		"mappings": {
 			"properties": {
 				"repo_id": {
@@ -71,6 +86,15 @@ const (
 				"commit_id": {
 					"type": "keyword",
 					"index": true
+				},
+				"filename": {
+					"type": "text",
+					"fields": {
+						"tree": {
+							"type": "text",
+							"analyzer": "custom_path_tree"
+						}
+					}
 				},
 				"language": {
 					"type": "keyword",
@@ -120,7 +144,7 @@ func (b *Indexer) addUpdate(ctx context.Context, batchWriter git.WriteCloserErro
 	fileContents, err := io.ReadAll(io.LimitReader(batchReader, size))
 	if err != nil {
 		return nil, err
-	} else if !typesniffer.DetectContentType(fileContents).IsText() {
+	} else if !typesniffer.DetectContentType(fileContents, update.Filename).IsText() {
 		// FIXME: UTF-16 files will probably fail here
 		return nil, nil
 	}
@@ -138,6 +162,7 @@ func (b *Indexer) addUpdate(ctx context.Context, batchWriter git.WriteCloserErro
 				"repo_id":    repo.ID,
 				"content":    string(charset.ToUTF8DropErrors(fileContents, charset.ConvertOpts{})),
 				"commit_id":  sha,
+				"filename":   update.Filename,
 				"language":   analyze.GetCodeLanguage(update.Filename, fileContents),
 				"updated_at": timeutil.TimeStampNow(),
 			}),
@@ -202,7 +227,7 @@ func (b *Indexer) Index(ctx context.Context, repo *repo_model.Repository, sha st
 func (b *Indexer) Delete(ctx context.Context, repoID int64) error {
 	if err := b.doDelete(ctx, repoID); err != nil {
 		// Maybe there is a conflict during the delete operation, so we should retry after a refresh
-		log.Warn("Deletion of entries of repo %v within index %v was erroneus. Trying to refresh index before trying again", repoID, b.inner.VersionedIndexName(), err)
+		log.Warn("Deletion of entries of repo %v within index %v was erroneous. Trying to refresh index before trying again", repoID, b.inner.VersionedIndexName(), err)
 		if err := b.refreshIndex(ctx); err != nil {
 			return err
 		}
@@ -267,7 +292,6 @@ func convertResult(searchResult *elastic.SearchResult, kw string, pageSize int) 
 			panic(fmt.Sprintf("2===%#v", hit.Highlight))
 		}
 
-		repoID, fileName := internal.ParseIndexerID(hit.Id)
 		res := make(map[string]any)
 		if err := json.Unmarshal(hit.Source, &res); err != nil {
 			return 0, nil, nil, err
@@ -276,8 +300,8 @@ func convertResult(searchResult *elastic.SearchResult, kw string, pageSize int) 
 		language := res["language"].(string)
 
 		hits = append(hits, &internal.SearchResult{
-			RepoID:      repoID,
-			Filename:    fileName,
+			RepoID:      int64(res["repo_id"].(float64)),
+			Filename:    res["filename"].(string),
 			CommitID:    res["commit_id"].(string),
 			Content:     res["content"].(string),
 			UpdatedUnix: timeutil.TimeStamp(res["updated_at"].(float64)),
@@ -310,8 +334,8 @@ func extractAggs(searchResult *elastic.SearchResult) []*internal.SearchResultLan
 
 // Search searches for codes and language stats by given conditions.
 func (b *Indexer) Search(ctx context.Context, opts *internal.SearchOptions) (int64, []*internal.SearchResult, []*internal.SearchResultLanguages, error) {
-	searchType := esMultiMatchTypePhrasePrefix
-	if opts.IsKeywordFuzzy {
+	searchType := esMultiMatchTypePhrase
+	if opts.Mode == internal.CodeSearchModeUnion {
 		searchType = esMultiMatchTypeBestFields
 	}
 
@@ -325,6 +349,9 @@ func (b *Indexer) Search(ctx context.Context, opts *internal.SearchOptions) (int
 		}
 		repoQuery := elastic.NewTermsQuery("repo_id", repoStrs...)
 		query = query.Must(repoQuery)
+	}
+	if len(opts.Filename) > 0 {
+		query = query.Filter(elastic.NewTermsQuery("filename.tree", opts.Filename))
 	}
 
 	var (

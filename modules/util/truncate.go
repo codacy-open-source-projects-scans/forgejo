@@ -41,6 +41,8 @@ func SplitStringAtByteN(input string, n int) (left, right string) {
 
 // SplitTrimSpace splits the string at given separator and trims leading and trailing space
 func SplitTrimSpace(input, sep string) []string {
+	// Trim initial leading & trailing space
+	input = strings.TrimSpace(input)
 	// replace CRLF with LF
 	input = strings.ReplaceAll(input, "\r\n", "\n")
 
@@ -51,4 +53,13 @@ func SplitTrimSpace(input, sep string) []string {
 	}
 
 	return stringList
+}
+
+// TruncateRunes returns a truncated string with given rune limit,
+// it returns input string if its rune length doesn't exceed the limit.
+func TruncateRunes(str string, limit int) string {
+	if utf8.RuneCountInString(str) < limit {
+		return str
+	}
+	return string([]rune(str)[:limit])
 }

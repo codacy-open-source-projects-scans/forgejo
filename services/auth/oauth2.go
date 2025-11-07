@@ -11,14 +11,15 @@ import (
 	"strings"
 	"time"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	auth_model "code.gitea.io/gitea/models/auth"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/web/middleware"
-	"code.gitea.io/gitea/services/auth/source/oauth2"
+	actions_model "forgejo.org/models/actions"
+	auth_model "forgejo.org/models/auth"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/web/middleware"
+	"forgejo.org/services/actions"
+	"forgejo.org/services/auth/source/oauth2"
 )
 
 // Ensure the struct implements the interface.
@@ -68,6 +69,9 @@ func grantAdditionalScopes(grantScopes string) string {
 // CheckOAuthAccessToken returns uid of user from oauth token
 // + non default openid scopes requested
 func CheckOAuthAccessToken(ctx context.Context, accessToken string) (int64, string) {
+	if !setting.OAuth2.Enabled {
+		return 0, ""
+	}
 	// JWT tokens require a "."
 	if !strings.Contains(accessToken, ".") {
 		return 0, ""
@@ -89,6 +93,18 @@ func CheckOAuthAccessToken(ctx context.Context, accessToken string) (int64, stri
 	}
 	grantScopes := grantAdditionalScopes(grant.Scope)
 	return grant.UserID, grantScopes
+}
+
+// CheckTaskIsRunning verifies that the TaskID corresponds to a running task
+func CheckTaskIsRunning(ctx context.Context, taskID int64) bool {
+	// Verify the task exists
+	task, err := actions_model.GetTaskByID(ctx, taskID)
+	if err != nil {
+		return false
+	}
+
+	// Verify that it's running
+	return task.Status == actions_model.StatusRunning
 }
 
 // OAuth2 implements the Auth interface and authenticates requests
@@ -121,7 +137,7 @@ func parseToken(req *http.Request) (string, bool) {
 	// check header token
 	if auHead := req.Header.Get("Authorization"); auHead != "" {
 		auths := strings.Fields(auHead)
-		if len(auths) == 2 && (auths[0] == "token" || strings.ToLower(auths[0]) == "bearer") {
+		if len(auths) == 2 && (util.ASCIIEqualFold(auths[0], "token") || util.ASCIIEqualFold(auths[0], "bearer")) {
 			return auths[1], true
 		}
 	}
@@ -134,8 +150,17 @@ func parseToken(req *http.Request) (string, bool) {
 func (o *OAuth2) userIDFromToken(ctx context.Context, tokenSHA string, store DataStore) int64 {
 	// Let's see if token is valid.
 	if strings.Contains(tokenSHA, ".") {
-		uid, grantScopes := CheckOAuthAccessToken(ctx, tokenSHA)
+		// First attempt to decode an actions JWT, returning the actions user
+		if taskID, err := actions.TokenToTaskID(tokenSHA); err == nil {
+			if CheckTaskIsRunning(ctx, taskID) {
+				store.GetData()["IsActionsToken"] = true
+				store.GetData()["ActionsTaskID"] = taskID
+				return user_model.ActionsUserID
+			}
+		}
 
+		// Otherwise, check if this is an OAuth access token
+		uid, grantScopes := CheckOAuthAccessToken(ctx, tokenSHA)
 		if uid != 0 {
 			store.GetData()["IsApiToken"] = true
 			if grantScopes != "" {
@@ -164,9 +189,8 @@ func (o *OAuth2) userIDFromToken(ctx context.Context, tokenSHA string, store Dat
 		}
 		return 0
 	}
-	t.UpdatedUnix = timeutil.TimeStampNow()
-	if err = auth_model.UpdateAccessToken(ctx, t); err != nil {
-		log.Error("UpdateAccessToken: %v", err)
+	if err := t.UpdateLastUsed(ctx); err != nil {
+		log.Error("UpdateLastUsed: %v", err)
 	}
 	store.GetData()["IsApiToken"] = true
 	store.GetData()["ApiTokenScope"] = t.Scope

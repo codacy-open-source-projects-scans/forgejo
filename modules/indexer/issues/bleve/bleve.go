@@ -6,9 +6,9 @@ package bleve
 import (
 	"context"
 
-	indexer_internal "code.gitea.io/gitea/modules/indexer/internal"
-	inner_bleve "code.gitea.io/gitea/modules/indexer/internal/bleve"
-	"code.gitea.io/gitea/modules/indexer/issues/internal"
+	indexer_internal "forgejo.org/modules/indexer/internal"
+	inner_bleve "forgejo.org/modules/indexer/internal/bleve"
+	"forgejo.org/modules/indexer/issues/internal"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/custom"
@@ -23,7 +23,7 @@ import (
 const (
 	issueIndexerAnalyzer      = "issueIndexer"
 	issueIndexerDocType       = "issueIndexerDocType"
-	issueIndexerLatestVersion = 4
+	issueIndexerLatestVersion = 5
 )
 
 const unicodeNormalizeName = "unicodeNormalize"
@@ -35,13 +35,7 @@ func addUnicodeNormalizeTokenFilter(m *mapping.IndexMappingImpl) error {
 	})
 }
 
-const (
-	maxBatchSize = 16
-	// fuzzyDenominator determines the levenshtein distance per each character of a keyword
-	fuzzyDenominator = 4
-	// see https://github.com/blevesearch/bleve/issues/1563#issuecomment-786822311
-	maxFuzziness = 2
-)
+const maxBatchSize = 16
 
 // IndexerData an update to the issue indexer
 type IndexerData internal.IndexerData
@@ -75,6 +69,7 @@ func generateIssueIndexMapping() (mapping.IndexMapping, error) {
 
 	docMapping.AddFieldMappingsAt("is_public", boolFieldMapping)
 
+	docMapping.AddFieldMappingsAt("index", numberFieldMapping)
 	docMapping.AddFieldMappingsAt("title", textFieldMapping)
 	docMapping.AddFieldMappingsAt("content", textFieldMapping)
 	docMapping.AddFieldMappingsAt("comments", textFieldMapping)
@@ -161,17 +156,35 @@ func (b *Indexer) Delete(_ context.Context, ids ...int64) error {
 func (b *Indexer) Search(ctx context.Context, options *internal.SearchOptions) (*internal.SearchResult, error) {
 	var queries []query.Query
 
-	if options.Keyword != "" {
-		fuzziness := 0
-		if options.IsFuzzyKeyword {
-			fuzziness = min(maxFuzziness, len(options.Keyword)/fuzzyDenominator)
-		}
+	tokens, err := options.Tokens()
+	if err != nil {
+		return nil, err
+	}
 
-		queries = append(queries, bleve.NewDisjunctionQuery([]query.Query{
-			inner_bleve.MatchPhraseQuery(options.Keyword, "title", issueIndexerAnalyzer, fuzziness),
-			inner_bleve.MatchPhraseQuery(options.Keyword, "content", issueIndexerAnalyzer, fuzziness),
-			inner_bleve.MatchPhraseQuery(options.Keyword, "comments", issueIndexerAnalyzer, fuzziness),
-		}...))
+	if len(tokens) > 0 {
+		q := bleve.NewBooleanQuery()
+		for _, token := range tokens {
+			innerQ := bleve.NewDisjunctionQuery(
+				inner_bleve.MatchPhraseQuery(token.Term, "title", issueIndexerAnalyzer, token.Fuzzy, 2.0),
+				inner_bleve.MatchPhraseQuery(token.Term, "content", issueIndexerAnalyzer, token.Fuzzy, 1.0),
+				inner_bleve.MatchPhraseQuery(token.Term, "comments", issueIndexerAnalyzer, token.Fuzzy, 1.0))
+
+			if issueID, err := token.ParseIssueReference(); err == nil {
+				idQuery := inner_bleve.NumericEqualityQuery(issueID, "index")
+				idQuery.SetBoost(20.0)
+				innerQ.AddQuery(idQuery)
+			}
+
+			switch token.Kind {
+			case internal.BoolOptMust:
+				q.AddMust(innerQ)
+			case internal.BoolOptShould:
+				q.AddShould(innerQ)
+			case internal.BoolOptNot:
+				q.AddMustNot(innerQ)
+			}
+		}
+		queries = append(queries, q)
 	}
 
 	if len(options.RepoIDs) > 0 || options.AllPublic {
@@ -183,6 +196,15 @@ func (b *Indexer) Search(ctx context.Context, options *internal.SearchOptions) (
 			repoQueries = append(repoQueries, inner_bleve.BoolFieldQuery(true, "is_public"))
 		}
 		queries = append(queries, bleve.NewDisjunctionQuery(repoQueries...))
+	}
+
+	if options.PriorityRepoID.Has() {
+		eq := inner_bleve.NumericEqualityQuery(options.PriorityRepoID.Value(), "repo_id")
+		eq.SetBoost(10.0)
+		meh := bleve.NewMatchAllQuery()
+		meh.SetBoost(0)
+		should := bleve.NewDisjunctionQuery(eq, meh)
+		queries = append(queries, should)
 	}
 
 	if options.IsPull.Has() {

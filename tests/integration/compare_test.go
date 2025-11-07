@@ -11,18 +11,19 @@ import (
 	"strings"
 	"testing"
 
-	"code.gitea.io/gitea/models/db"
-	repo_model "code.gitea.io/gitea/models/repo"
-	unit_model "code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/test"
-	repo_service "code.gitea.io/gitea/services/repository"
-	files_service "code.gitea.io/gitea/services/repository/files"
-	"code.gitea.io/gitea/tests"
+	"forgejo.org/models/db"
+	repo_model "forgejo.org/models/repo"
+	unit_model "forgejo.org/models/unit"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/test"
+	repo_service "forgejo.org/services/repository"
+	files_service "forgejo.org/services/repository/files"
+	"forgejo.org/tests"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,7 @@ func TestCompareTag(t *testing.T) {
 
 	req = NewRequest(t, "GET", "/user2/repo1/compare/invalid")
 	resp = session.MakeRequest(t, req, http.StatusNotFound)
-	assert.False(t, strings.Contains(resp.Body.String(), ">500<"), "expect 404 page not 500")
+	assert.NotContains(t, resp.Body.String(), ">500<", "expect 404 page not 500")
 }
 
 // Compare with inferred default branch (master)
@@ -65,6 +66,114 @@ func inspectCompare(t *testing.T, htmlDoc *HTMLDoc, diffCount int, diffChanges [
 		selection = htmlDoc.doc.Find(fmt.Sprintf("[data-new-filename=\"%s\"]", diffChange))
 		assert.Lenf(t, selection.Nodes, 1, "Expected 1 match for [data-new-filename=\"%s\"], found: %v", diffChange, len(selection.Nodes))
 	}
+}
+
+func TestComparePatchAndDiffMenuEntries(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user2")
+	req := NewRequest(t, "GET", "/user2/repo-release/compare/v1.0...v2.0")
+	resp := session.MakeRequest(t, req, http.StatusOK)
+	htmlDoc := NewHTMLParser(t, resp.Body)
+	downloadOptions := htmlDoc.doc.Find("a.item[download]")
+	var patchDownloadEntryPresent bool
+	var diffDownloadEntryPresent bool
+	downloadOptions.Each(func(idx int, c *goquery.Selection) {
+		value, exists := c.Attr("download")
+		if exists && strings.HasSuffix(value, ".patch") {
+			patchDownloadEntryPresent = true
+		}
+
+		if exists && strings.HasSuffix(value, ".diff") {
+			diffDownloadEntryPresent = true
+		}
+	})
+
+	assert.True(t, patchDownloadEntryPresent, "Patch file download entry should be present")
+	assert.True(t, diffDownloadEntryPresent, "Diff file download entry should be present")
+}
+
+func TestComparePatchDownload(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user2")
+	req := NewRequest(t, "GET", "/user2/repo-release/compare/v1.0...v2.0.patch")
+	attendedResponse := `From 4380f99290b2b3922733ff82c57afad915ace907 Mon Sep 17 00:00:00 2001
+From: user1 <address1@example.com>
+Date: Mon, 17 Apr 2023 14:39:35 +0200
+Subject: [PATCH 1/3] feature v2
+
+---
+ feature | 0
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 feature
+
+diff --git a/feature b/feature
+new file mode 100644
+index 0000000..e69de29
+
+From 79f9d88f1b054d650f88da0bd658e21f7b0cf6ec Mon Sep 17 00:00:00 2001
+From: user1 <address1@example.com>
+Date: Mon, 17 Apr 2023 14:38:53 +0200
+Subject: [PATCH 2/3] bugfix
+
+---
+ bugfix | 0
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 bugfix
+
+diff --git a/bugfix b/bugfix
+new file mode 100644
+index 0000000..e69de29
+
+From 7197b56fdc75b453f47c9110938cb46a303579fd Mon Sep 17 00:00:00 2001
+From: user1 <address1@example.com>
+Date: Mon, 17 Apr 2023 14:42:34 +0200
+Subject: [PATCH 3/3] readme: v2
+
+---
+ README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index 6dfe48a..bc7068d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,3 @@
+ # Releases test repo
+ 
+-With a v1.0
++With a v1.0 and a v2.0
+`
+
+	resp := session.MakeRequest(t, req, http.StatusOK)
+	assert.Equal(t, attendedResponse, resp.Body.String())
+}
+
+func TestCompareDiffDownload(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user2")
+	req := NewRequest(t, "GET", "/user2/repo-release/compare/v1.0...v2.0.diff")
+	attendedResponse := `diff --git a/README.md b/README.md
+index 6dfe48a..bc7068d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,3 @@
+ # Releases test repo
+ 
+-With a v1.0
++With a v1.0 and a v2.0
+diff --git a/bugfix b/bugfix
+new file mode 100644
+index 0000000..e69de29
+diff --git a/feature b/feature
+new file mode 100644
+index 0000000..e69de29
+`
+
+	resp := session.MakeRequest(t, req, http.StatusOK)
+	assert.Equal(t, attendedResponse, resp.Body.String())
 }
 
 // Git commit graph for repo20
@@ -133,7 +242,7 @@ func TestCompareBranches(t *testing.T) {
 }
 
 func TestCompareWithPRsDisabled(t *testing.T) {
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		session := loginUser(t, "user1")
 		testRepoFork(t, session, "user2", "repo1", "user1", "repo1")
 		testCreateBranch(t, session, "user1", "repo1", "branch/master", "recent-push", http.StatusSeeOther)
@@ -158,13 +267,14 @@ func TestCompareWithPRsDisabled(t *testing.T) {
 			[]unit_model.Type{unit_model.TypePullRequests})
 		require.NoError(t, err)
 
-		t.Run("branch view doesn't offer creating PRs", func(t *testing.T) {
+		t.Run("branch view offer comparing branches", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 
 			req := NewRequest(t, "GET", "/user1/repo1/branches")
 			resp := session.MakeRequest(t, req, http.StatusOK)
 			htmlDoc := NewHTMLParser(t, resp.Body)
-			htmlDoc.AssertElement(t, "a[href='/user1/repo1/compare/master...recent-push']", false)
+			compareLink := htmlDoc.Find("a[href='/user1/repo1/compare/master...recent-push']")
+			assert.Equal(t, "Compare branches", strings.TrimSpace(compareLink.Text()))
 		})
 
 		t.Run("compare doesn't offer local branches", func(t *testing.T) {
@@ -181,17 +291,19 @@ func TestCompareWithPRsDisabled(t *testing.T) {
 			}
 		})
 
-		t.Run("comparing against a disabled-PR repo is 404", func(t *testing.T) {
+		t.Run("comparing against a disabled-PR repo", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 
 			req := NewRequest(t, "GET", "/user1/repo1/compare/master...recent-push")
-			session.MakeRequest(t, req, http.StatusNotFound)
+			resp := session.MakeRequest(t, req, http.StatusOK)
+			htmlDoc := NewHTMLParser(t, resp.Body)
+			assert.Equal(t, "Compare branches", strings.TrimSpace(htmlDoc.Find("h2.header").Text()))
 		})
 	})
 }
 
 func TestCompareCrossRepo(t *testing.T) {
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		session := loginUser(t, "user1")
 		testRepoFork(t, session, "user2", "repo1", "user1", "repo1-copy")
 		testCreateBranch(t, session, "user1", "repo1-copy", "branch/master", "recent-push", http.StatusSeeOther)
@@ -220,7 +332,7 @@ func TestCompareCrossRepo(t *testing.T) {
 }
 
 func TestCompareCodeExpand(t *testing.T) {
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		owner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
 
 		// Create a new repository, with a file that has many lines
@@ -288,6 +400,46 @@ func TestCompareCodeExpand(t *testing.T) {
 				link := els.Eq(i).AttrOr("hx-get", "")
 				assert.True(t, strings.HasPrefix(link, expectedPrefix))
 			}
+		})
+	})
+}
+
+func TestCompareSignedIn(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, giteaURL *url.URL) {
+		// Setup the test with a connected user
+		session := loginUser(t, "user1")
+		testRepoFork(t, session, "user2", "repo1", "user1", "repo1")
+		testCreateBranch(t, session, "user1", "repo1", "branch/master", "recent-push", http.StatusSeeOther)
+		testEditFile(t, session, "user1", "repo1", "recent-push", "README.md", "Hello recently!\n")
+
+		newPrSelector := "button.ui.button.primary.show-form"
+
+		t.Run("PR creation button displayed if logged in", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+
+			req := NewRequest(t, "GET", "/user1/repo1/compare/master...recent-push")
+			resp := session.MakeRequest(t, req, http.StatusOK)
+			htmlDoc := NewHTMLParser(t, resp.Body)
+
+			// Check that the "Sign in" button doesn't show up
+			htmlDoc.AssertElement(t, "a[href='/user/login?redirect_to=%2Fuser1%2Frepo1%2Fcompare%2Fmaster...recent-push']", false)
+
+			// Check that the "New pull request" button shows up
+			htmlDoc.AssertElement(t, newPrSelector, true)
+		})
+
+		t.Run("no PR creation button but display warning", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+
+			req := NewRequest(t, "GET", "/user1/repo1/compare/master...recent-push")
+			resp := MakeRequest(t, req, http.StatusOK)
+			htmlDoc := NewHTMLParser(t, resp.Body)
+
+			// Check that the "Sign in" button shows up
+			htmlDoc.AssertElement(t, "a[href='/user/login?redirect_to=%2Fuser1%2Frepo1%2Fcompare%2Fmaster...recent-push']", true)
+
+			// Check that the "New pull request" button doesn't show up
+			htmlDoc.AssertElement(t, newPrSelector, false)
 		})
 	})
 }

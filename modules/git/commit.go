@@ -9,14 +9,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
 	"strings"
 
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/util"
 )
 
 // Commit represents a git commit.
@@ -28,8 +27,8 @@ type Commit struct {
 	CommitMessage string
 	Signature     *ObjectSignature
 
-	Parents        []ObjectID // ID strings
-	submoduleCache *ObjectCache
+	Parents    []ObjectID           // ID strings
+	submodules map[string]Submodule // submodule indexed by path
 }
 
 // Message returns the commit message. Same as retrieving CommitMessage directly.
@@ -218,7 +217,7 @@ func (c *Commit) HasPreviousCommit(objectID ObjectID) (bool, error) {
 	}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
-		if exitError.ProcessState.ExitCode() == 1 && len(exitError.Stderr) == 0 {
+		if exitError.ExitCode() == 1 && len(exitError.Stderr) == 0 {
 			return false, nil
 		}
 	}
@@ -351,76 +350,9 @@ func (c *Commit) GetFileContent(filename string, limit int) (string, error) {
 	return string(bytes), nil
 }
 
-// GetSubModules get all the sub modules of current revision git tree
-func (c *Commit) GetSubModules() (*ObjectCache, error) {
-	if c.submoduleCache != nil {
-		return c.submoduleCache, nil
-	}
-
-	entry, err := c.GetTreeEntryByPath(".gitmodules")
-	if err != nil {
-		if _, ok := err.(ErrNotExist); ok {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	rd, err := entry.Blob().DataAsync()
-	if err != nil {
-		return nil, err
-	}
-
-	defer rd.Close()
-	scanner := bufio.NewScanner(rd)
-	c.submoduleCache = newObjectCache()
-	var ismodule bool
-	var path string
-	for scanner.Scan() {
-		if strings.HasPrefix(scanner.Text(), "[submodule") {
-			ismodule = true
-			continue
-		}
-		if ismodule {
-			fields := strings.Split(scanner.Text(), "=")
-			k := strings.TrimSpace(fields[0])
-			if k == "path" {
-				path = strings.TrimSpace(fields[1])
-			} else if k == "url" {
-				c.submoduleCache.Set(path, &SubModule{path, strings.TrimSpace(fields[1])})
-				ismodule = false
-			}
-		}
-	}
-	if err = scanner.Err(); err != nil {
-		return nil, fmt.Errorf("GetSubModules scan: %w", err)
-	}
-
-	return c.submoduleCache, nil
-}
-
-// GetSubModule get the sub module according entryname
-func (c *Commit) GetSubModule(entryname string) (*SubModule, error) {
-	modules, err := c.GetSubModules()
-	if err != nil {
-		return nil, err
-	}
-
-	if modules != nil {
-		module, has := modules.Get(entryname)
-		if has {
-			return module.(*SubModule), nil
-		}
-	}
-	return nil, nil
-}
-
 // GetBranchName gets the closest branch name (as returned by 'git name-rev --name-only')
 func (c *Commit) GetBranchName() (string, error) {
-	cmd := NewCommand(c.repo.Ctx, "name-rev")
-	if CheckGitVersionAtLeast("2.13.0") == nil {
-		cmd.AddArguments("--exclude", "refs/tags/*")
-	}
-	cmd.AddArguments("--name-only", "--no-undefined").AddDynamicArguments(c.ID.String())
+	cmd := NewCommand(c.repo.Ctx, "name-rev", "--exclude", "refs/tags/*", "--name-only", "--no-undefined").AddDynamicArguments(c.ID.String())
 	data, _, err := cmd.RunStdString(&RunOpts{Dir: c.repo.Path})
 	if err != nil {
 		// handle special case where git can not describe commit
@@ -433,6 +365,11 @@ func (c *Commit) GetBranchName() (string, error) {
 
 	// name-rev commitID output will be "master" or "master~12"
 	return strings.SplitN(strings.TrimSpace(data), "~", 2)[0], nil
+}
+
+// GetAllBranches returns a slice with all branches that contains this commit
+func (c *Commit) GetAllBranches() ([]string, error) {
+	return c.repo.getBranches(c, -1)
 }
 
 // CommitFileStatus represents status of files in a commit.

@@ -16,8 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/queue"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/queue"
+	"forgejo.org/modules/util"
 )
 
 var (
@@ -131,6 +132,8 @@ var ignoredErrorMessage = []string{
 	`:SSHLog() [E] ssh: Not allowed to push to protected branch protected. HookPreReceive(last) failed: internal API error response, status=403`,
 	// TestGit/HTTP/BranchProtectMerge
 	`:SSHLog() [E] ssh: branch protected is protected from force push. HookPreReceive(last) failed: internal API error response, status=403`,
+	// TestGit/HTTP/BranchProtect
+	`:SSHLog() [E] ssh: branch before-create-2 is protected from changing file protected-file-data-`,
 	// TestGit/HTTP/MergeFork/CreatePRAndMerge
 	`:DeleteBranchPost() [E] DeleteBranch: GetBranch: branch does not exist [repo_id: 1099 name: user2:master]`,                          // sqlite
 	"s/web/repo/branch.go:108:DeleteBranchPost() [E] DeleteBranch: GetBranch: branch does not exist [repo_id: 10000 name: user2:master]", // mysql
@@ -360,6 +363,12 @@ var ignoredErrorMessage = []string{
 
 	// TestDatabaseCollation
 	`[E] [Error SQL Query] INSERT INTO test_collation_tbl (txt) VALUES ('main') []`,
+
+	// Test_CmdForgejo_Actions
+	`DB: No dedicated replica host defined; falling back to primary DSN for replica connections`,
+
+	// TestDevtestErrorpages
+	`ErrorPage() [E] Example error: Example error`,
 }
 
 func (w *testLoggerWriterCloser) recordError(msg string) {
@@ -443,10 +452,7 @@ func (w *testLoggerWriterCloser) Reset() error {
 func PrintCurrentTest(t testing.TB, skip ...int) func() {
 	t.Helper()
 	start := time.Now()
-	actualSkip := 1
-	if len(skip) > 0 {
-		actualSkip = skip[0] + 1
-	}
+	actualSkip := util.OptionalArg(skip) + 1
 	_, filename, line, _ := runtime.Caller(actualSkip)
 
 	if log.CanColorStdout {
@@ -471,7 +477,7 @@ func PrintCurrentTest(t testing.TB, skip ...int) func() {
 				_, _ = fmt.Fprintf(os.Stdout, "+++ %s ... still flushing after %v ...\n", t.Name(), SlowFlush)
 			}
 		})
-		if err := queue.GetManager().FlushAll(context.Background(), time.Minute); err != nil {
+		if err := queue.GetManager().FlushAll(t.Context(), time.Minute); err != nil {
 			t.Errorf("Flushing queues failed with error %v", err)
 		}
 		timer.Stop()
@@ -486,7 +492,7 @@ func PrintCurrentTest(t testing.TB, skip ...int) func() {
 
 		if err := WriterCloser.popT(); err != nil {
 			// disable test failure for now (too flacky)
-			_, _ = fmt.Fprintf(os.Stdout, "testlogger.go:recordError() FATAL ERROR: log.Error has been called: %v", err)
+			_, _ = fmt.Fprintf(os.Stdout, "testlogger.go:recordError() FATAL ERROR: log.Error has been called: %v\n", err)
 			// t.Errorf("testlogger.go:recordError() FATAL ERROR: log.Error has been called: %v", err)
 		}
 	}

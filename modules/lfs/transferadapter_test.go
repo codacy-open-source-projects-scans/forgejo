@@ -5,13 +5,12 @@ package lfs
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
-	"code.gitea.io/gitea/modules/json"
+	"forgejo.org/modules/json"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,9 +94,9 @@ func TestBasicTransferAdapter(t *testing.T) {
 		}
 
 		for n, c := range cases {
-			_, err := a.Download(context.Background(), c.link)
+			_, err := a.Download(t.Context(), c.link)
 			if len(c.expectederror) > 0 {
-				assert.True(t, strings.Contains(err.Error(), c.expectederror), "case %d: '%s' should contain '%s'", n, err.Error(), c.expectederror)
+				assert.Contains(t, err.Error(), c.expectederror, "case %d: '%s' should contain '%s'", n, err.Error(), c.expectederror)
 			} else {
 				require.NoError(t, err, "case %d", n)
 			}
@@ -128,9 +127,9 @@ func TestBasicTransferAdapter(t *testing.T) {
 		}
 
 		for n, c := range cases {
-			err := a.Upload(context.Background(), c.link, p, bytes.NewBufferString("dummy"))
+			err := a.Upload(t.Context(), c.link, p, bytes.NewBufferString("dummy"))
 			if len(c.expectederror) > 0 {
-				assert.True(t, strings.Contains(err.Error(), c.expectederror), "case %d: '%s' should contain '%s'", n, err.Error(), c.expectederror)
+				assert.Contains(t, err.Error(), c.expectederror, "case %d: '%s' should contain '%s'", n, err.Error(), c.expectederror)
 			} else {
 				require.NoError(t, err, "case %d", n)
 			}
@@ -161,9 +160,9 @@ func TestBasicTransferAdapter(t *testing.T) {
 		}
 
 		for n, c := range cases {
-			err := a.Verify(context.Background(), c.link, p)
+			err := a.Verify(t.Context(), c.link, p)
 			if len(c.expectederror) > 0 {
-				assert.True(t, strings.Contains(err.Error(), c.expectederror), "case %d: '%s' should contain '%s'", n, err.Error(), c.expectederror)
+				assert.Contains(t, err.Error(), c.expectederror, "case %d: '%s' should contain '%s'", n, err.Error(), c.expectederror)
 			} else {
 				require.NoError(t, err, "case %d", n)
 			}

@@ -8,23 +8,18 @@ import (
 	"fmt"
 	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	"code.gitea.io/gitea/models/unit"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/container"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	"forgejo.org/models/perm"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/container"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
 )
-
-// FindReposMapByIDs find repos as map
-func FindReposMapByIDs(ctx context.Context, repoIDs []int64, res map[int64]*Repository) error {
-	return db.GetEngine(ctx).In("id", repoIDs).Find(&res)
-}
 
 // RepositoryListDefaultPageSize is the default number of repositories
 // to load in memory when running administrative tasks on all (or almost
@@ -35,18 +30,6 @@ const RepositoryListDefaultPageSize = 64
 
 // RepositoryList contains a list of repositories
 type RepositoryList []*Repository
-
-func (repos RepositoryList) Len() int {
-	return len(repos)
-}
-
-func (repos RepositoryList) Less(i, j int) bool {
-	return repos[i].FullName() < repos[j].FullName()
-}
-
-func (repos RepositoryList) Swap(i, j int) {
-	repos[i], repos[j] = repos[j], repos[i]
-}
 
 // ValuesRepository converts a repository map to a list
 // FIXME: Remove in favor of maps.values when MIN_GO_VERSION >= 1.18
@@ -641,12 +624,9 @@ func AccessibleRepositoryCondition(user *user_model.User, unitType unit.Type) bu
 		// 1. Be able to see all non-private repositories that either:
 		cond = cond.Or(builder.And(
 			builder.Eq{"`repository`.is_private": false},
-			// 2. Aren't in an private organisation or limited organisation if we're not logged in
+			// 2. Aren't in an private organisation/user or limited organisation/user if the doer is not logged in.
 			builder.NotIn("`repository`.owner_id", builder.Select("id").From("`user`").Where(
-				builder.And(
-					builder.Eq{"type": user_model.UserTypeOrganization},
-					builder.In("visibility", orgVisibilityLimit)),
-			))))
+				builder.In("visibility", orgVisibilityLimit)))))
 	}
 
 	if user != nil {

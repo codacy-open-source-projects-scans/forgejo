@@ -9,17 +9,17 @@ import (
 	"fmt"
 	"slices"
 
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/cache"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/json"
-	"code.gitea.io/gitea/modules/log"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/services/automerge"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/cache"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/json"
+	"forgejo.org/modules/log"
+	api "forgejo.org/modules/structs"
+	shared_automerge "forgejo.org/services/shared/automerge"
 )
 
 func getCacheKey(repoID int64, brancheName string) string {
@@ -117,7 +117,7 @@ func CreateCommitStatus(ctx context.Context, repo *repo_model.Repository, creato
 	}
 
 	if status.State.IsSuccess() {
-		if err := automerge.StartPRCheckAndAutoMergeBySHA(ctx, sha, repo); err != nil {
+		if err := shared_automerge.StartPRCheckAndAutoMergeBySHA(ctx, sha, repo); err != nil {
 			return fmt.Errorf("MergeScheduledPullRequest[repo_id: %d, user_id: %d, sha: %s]: %w", repo.ID, creator.ID, sha, err)
 		}
 	}

@@ -4,13 +4,15 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
-	"code.gitea.io/gitea/modules/git"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	"forgejo.org/modules/git"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
 // GetNote Get a note corresponding to a single commit from a repository
@@ -62,7 +64,7 @@ func GetNote(ctx *context.APIContext) {
 
 func getNote(ctx *context.APIContext, identifier string) {
 	if ctx.Repo.GitRepo == nil {
-		ctx.InternalServerError(fmt.Errorf("no open git repo"))
+		ctx.InternalServerError(errors.New("no open git repo"))
 		return
 	}
 
@@ -76,8 +78,8 @@ func getNote(ctx *context.APIContext, identifier string) {
 		return
 	}
 
-	var note git.Note
-	if err := git.GetNote(ctx, ctx.Repo.GitRepo, commitID.String(), &note); err != nil {
+	note, err := git.GetNote(ctx, ctx.Repo.GitRepo, commitID.String())
+	if err != nil {
 		if git.IsErrNotExist(err) {
 			ctx.NotFound(identifier)
 			return
@@ -101,4 +103,108 @@ func getNote(ctx *context.APIContext, identifier string) {
 	}
 	apiNote := api.Note{Message: string(note.Message), Commit: cmt}
 	ctx.JSON(http.StatusOK, apiNote)
+}
+
+// SetNote Sets a note corresponding to a single commit from a repository
+func SetNote(ctx *context.APIContext) {
+	// swagger:operation POST /repos/{owner}/{repo}/git/notes/{sha} repository repoSetNote
+	// ---
+	// summary: Set a note corresponding to a single commit from a repository
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: owner
+	//   in: path
+	//   description: owner of the repo
+	//   type: string
+	//   required: true
+	// - name: repo
+	//   in: path
+	//   description: name of the repo
+	//   type: string
+	//   required: true
+	// - name: sha
+	//   in: path
+	//   description: a git ref or commit sha
+	//   type: string
+	//   required: true
+	// - name: body
+	//   in: body
+	//   schema:
+	//     "$ref": "#/definitions/NoteOptions"
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/Note"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	//   "422":
+	//     "$ref": "#/responses/validationError"
+	sha := ctx.Params(":sha")
+	if !git.IsValidRefPattern(sha) {
+		ctx.Error(http.StatusUnprocessableEntity, "no valid ref or sha", fmt.Sprintf("no valid ref or sha: %s", sha))
+		return
+	}
+
+	form := web.GetForm(ctx).(*api.NoteOptions)
+
+	err := git.SetNote(ctx, ctx.Repo.GitRepo, sha, form.Message, ctx.Doer.Name, ctx.Doer.GetEmail())
+	if err != nil {
+		if git.IsErrNotExist(err) {
+			ctx.NotFound(sha)
+		} else {
+			ctx.Error(http.StatusInternalServerError, "SetNote", err)
+		}
+		return
+	}
+
+	getNote(ctx, sha)
+}
+
+// RemoveNote Removes a note corresponding to a single commit from a repository
+func RemoveNote(ctx *context.APIContext) {
+	// swagger:operation DELETE /repos/{owner}/{repo}/git/notes/{sha} repository repoRemoveNote
+	// ---
+	// summary: Removes a note corresponding to a single commit from a repository
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: owner
+	//   in: path
+	//   description: owner of the repo
+	//   type: string
+	//   required: true
+	// - name: repo
+	//   in: path
+	//   description: name of the repo
+	//   type: string
+	//   required: true
+	// - name: sha
+	//   in: path
+	//   description: a git ref or commit sha
+	//   type: string
+	//   required: true
+	// responses:
+	//   "204":
+	//     "$ref": "#/responses/empty"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	//   "422":
+	//     "$ref": "#/responses/validationError"
+	sha := ctx.Params(":sha")
+	if !git.IsValidRefPattern(sha) {
+		ctx.Error(http.StatusUnprocessableEntity, "no valid ref or sha", fmt.Sprintf("no valid ref or sha: %s", sha))
+		return
+	}
+
+	err := git.RemoveNote(ctx, ctx.Repo.GitRepo, sha)
+	if err != nil {
+		if git.IsErrNotExist(err) {
+			ctx.NotFound(sha)
+		} else {
+			ctx.Error(http.StatusInternalServerError, "RemoveNote", err)
+		}
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
 }

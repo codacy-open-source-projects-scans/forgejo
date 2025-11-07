@@ -7,10 +7,10 @@ import (
 	"errors"
 	"net/http"
 
-	issues_model "code.gitea.io/gitea/models/issues"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	issues_model "forgejo.org/models/issues"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
 // StartIssueStopwatch creates a stopwatch for the given issue.
@@ -217,6 +217,10 @@ func GetStopwatches(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/StopWatchList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 
 	sws, err := issues_model.GetUserStopwatches(ctx, ctx.Doer.ID, utils.GetListOptions(ctx))
 	if err != nil {

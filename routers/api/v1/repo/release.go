@@ -4,21 +4,22 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
-	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/modules/git"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
-	release_service "code.gitea.io/gitea/services/release"
+	"forgejo.org/models"
+	"forgejo.org/models/db"
+	"forgejo.org/models/perm"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
+	"forgejo.org/modules/git"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
+	release_service "forgejo.org/services/release"
 )
 
 // GetRelease get a single release of a repository
@@ -66,7 +67,7 @@ func GetRelease(ctx *context.APIContext) {
 		ctx.Error(http.StatusInternalServerError, "LoadAttributes", err)
 		return
 	}
-	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, release))
+	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, release, ctx.AcceptsGithubResponse()))
 }
 
 // GetLatestRelease gets the most recent non-prerelease, non-draft release of a repository, sorted by created_at
@@ -107,7 +108,7 @@ func GetLatestRelease(ctx *context.APIContext) {
 		ctx.Error(http.StatusInternalServerError, "LoadAttributes", err)
 		return
 	}
-	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, release))
+	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, release, ctx.AcceptsGithubResponse()))
 }
 
 // ListReleases list a repository's releases
@@ -136,6 +137,10 @@ func ListReleases(ctx *context.APIContext) {
 	//   in: query
 	//   description: filter (exclude / include) pre-releases
 	//   type: boolean
+	// - name: q
+	//   in: query
+	//   description: Search string
+	//   type: string
 	// - name: page
 	//   in: query
 	//   description: page number of results to return (1-based)
@@ -158,6 +163,7 @@ func ListReleases(ctx *context.APIContext) {
 		IsDraft:       ctx.FormOptionalBool("draft"),
 		IsPreRelease:  ctx.FormOptionalBool("pre-release"),
 		RepoID:        ctx.Repo.Repository.ID,
+		Keyword:       ctx.FormTrim("q"),
 	}
 
 	releases, err := db.Find[repo_model.Release](ctx, opts)
@@ -171,7 +177,7 @@ func ListReleases(ctx *context.APIContext) {
 			ctx.Error(http.StatusInternalServerError, "LoadAttributes", err)
 			return
 		}
-		rels[i] = convert.ToAPIRelease(ctx, ctx.Repo.Repository, release)
+		rels[i] = convert.ToAPIRelease(ctx, ctx.Repo.Repository, release, ctx.AcceptsGithubResponse())
 	}
 
 	filteredCount, err := db.Count[repo_model.Release](ctx, opts)
@@ -221,7 +227,7 @@ func CreateRelease(ctx *context.APIContext) {
 
 	form := web.GetForm(ctx).(*api.CreateReleaseOption)
 	if ctx.Repo.Repository.IsEmpty {
-		ctx.Error(http.StatusUnprocessableEntity, "RepoIsEmpty", fmt.Errorf("repo is empty"))
+		ctx.Error(http.StatusUnprocessableEntity, "RepoIsEmpty", errors.New("repo is empty"))
 		return
 	}
 	rel, err := repo_model.GetRelease(ctx, ctx.Repo.Repository.ID, form.TagName)
@@ -262,7 +268,7 @@ func CreateRelease(ctx *context.APIContext) {
 		}
 	} else {
 		if !rel.IsTag {
-			ctx.Error(http.StatusConflict, "GetRelease", "Release is has no Tag")
+			ctx.Error(http.StatusConflict, "GetRelease", "Release has no Tag")
 			return
 		}
 
@@ -282,7 +288,7 @@ func CreateRelease(ctx *context.APIContext) {
 			return
 		}
 	}
-	ctx.JSON(http.StatusCreated, convert.ToAPIRelease(ctx, ctx.Repo.Repository, rel))
+	ctx.JSON(http.StatusCreated, convert.ToAPIRelease(ctx, ctx.Repo.Repository, rel, ctx.AcceptsGithubResponse()))
 }
 
 // EditRelease edit a release
@@ -369,7 +375,7 @@ func EditRelease(ctx *context.APIContext) {
 		ctx.Error(http.StatusInternalServerError, "LoadAttributes", err)
 		return
 	}
-	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, rel))
+	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, rel, ctx.AcceptsGithubResponse()))
 }
 
 // DeleteRelease delete a release from a repository

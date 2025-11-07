@@ -5,36 +5,36 @@
 package auth
 
 import (
-	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
-	"code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/db"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/auth/password"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/eventsource"
-	"code.gitea.io/gitea/modules/httplib"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/session"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/modules/web/middleware"
-	auth_service "code.gitea.io/gitea/services/auth"
-	"code.gitea.io/gitea/services/auth/source/oauth2"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/externalaccount"
-	"code.gitea.io/gitea/services/forms"
-	"code.gitea.io/gitea/services/mailer"
-	notify_service "code.gitea.io/gitea/services/notify"
-	user_service "code.gitea.io/gitea/services/user"
+	"forgejo.org/models/auth"
+	"forgejo.org/models/db"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/auth/password"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/eventsource"
+	"forgejo.org/modules/httplib"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/session"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/validation"
+	"forgejo.org/modules/web"
+	"forgejo.org/modules/web/middleware"
+	auth_service "forgejo.org/services/auth"
+	"forgejo.org/services/auth/source/oauth2"
+	"forgejo.org/services/context"
+	"forgejo.org/services/externalaccount"
+	"forgejo.org/services/forms"
+	"forgejo.org/services/mailer"
+	notify_service "forgejo.org/services/notify"
+	user_service "forgejo.org/services/user"
 
 	"github.com/markbates/goth"
 )
@@ -62,38 +62,11 @@ func autoSignIn(ctx *context.Context) (bool, error) {
 		return false, nil
 	}
 
-	lookupKey, validator, found := strings.Cut(authCookie, ":")
-	if !found {
-		return false, nil
-	}
-
-	authToken, err := auth.FindAuthToken(ctx, lookupKey)
+	u, _, err := user_model.VerifyUserAuthorizationToken(ctx, authCookie, auth.LongTermAuthorization)
 	if err != nil {
-		if errors.Is(err, util.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
+		return false, fmt.Errorf("VerifyUserAuthorizationToken: %w", err)
 	}
-
-	if authToken.IsExpired() {
-		err = auth.DeleteAuthToken(ctx, authToken)
-		return false, err
-	}
-
-	rawValidator, err := hex.DecodeString(validator)
-	if err != nil {
-		return false, err
-	}
-
-	if subtle.ConstantTimeCompare([]byte(authToken.HashedValidator), []byte(auth.HashValidator(rawValidator))) == 0 {
-		return false, nil
-	}
-
-	u, err := user_model.GetUserByID(ctx, authToken.UID)
-	if err != nil {
-		if !user_model.IsErrUserNotExist(err) {
-			return false, fmt.Errorf("GetUserByID: %w", err)
-		}
+	if u == nil {
 		return false, nil
 	}
 
@@ -110,7 +83,6 @@ func autoSignIn(ctx *context.Context) (bool, error) {
 		return false, err
 	}
 
-	ctx.Csrf.DeleteCookie(ctx)
 	return true, nil
 }
 
@@ -191,11 +163,13 @@ func SignIn(ctx *context.Context) {
 	ctx.Data["SignInLink"] = setting.AppSubURL + "/user/login"
 	ctx.Data["PageIsSignIn"] = true
 	ctx.Data["PageIsLogin"] = true
-	ctx.Data["EnableSSPI"] = auth.IsSSPIEnabled(ctx)
+	ctx.Data["EnableInternalSignIn"] = setting.Service.EnableInternalSignIn
 
 	if setting.Service.EnableCaptcha && setting.Service.RequireCaptchaForLogin {
 		context.SetCaptchaData(ctx)
 	}
+
+	ctx.Data["DisablePassword"] = !setting.Service.EnableInternalSignIn
 
 	ctx.HTML(http.StatusOK, tplSignIn)
 }
@@ -214,7 +188,14 @@ func SignInPost(ctx *context.Context) {
 	ctx.Data["SignInLink"] = setting.AppSubURL + "/user/login"
 	ctx.Data["PageIsSignIn"] = true
 	ctx.Data["PageIsLogin"] = true
-	ctx.Data["EnableSSPI"] = auth.IsSSPIEnabled(ctx)
+	ctx.Data["EnableInternalSignIn"] = setting.Service.EnableInternalSignIn
+	ctx.Data["DisablePassword"] = !setting.Service.EnableInternalSignIn
+
+	// Permission denied if EnableInternalSignIn is false
+	if !setting.Service.EnableInternalSignIn {
+		ctx.Error(http.StatusForbidden)
+		return
+	}
 
 	if ctx.HasError() {
 		ctx.HTML(http.StatusOK, tplSignIn)
@@ -244,15 +225,6 @@ func SignInPost(ctx *context.Context) {
 			log.Warn("Failed authentication attempt for %s from %s: %v", form.UserName, ctx.RemoteAddr(), err)
 			ctx.Data["Title"] = ctx.Tr("auth.prohibit_login")
 			ctx.HTML(http.StatusOK, "user/auth/prohibit_login")
-		} else if user_model.IsErrUserInactive(err) {
-			if setting.Service.RegisterEmailConfirm {
-				ctx.Data["Title"] = ctx.Tr("auth.active_your_account")
-				ctx.HTML(http.StatusOK, TplActivate)
-			} else {
-				log.Warn("Failed authentication attempt for %s from %s: %v", form.UserName, ctx.RemoteAddr(), err)
-				ctx.Data["Title"] = ctx.Tr("auth.prohibit_login")
-				ctx.HTML(http.StatusOK, "user/auth/prohibit_login")
-			}
 		} else {
 			ctx.ServerError("UserSignIn", err)
 		}
@@ -269,7 +241,7 @@ func SignInPost(ctx *context.Context) {
 
 	// If this user is enrolled in 2FA TOTP, we can't sign the user in just yet.
 	// Instead, redirect them to the 2FA authentication page.
-	hasTOTPtwofa, err := auth.HasTwoFactorByUID(ctx, u.ID)
+	hasTOTPtwofa, err := auth.HasTOTPByUID(ctx, u.ID)
 	if err != nil {
 		ctx.ServerError("UserSignIn", err)
 		return
@@ -337,6 +309,7 @@ func handleSignInFull(ctx *context.Context, u *user_model.User, remember, obeyRe
 		"openid_determined_username",
 		"twofaUid",
 		"twofaRemember",
+		"twofaOpenID",
 		"linkAccount",
 	}, map[string]any{
 		"uid": u.ID,
@@ -362,9 +335,6 @@ func handleSignInFull(ctx *context.Context, u *user_model.User, remember, obeyRe
 	if ctx.Locale.Language() != u.Language {
 		ctx.Locale = middleware.Locale(ctx.Resp, ctx.Req)
 	}
-
-	// Clear whatever CSRF cookie has right now, force to generate a new one
-	ctx.Csrf.DeleteCookie(ctx)
 
 	// Register last login
 	if err := user_service.UpdateUser(ctx, u, &user_service.UpdateOptions{SetLastLogin: true}); err != nil {
@@ -401,7 +371,6 @@ func HandleSignOut(ctx *context.Context) {
 	_ = ctx.Session.Flush()
 	_ = ctx.Session.Destroy(ctx.Resp, ctx.Req)
 	ctx.DeleteSiteCookie(setting.CookieRememberName)
-	ctx.Csrf.DeleteCookie(ctx)
 	middleware.DeleteRedirectToCookie(ctx.Resp)
 }
 
@@ -479,7 +448,10 @@ func SignUpPost(ctx *context.Context) {
 		return
 	}
 
-	if !form.IsEmailDomainAllowed() {
+	if emailValid, ok := form.IsEmailDomainAllowed(); !emailValid {
+		ctx.RenderWithErr(ctx.Tr("form.email_invalid"), tplSignUp, form)
+		return
+	} else if !ok {
 		ctx.RenderWithErr(ctx.Tr("auth.email_domain_blacklisted"), tplSignUp, &form)
 		return
 	}
@@ -539,7 +511,8 @@ func createAndHandleCreatedUser(ctx *context.Context, tpl base.TplName, form any
 func createUserInContext(ctx *context.Context, tpl base.TplName, form any, u *user_model.User, overwrites *user_model.CreateUserOverwriteOptions, gothUser *goth.User, allowLink bool) (ok bool) {
 	if err := user_model.CreateUser(ctx, u, overwrites); err != nil {
 		if allowLink && (user_model.IsErrUserAlreadyExist(err) || user_model.IsErrEmailAlreadyUsed(err)) {
-			if setting.OAuth2Client.AccountLinking == setting.OAuth2AccountLinkingAuto {
+			switch setting.OAuth2Client.AccountLinking {
+			case setting.OAuth2AccountLinkingAuto:
 				var user *user_model.User
 				user = &user_model.User{Name: u.Name}
 				hasUser, err := user_model.GetUser(ctx, user)
@@ -555,7 +528,7 @@ func createUserInContext(ctx *context.Context, tpl base.TplName, form any, u *us
 				// TODO: probably we should respect 'remember' user's choice...
 				linkAccount(ctx, user, *gothUser, true)
 				return false // user is already created here, all redirects are handled
-			} else if setting.OAuth2Client.AccountLinking == setting.OAuth2AccountLinkingLogin {
+			case setting.OAuth2AccountLinkingLogin:
 				showLinkingLogin(ctx, *gothUser)
 				return false // user will be created only after linking login
 			}
@@ -575,10 +548,10 @@ func createUserInContext(ctx *context.Context, tpl base.TplName, form any, u *us
 		case user_model.IsErrEmailAlreadyUsed(err):
 			ctx.Data["Err_Email"] = true
 			ctx.RenderWithErr(ctx.Tr("form.email_been_used"), tpl, form)
-		case user_model.IsErrEmailCharIsNotSupported(err):
-			ctx.Data["Err_Email"] = true
-			ctx.RenderWithErr(ctx.Tr("form.email_invalid"), tpl, form)
-		case user_model.IsErrEmailInvalid(err):
+		case user_model.IsErrCooldownPeriod(err):
+			ctx.Data["Err_UserName"] = true
+			ctx.RenderWithErr(ctx.Locale.Tr("form.username_claiming_cooldown", err.(user_model.ErrCooldownPeriod).ExpireTime.Format(time.RFC1123Z)), tpl, form)
+		case validation.IsErrEmailInvalid(err):
 			ctx.Data["Err_Email"] = true
 			ctx.RenderWithErr(ctx.Tr("form.email_invalid"), tpl, form)
 		case db.IsErrNameReserved(err):
@@ -619,8 +592,10 @@ func handleUserCreated(ctx *context.Context, u *user_model.User, gothUser *goth.
 	notify_service.NewUserSignUp(ctx, u)
 	// update external user information
 	if gothUser != nil {
-		if err := externalaccount.EnsureLinkExternalToUser(ctx, u, *gothUser); err != nil {
-			log.Error("EnsureLinkExternalToUser failed: %v", err)
+		if err := externalaccount.UpdateExternalUser(ctx, u, *gothUser); err != nil {
+			if !errors.Is(err, util.ErrNotExist) {
+				log.Error("UpdateExternalUser failed: %v", err)
+			}
 		}
 	}
 
@@ -632,7 +607,10 @@ func handleUserCreated(ctx *context.Context, u *user_model.User, gothUser *goth.
 			return false
 		}
 
-		mailer.SendActivateAccountMail(ctx.Locale, u)
+		if err := mailer.SendActivateAccountMail(ctx, u); err != nil {
+			ctx.ServerError("SendActivateAccountMail", err)
+			return false
+		}
 
 		ctx.Data["IsSendRegisterMail"] = true
 		ctx.Data["Email"] = u.Email
@@ -673,7 +651,10 @@ func Activate(ctx *context.Context) {
 				ctx.Data["ResendLimited"] = true
 			} else {
 				ctx.Data["ActiveCodeLives"] = timeutil.MinutesToFriendly(setting.Service.ActiveCodeLives, ctx.Locale)
-				mailer.SendActivateAccountMail(ctx.Locale, ctx.Doer)
+				if err := mailer.SendActivateAccountMail(ctx, ctx.Doer); err != nil {
+					ctx.ServerError("SendActivateAccountMail", err)
+					return
+				}
 
 				if err := ctx.Cache.Put(cacheKey+ctx.Doer.LowerName, ctx.Doer.LowerName, 180); err != nil {
 					log.Error("Set cache(MailResendLimit) fail: %v", err)
@@ -686,7 +667,12 @@ func Activate(ctx *context.Context) {
 		return
 	}
 
-	user := user_model.VerifyUserActiveCode(ctx, code)
+	user, deleteToken, err := user_model.VerifyUserAuthorizationToken(ctx, code, auth.UserActivation)
+	if err != nil {
+		ctx.ServerError("VerifyUserAuthorizationToken", err)
+		return
+	}
+
 	// if code is wrong
 	if user == nil {
 		ctx.Data["IsCodeInvalid"] = true
@@ -699,6 +685,11 @@ func Activate(ctx *context.Context) {
 		ctx.Data["Code"] = code
 		ctx.Data["NeedsPassword"] = true
 		ctx.HTML(http.StatusOK, TplActivate)
+		return
+	}
+
+	if err := deleteToken(); err != nil {
+		ctx.ServerError("deleteToken", err)
 		return
 	}
 
@@ -750,7 +741,12 @@ func ActivatePost(ctx *context.Context) {
 		return
 	}
 
-	user := user_model.VerifyUserActiveCode(ctx, code)
+	user, deleteToken, err := user_model.VerifyUserAuthorizationToken(ctx, code, auth.UserActivation)
+	if err != nil {
+		ctx.ServerError("VerifyUserAuthorizationToken", err)
+		return
+	}
+
 	// if code is wrong
 	if user == nil {
 		ctx.Data["IsCodeInvalid"] = true
@@ -767,11 +763,16 @@ func ActivatePost(ctx *context.Context) {
 			ctx.HTML(http.StatusOK, TplActivate)
 			return
 		}
-		if !user.ValidatePassword(password) {
+		if !user.ValidatePassword(ctx, password) {
 			ctx.Data["IsPasswordInvalid"] = true
 			ctx.HTML(http.StatusOK, TplActivate)
 			return
 		}
+	}
+
+	if err := deleteToken(); err != nil {
+		ctx.ServerError("deleteToken", err)
+		return
 	}
 
 	handleAccountActivation(ctx, user)
@@ -779,11 +780,7 @@ func ActivatePost(ctx *context.Context) {
 
 func handleAccountActivation(ctx *context.Context, user *user_model.User) {
 	user.IsActive = true
-	var err error
-	if user.Rands, err = user_model.GetUserSalt(); err != nil {
-		ctx.ServerError("UpdateUser", err)
-		return
-	}
+	user.Rands = user_model.GetUserSalt()
 	if err := user_model.UpdateUserCols(ctx, user, "is_active", "rands"); err != nil {
 		if user_model.IsErrUserNotExist(err) {
 			ctx.NotFound("UpdateUserCols", err)
@@ -834,23 +831,37 @@ func ActivateEmail(ctx *context.Context) {
 	code := ctx.FormString("code")
 	emailStr := ctx.FormString("email")
 
-	// Verify code.
-	if email := user_model.VerifyActiveEmailCode(ctx, code, emailStr); email != nil {
-		if err := user_model.ActivateEmail(ctx, email); err != nil {
-			ctx.ServerError("ActivateEmail", err)
-			return
-		}
-
-		log.Trace("Email activated: %s", email.Email)
-		ctx.Flash.Success(ctx.Tr("settings.add_email_success"))
-
-		if u, err := user_model.GetUserByID(ctx, email.UID); err != nil {
-			log.Warn("GetUserByID: %d", email.UID)
-		} else {
-			// Allow user to validate more emails
-			_ = ctx.Cache.Delete("MailResendLimit_" + u.LowerName)
-		}
+	u, deleteToken, err := user_model.VerifyUserAuthorizationToken(ctx, code, auth.EmailActivation(emailStr))
+	if err != nil {
+		ctx.ServerError("VerifyUserAuthorizationToken", err)
+		return
 	}
+	if u == nil {
+		ctx.Redirect(setting.AppSubURL + "/user/settings/account")
+		return
+	}
+
+	if err := deleteToken(); err != nil {
+		ctx.ServerError("deleteToken", err)
+		return
+	}
+
+	email, err := user_model.GetEmailAddressOfUser(ctx, emailStr, u.ID)
+	if err != nil {
+		ctx.ServerError("GetEmailAddressOfUser", err)
+		return
+	}
+
+	if err := user_model.ActivateEmail(ctx, email); err != nil {
+		ctx.ServerError("ActivateEmail", err)
+		return
+	}
+
+	log.Trace("Email activated: %s", email.Email)
+	ctx.Flash.Success(ctx.Tr("settings.add_email_success"))
+
+	// Allow user to validate more emails
+	_ = ctx.Cache.Delete("MailResendLimit_" + u.LowerName)
 
 	// FIXME: e-mail verification does not require the user to be logged in,
 	// so this could be redirecting to the login page.

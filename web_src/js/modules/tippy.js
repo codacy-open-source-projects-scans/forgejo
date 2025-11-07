@@ -81,6 +81,7 @@ function attachTooltip(target, content = null) {
     hideOnClick,
     placement: target.getAttribute('data-tooltip-placement') || 'top-start',
     followCursor: target.getAttribute('data-tooltip-follow-cursor') || false,
+    ...(target.getAttribute('data-tooltip-appendto') === 'parent' ? {appendTo: 'parent'} : {}),
     ...(target.getAttribute('data-tooltip-interactive') === 'true' ? {interactive: true, aria: {content: 'describedby', expanded: false}} : {}),
   };
 
@@ -103,7 +104,10 @@ function switchTitleToTooltip(target) {
       }
     }
     target.setAttribute('data-tooltip-content', title);
-    target.setAttribute('aria-label', title);
+    // only replace if not explicitly set
+    if (target.getAttribute('aria-label') !== null) {
+      target.setAttribute('aria-label', title);
+    }
     // keep the attribute, in case there are some other "[title]" selectors
     // and to prevent infinite loop with <relative-time> which will re-add
     // title if it is absent

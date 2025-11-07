@@ -61,22 +61,27 @@ make test-sqlite
 ### Run MySQL integration tests
 Setup a MySQL database inside docker
 ```
-docker run -e "MYSQL_DATABASE=test" -e "MYSQL_ALLOW_EMPTY_PASSWORD=yes" -p 3306:3306 --rm --name mysql mysql:latest #(just ctrl-c to stop db and clean the container)
-docker run -p 9200:9200 -p 9300:9300 -e "discovery.type=single-node" --rm --name elasticsearch elasticsearch:7.6.0 #(in a second terminal, just ctrl-c to stop db and clean the container)
+docker run -e MYSQL_DATABASE=test -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 3306:3306 --rm --name mysql mysql:latest #(Ctrl-c to stop the database)
 ```
 Start tests based on the database container
 ```
-TEST_MYSQL_HOST=localhost:3306 TEST_MYSQL_DBNAME=test TEST_MYSQL_USERNAME=root TEST_MYSQL_PASSWORD='' make test-mysql
+TEST_MYSQL_HOST=localhost:3306 TEST_MYSQL_DBNAME=test?multiStatements=true TEST_MYSQL_USERNAME=root TEST_MYSQL_PASSWORD='' make test-mysql
 ```
 
 ### Run pgsql integration tests
 Setup a pgsql database inside docker
 ```
-docker run -e "POSTGRES_DB=test" -p 5432:5432 --rm --name pgsql postgres:latest #(just ctrl-c to stop db and clean the container)
+docker run -e "POSTGRES_DB=test" -e POSTGRES_PASSWORD=postgres -e POSTGRESQL_FSYNC=off -e POSTGRESQL_EXTRA_FLAGS="-c full_page_writes=off" -p 5432:5432 --rm --name pgsql data.forgejo.org/oci/bitnami/postgresql:16 #(Ctrl-c to stop)
 ```
+
+Setup a S3 server inside docker
+```
+docker run -e MINIO_ROOT_USER=123456 -e MINIO_ROOT_PASSWORD=12345678 -p 9000:9000 --rm --name minio data.forgejo.org/oci/bitnami/minio:2024.8.17 #(Ctrl-c to stop)
+```
+
 Start tests based on the database container
 ```
-TEST_PGSQL_HOST=localhost:5432 TEST_PGSQL_DBNAME=test TEST_PGSQL_USERNAME=postgres TEST_PGSQL_PASSWORD=postgres make test-pgsql
+TEST_PGSQL_HOST=localhost:5432 TEST_PGSQL_DBNAME=test TEST_PGSQL_USERNAME=postgres TEST_PGSQL_PASSWORD=postgres TEST_S3_HOST=localhost:9000 make 'test-pgsql#Test'
 ```
 
 ### Running individual tests

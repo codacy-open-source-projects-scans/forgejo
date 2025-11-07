@@ -6,13 +6,13 @@ package user
 import (
 	"net/http"
 
-	access_model "code.gitea.io/gitea/models/perm/access"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	access_model "forgejo.org/models/perm/access"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
 // listUserRepos - List the repositories owned by the given user.
@@ -101,11 +101,16 @@ func ListMyRepos(ctx *context.APIContext) {
 	//   type: integer
 	// - name: order_by
 	//   in: query
-	//   description: order the repositories by name (default), id, or size
+	//   description: order the repositories
 	//   type: string
+	//   enum: [name, id, newest, oldest, recentupdate, leastupdate, reversealphabetically, alphabetically, reversesize, size, reversegitsize, gitsize, reverselfssize, lfssize, moststars, feweststars, mostforks, fewestforks]
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/RepositoryList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	//   "422":
 	//     "$ref": "#/responses/validationError"
 
@@ -120,17 +125,17 @@ func ListMyRepos(ctx *context.APIContext) {
 	switch orderBy {
 	case "name":
 		opts.OrderBy = "name ASC"
-	case "size":
-		opts.OrderBy = "size DESC"
 	case "id":
 		opts.OrderBy = "id ASC"
-	case "":
 	default:
-		ctx.Error(http.StatusUnprocessableEntity, "", "invalid order_by")
-		return
+		if orderBy, ok := repo_model.OrderByFlatMap[orderBy]; ok {
+			opts.OrderBy = orderBy
+		} else if orderBy != "" {
+			ctx.Error(http.StatusUnprocessableEntity, "", "invalid order_by")
+			return
+		}
 	}
 
-	var err error
 	repos, count, err := repo_model.SearchRepository(ctx, opts)
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "SearchRepository", err)
@@ -150,7 +155,7 @@ func ListMyRepos(ctx *context.APIContext) {
 		results[i] = convert.ToRepo(ctx, repo, permission)
 	}
 
-	ctx.SetLinkHeader(int(count), opts.ListOptions.PageSize)
+	ctx.SetLinkHeader(int(count), opts.PageSize)
 	ctx.SetTotalCountHeader(count)
 	ctx.JSON(http.StatusOK, &results)
 }

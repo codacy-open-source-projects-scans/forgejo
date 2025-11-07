@@ -8,36 +8,37 @@ import (
 	"regexp"
 	"strings"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/perm"
-	quota_model "code.gitea.io/gitea/models/quota"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/api/packages/alpine"
-	"code.gitea.io/gitea/routers/api/packages/arch"
-	"code.gitea.io/gitea/routers/api/packages/cargo"
-	"code.gitea.io/gitea/routers/api/packages/chef"
-	"code.gitea.io/gitea/routers/api/packages/composer"
-	"code.gitea.io/gitea/routers/api/packages/conan"
-	"code.gitea.io/gitea/routers/api/packages/conda"
-	"code.gitea.io/gitea/routers/api/packages/container"
-	"code.gitea.io/gitea/routers/api/packages/cran"
-	"code.gitea.io/gitea/routers/api/packages/debian"
-	"code.gitea.io/gitea/routers/api/packages/generic"
-	"code.gitea.io/gitea/routers/api/packages/goproxy"
-	"code.gitea.io/gitea/routers/api/packages/helm"
-	"code.gitea.io/gitea/routers/api/packages/maven"
-	"code.gitea.io/gitea/routers/api/packages/npm"
-	"code.gitea.io/gitea/routers/api/packages/nuget"
-	"code.gitea.io/gitea/routers/api/packages/pub"
-	"code.gitea.io/gitea/routers/api/packages/pypi"
-	"code.gitea.io/gitea/routers/api/packages/rpm"
-	"code.gitea.io/gitea/routers/api/packages/rubygems"
-	"code.gitea.io/gitea/routers/api/packages/swift"
-	"code.gitea.io/gitea/routers/api/packages/vagrant"
-	"code.gitea.io/gitea/services/auth"
-	"code.gitea.io/gitea/services/context"
+	auth_model "forgejo.org/models/auth"
+	"forgejo.org/models/perm"
+	quota_model "forgejo.org/models/quota"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/api/packages/alpine"
+	"forgejo.org/routers/api/packages/alt"
+	"forgejo.org/routers/api/packages/arch"
+	"forgejo.org/routers/api/packages/cargo"
+	"forgejo.org/routers/api/packages/chef"
+	"forgejo.org/routers/api/packages/composer"
+	"forgejo.org/routers/api/packages/conan"
+	"forgejo.org/routers/api/packages/conda"
+	"forgejo.org/routers/api/packages/container"
+	"forgejo.org/routers/api/packages/cran"
+	"forgejo.org/routers/api/packages/debian"
+	"forgejo.org/routers/api/packages/generic"
+	"forgejo.org/routers/api/packages/goproxy"
+	"forgejo.org/routers/api/packages/helm"
+	"forgejo.org/routers/api/packages/maven"
+	"forgejo.org/routers/api/packages/npm"
+	"forgejo.org/routers/api/packages/nuget"
+	"forgejo.org/routers/api/packages/pub"
+	"forgejo.org/routers/api/packages/pypi"
+	"forgejo.org/routers/api/packages/rpm"
+	"forgejo.org/routers/api/packages/rubygems"
+	"forgejo.org/routers/api/packages/swift"
+	"forgejo.org/routers/api/packages/vagrant"
+	"forgejo.org/services/auth"
+	"forgejo.org/services/context"
 )
 
 func reqPackageAccess(accessMode perm.AccessMode) func(ctx *context.Context) {
@@ -47,13 +48,14 @@ func reqPackageAccess(accessMode perm.AccessMode) func(ctx *context.Context) {
 			if ok { // it's a personal access token but not oauth2 token
 				scopeMatched := false
 				var err error
-				if accessMode == perm.AccessModeRead {
+				switch accessMode {
+				case perm.AccessModeRead:
 					scopeMatched, err = scope.HasScope(auth_model.AccessTokenScopeReadPackage)
 					if err != nil {
 						ctx.Error(http.StatusInternalServerError, "HasScope", err.Error())
 						return
 					}
-				} else if accessMode == perm.AccessModeWrite {
+				case perm.AccessModeWrite:
 					scopeMatched, err = scope.HasScope(auth_model.AccessTokenScopeWritePackage)
 					if err != nil {
 						ctx.Error(http.StatusInternalServerError, "HasScope", err.Error())
@@ -115,7 +117,7 @@ func verifyAuth(r *web.Route, authMethods []auth.Method) {
 		var err error
 		ctx.Doer, err = authGroup.Verify(ctx.Req, ctx.Resp, ctx, ctx.Session)
 		if err != nil {
-			log.Error("Failed to verify user: %v", err)
+			log.Info("Failed to verify user: %v", err)
 			ctx.Error(http.StatusUnauthorized, "authGroup.Verify")
 			return
 		}
@@ -153,66 +155,10 @@ func CommonRoutes() *web.Route {
 			})
 		}, reqPackageAccess(perm.AccessModeRead))
 		r.Group("/arch", func() {
-			r.Group("/repository.key", func() {
-				r.Head("", arch.GetRepositoryKey)
-				r.Get("", arch.GetRepositoryKey)
-			})
-
-			r.Methods("HEAD,GET,PUT,DELETE", "*", func(ctx *context.Context) {
-				pathGroups := strings.Split(strings.Trim(ctx.Params("*"), "/"), "/")
-				groupLen := len(pathGroups)
-				isGetHead := ctx.Req.Method == "HEAD" || ctx.Req.Method == "GET"
-				isPut := ctx.Req.Method == "PUT"
-				isDelete := ctx.Req.Method == "DELETE"
-				if isGetHead {
-					if groupLen < 2 {
-						ctx.Status(http.StatusNotFound)
-						return
-					}
-					if groupLen == 2 {
-						ctx.SetParams("group", "")
-						ctx.SetParams("arch", pathGroups[0])
-						ctx.SetParams("file", pathGroups[1])
-					} else {
-						ctx.SetParams("group", strings.Join(pathGroups[:groupLen-2], "/"))
-						ctx.SetParams("arch", pathGroups[groupLen-2])
-						ctx.SetParams("file", pathGroups[groupLen-1])
-					}
-					arch.GetPackageOrDB(ctx)
-					return
-				} else if isPut {
-					ctx.SetParams("group", strings.Join(pathGroups, "/"))
-					reqPackageAccess(perm.AccessModeWrite)(ctx)
-					if ctx.Written() {
-						return
-					}
-					arch.PushPackage(ctx)
-					return
-				} else if isDelete {
-					if groupLen < 3 {
-						ctx.Status(http.StatusBadRequest)
-						return
-					}
-					if groupLen == 3 {
-						ctx.SetParams("group", "")
-						ctx.SetParams("package", pathGroups[0])
-						ctx.SetParams("version", pathGroups[1])
-						ctx.SetParams("arch", pathGroups[2])
-					} else {
-						ctx.SetParams("group", strings.Join(pathGroups[:groupLen-3], "/"))
-						ctx.SetParams("package", pathGroups[groupLen-3])
-						ctx.SetParams("version", pathGroups[groupLen-2])
-						ctx.SetParams("arch", pathGroups[groupLen-1])
-					}
-					reqPackageAccess(perm.AccessModeWrite)(ctx)
-					if ctx.Written() {
-						return
-					}
-					arch.RemovePackage(ctx)
-					return
-				}
-				ctx.Status(http.StatusNotFound)
-			})
+			r.Methods("HEAD,GET", "/repository.key", arch.GetRepositoryKey)
+			r.Methods("HEAD,GET", "*", arch.GetPackageOrDB)
+			r.Methods("PUT", "*", reqPackageAccess(perm.AccessModeWrite), arch.PushPackage)
+			r.Methods("DELETE", "*", reqPackageAccess(perm.AccessModeWrite), arch.RemovePackage)
 		}, reqPackageAccess(perm.AccessModeRead))
 		r.Group("/cargo", func() {
 			r.Group("/api/v1/crates", func() {
@@ -393,6 +339,7 @@ func CommonRoutes() *web.Route {
 					r.Get("/PACKAGES", cran.EnumerateSourcePackages)
 					r.Get("/PACKAGES{format}", cran.EnumerateSourcePackages)
 					r.Get("/{filename}", cran.DownloadSourcePackageFile)
+					r.Get("/Archive/{packagename}/{filename}", cran.DownloadSourcePackageFile)
 				})
 				r.Put("", reqPackageAccess(perm.AccessModeWrite), enforcePackagesQuota(), cran.UploadSourcePackageFile)
 			})
@@ -679,6 +626,73 @@ func CommonRoutes() *web.Route {
 				ctx.Status(http.StatusNotFound)
 			})
 		}, reqPackageAccess(perm.AccessModeRead))
+		r.Group("/alt", func() {
+			var (
+				baseURLPattern  = regexp.MustCompile(`\A(.*?)\.repo\z`)
+				uploadPattern   = regexp.MustCompile(`\A(.*?)/upload\z`)
+				baseRepoPattern = regexp.MustCompile(`(\S+)\.repo/(\S+)\/base/(\S+)`)
+				rpmsRepoPattern = regexp.MustCompile(`\A/(.+?)\.repo/([^/]+)/RPMS\.([^/]+)/(.+)-([0-9][^-]*-[^-]*)\.([^.]+)\.rpm\z`)
+			)
+
+			r.Methods("HEAD,GET,PUT,DELETE", "*", func(ctx *context.Context) {
+				path := ctx.Params("*")
+				isGetHead := ctx.Req.Method == "HEAD" || ctx.Req.Method == "GET"
+				isPut := ctx.Req.Method == "PUT"
+				isDelete := ctx.Req.Method == "DELETE"
+
+				m := baseURLPattern.FindStringSubmatch(path)
+				if len(m) == 2 && isGetHead {
+					ctx.SetParams("group", strings.Trim(m[1], "/"))
+					alt.GetRepositoryConfig(ctx)
+					return
+				}
+
+				m = baseRepoPattern.FindStringSubmatch(path)
+				if len(m) == 4 {
+					if strings.Trim(m[1], "/") != "alt" {
+						ctx.SetParams("group", strings.Trim(m[1], "/"))
+					}
+					ctx.SetParams("filename", m[3])
+					if isGetHead {
+						alt.GetRepositoryFile(ctx, m[2])
+					}
+					return
+				}
+
+				m = uploadPattern.FindStringSubmatch(path)
+				if len(m) == 2 && isPut {
+					reqPackageAccess(perm.AccessModeWrite)(ctx)
+					if ctx.Written() {
+						return
+					}
+					ctx.SetParams("group", strings.Trim(m[1], "/"))
+					alt.UploadPackageFile(ctx)
+					return
+				}
+
+				m = rpmsRepoPattern.FindStringSubmatch(path)
+				if len(m) == 7 && (isGetHead || isDelete) {
+					if strings.Trim(m[1], "/") != "alt" {
+						ctx.SetParams("group", strings.Trim(m[1], "/"))
+					}
+					ctx.SetParams("name", m[4])
+					ctx.SetParams("version", m[5])
+					ctx.SetParams("architecture", m[6])
+					if isGetHead {
+						alt.DownloadPackageFile(ctx)
+					} else {
+						reqPackageAccess(perm.AccessModeWrite)(ctx)
+						if ctx.Written() {
+							return
+						}
+						alt.DeletePackageFile(ctx)
+					}
+					return
+				}
+
+				ctx.Status(http.StatusNotFound)
+			})
+		}, reqPackageAccess(perm.AccessModeRead))
 		r.Group("/rubygems", func() {
 			r.Get("/specs.4.8.gz", rubygems.EnumeratePackages)
 			r.Get("/latest_specs.4.8.gz", rubygems.EnumeratePackagesLatest)
@@ -693,40 +707,46 @@ func CommonRoutes() *web.Route {
 			}, reqPackageAccess(perm.AccessModeWrite))
 		}, reqPackageAccess(perm.AccessModeRead))
 		r.Group("/swift", func() {
-			r.Group("/{scope}/{name}", func() {
-				r.Group("", func() {
-					r.Get("", swift.EnumeratePackageVersions)
-					r.Get(".json", swift.EnumeratePackageVersions)
-				}, swift.CheckAcceptMediaType(swift.AcceptJSON))
-				r.Group("/{version}", func() {
-					r.Get("/Package.swift", swift.CheckAcceptMediaType(swift.AcceptSwift), swift.DownloadManifest)
-					r.Put("", reqPackageAccess(perm.AccessModeWrite), swift.CheckAcceptMediaType(swift.AcceptJSON), enforcePackagesQuota(), swift.UploadPackageFile)
-					r.Get("", func(ctx *context.Context) {
-						// Can't use normal routes here: https://github.com/go-chi/chi/issues/781
+			r.Group("", func() { // Needs to be unauthenticated.
+				r.Post("", swift.CheckAuthenticate)
+				r.Post("/login", swift.CheckAuthenticate)
+			})
+			r.Group("", func() {
+				r.Group("/{scope}/{name}", func() {
+					r.Group("", func() {
+						r.Get("", swift.EnumeratePackageVersions)
+						r.Get(".json", swift.EnumeratePackageVersions)
+					}, swift.CheckAcceptMediaType(swift.AcceptJSON))
+					r.Group("/{version}", func() {
+						r.Get("/Package.swift", swift.CheckAcceptMediaType(swift.AcceptSwift), swift.DownloadManifest)
+						r.Put("", reqPackageAccess(perm.AccessModeWrite), swift.CheckAcceptMediaType(swift.AcceptJSON), enforcePackagesQuota(), swift.UploadPackageFile)
+						r.Get("", func(ctx *context.Context) {
+							// Can't use normal routes here: https://github.com/go-chi/chi/issues/781
 
-						version := ctx.Params("version")
-						if strings.HasSuffix(version, ".zip") {
-							swift.CheckAcceptMediaType(swift.AcceptZip)(ctx)
-							if ctx.Written() {
-								return
+							version := ctx.Params("version")
+							if strings.HasSuffix(version, ".zip") {
+								swift.CheckAcceptMediaType(swift.AcceptZip)(ctx)
+								if ctx.Written() {
+									return
+								}
+								ctx.SetParams("version", version[:len(version)-4])
+								swift.DownloadPackageFile(ctx)
+							} else {
+								swift.CheckAcceptMediaType(swift.AcceptJSON)(ctx)
+								if ctx.Written() {
+									return
+								}
+								if strings.HasSuffix(version, ".json") {
+									ctx.SetParams("version", version[:len(version)-5])
+								}
+								swift.PackageVersionMetadata(ctx)
 							}
-							ctx.SetParams("version", version[:len(version)-4])
-							swift.DownloadPackageFile(ctx)
-						} else {
-							swift.CheckAcceptMediaType(swift.AcceptJSON)(ctx)
-							if ctx.Written() {
-								return
-							}
-							if strings.HasSuffix(version, ".json") {
-								ctx.SetParams("version", version[:len(version)-5])
-							}
-							swift.PackageVersionMetadata(ctx)
-						}
+						})
 					})
 				})
-			})
-			r.Get("/identifiers", swift.CheckAcceptMediaType(swift.AcceptJSON), swift.LookupPackageIdentifiers)
-		}, reqPackageAccess(perm.AccessModeRead))
+				r.Get("/identifiers", swift.CheckAcceptMediaType(swift.AcceptJSON), swift.LookupPackageIdentifiers)
+			}, reqPackageAccess(perm.AccessModeRead))
+		})
 		r.Group("/vagrant", func() {
 			r.Group("/authenticate", func() {
 				r.Get("", vagrant.CheckAuthenticate)

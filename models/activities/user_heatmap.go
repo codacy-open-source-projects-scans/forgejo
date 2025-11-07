@@ -6,11 +6,17 @@ package activities
 import (
 	"context"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/organization"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
+	"forgejo.org/models/db"
+	"forgejo.org/models/organization"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+)
+
+const (
+	// contributionsMaxAgeSeconds How old data to retrieve for the heatmap.
+	// 371 days to cover the entire heatmap (53 *full* weeks)
+	contributionsMaxAgeSeconds = 32054400
 )
 
 // UserHeatmapData represents the data needed to create a heatmap
@@ -62,7 +68,7 @@ func getUserHeatmapData(ctx context.Context, user *user_model.User, team *organi
 		Select(groupBy+" AS timestamp, count(user_id) as contributions").
 		Table("action").
 		Where(cond).
-		And("created_unix > ?", timeutil.TimeStampNow()-31536000).
+		And("created_unix >= ?", timeutil.TimeStampNow()-contributionsMaxAgeSeconds).
 		GroupBy("timestamp").
 		OrderBy("timestamp").
 		Find(&hdata)

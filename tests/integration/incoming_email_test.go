@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"encoding/base32"
 	"io"
 	"net"
 	"net/smtp"
@@ -11,15 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	issues_model "code.gitea.io/gitea/models/issues"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/services/mailer/incoming"
-	incoming_payload "code.gitea.io/gitea/services/mailer/incoming/payload"
-	token_service "code.gitea.io/gitea/services/mailer/token"
-	"code.gitea.io/gitea/tests"
+	"forgejo.org/models/db"
+	issues_model "forgejo.org/models/issues"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/setting"
+	"forgejo.org/services/mailer/incoming"
+	incoming_payload "forgejo.org/services/mailer/incoming/payload"
+	token_service "forgejo.org/services/mailer/token"
+	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,12 +52,12 @@ func TestIncomingEmail(t *testing.T) {
 		ref, err := incoming_payload.GetReferenceFromPayload(db.DefaultContext, issuePayload)
 		require.NoError(t, err)
 		assert.IsType(t, ref, new(issues_model.Issue))
-		assert.EqualValues(t, issue.ID, ref.(*issues_model.Issue).ID)
+		assert.Equal(t, issue.ID, ref.(*issues_model.Issue).ID)
 
 		ref, err = incoming_payload.GetReferenceFromPayload(db.DefaultContext, commentPayload)
 		require.NoError(t, err)
 		assert.IsType(t, ref, new(issues_model.Comment))
-		assert.EqualValues(t, comment.ID, ref.(*issues_model.Comment).ID)
+		assert.Equal(t, comment.ID, ref.(*issues_model.Comment).ID)
 	})
 
 	t.Run("Token", func(t *testing.T) {
@@ -73,6 +74,51 @@ func TestIncomingEmail(t *testing.T) {
 		assert.Equal(t, token_service.ReplyHandlerType, ht)
 		assert.Equal(t, user.ID, u.ID)
 		assert.Equal(t, payload, p)
+	})
+
+	tokenEncoding := base32.StdEncoding.WithPadding(base32.NoPadding)
+	t.Run("Deprecated token version", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		payload := []byte{1, 2, 3, 4, 5}
+
+		token, err := token_service.CreateToken(token_service.ReplyHandlerType, user, payload)
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		// Set the token to version 1.
+		unencodedToken, err := tokenEncoding.DecodeString(token)
+		require.NoError(t, err)
+		unencodedToken[0] = 1
+		token = tokenEncoding.EncodeToString(unencodedToken)
+
+		ht, u, p, err := token_service.ExtractToken(db.DefaultContext, token)
+		require.ErrorContains(t, err, "unsupported token version: 1")
+		assert.Equal(t, token_service.UnknownHandlerType, ht)
+		assert.Nil(t, u)
+		assert.Nil(t, p)
+	})
+
+	t.Run("MAC check", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		payload := []byte{1, 2, 3, 4, 5}
+
+		token, err := token_service.CreateToken(token_service.ReplyHandlerType, user, payload)
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		// Modify the MAC.
+		unencodedToken, err := tokenEncoding.DecodeString(token)
+		require.NoError(t, err)
+		unencodedToken[len(unencodedToken)-1] ^= 0x01
+		token = tokenEncoding.EncodeToString(unencodedToken)
+
+		ht, u, p, err := token_service.ExtractToken(db.DefaultContext, token)
+		require.ErrorContains(t, err, "verification failed")
+		assert.Equal(t, token_service.UnknownHandlerType, ht)
+		assert.Nil(t, u)
+		assert.Nil(t, p)
 	})
 
 	t.Run("Handler", func(t *testing.T) {

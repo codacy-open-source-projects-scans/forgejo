@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/util"
 )
 
 var _ ObjectStorage = &LocalStorage{}
@@ -114,7 +114,7 @@ func (l *LocalStorage) Delete(path string) error {
 }
 
 // URL gets the redirect URL to a file
-func (l *LocalStorage) URL(path, name string) (*url.URL, error) {
+func (l *LocalStorage) URL(path, name string, reqParams url.Values) (*url.URL, error) {
 	return nil, ErrURLNotSupported
 }
 

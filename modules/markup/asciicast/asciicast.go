@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"regexp"
 
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/setting"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/setting"
 )
 
 func init() {
@@ -39,7 +39,7 @@ const (
 // SanitizerRules implements markup.Renderer
 func (Renderer) SanitizerRules() []setting.MarkupSanitizerRule {
 	return []setting.MarkupSanitizerRule{
-		{Element: "div", AllowAttr: "class", Regexp: regexp.MustCompile(playerClassName)},
+		{Element: "div", AllowAttr: "class", Regexp: regexp.MustCompile("^" + playerClassName + "$")},
 		{Element: "div", AllowAttr: playerSrcAttr},
 	}
 }

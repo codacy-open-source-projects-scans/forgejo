@@ -9,17 +9,17 @@ import (
 	"net/http"
 	"strings"
 
-	"code.gitea.io/gitea/models"
-	git_model "code.gitea.io/gitea/models/git"
-	"code.gitea.io/gitea/models/organization"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
-	releaseservice "code.gitea.io/gitea/services/release"
+	"forgejo.org/models"
+	git_model "forgejo.org/models/git"
+	"forgejo.org/models/organization"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
+	releaseservice "forgejo.org/services/release"
 )
 
 // ListTags list all the tags of a repository
@@ -55,6 +55,7 @@ func ListTags(ctx *context.APIContext) {
 	//     "$ref": "#/responses/notFound"
 
 	listOpts := utils.GetListOptions(ctx)
+	listOpts.SetDefaultValues()
 
 	tags, total, err := ctx.Repo.GitRepo.GetTagInfos(listOpts.Page, listOpts.PageSize)
 	if err != nil {
@@ -72,7 +73,7 @@ func ListTags(ctx *context.APIContext) {
 
 		apiTags[i] = convert.ToTag(ctx.Repo.Repository, tags[i])
 	}
-
+	ctx.SetLinkHeader(total, listOpts.PageSize)
 	ctx.SetTotalCountHeader(int64(total))
 	ctx.JSON(http.StatusOK, &apiTags)
 }
@@ -379,6 +380,7 @@ func GetTagProtection(ctx *context.APIContext) {
 	//   in: path
 	//   description: id of the tag protect to get
 	//   type: integer
+	//   format: int64
 	//   required: true
 	// responses:
 	//   "200":
@@ -533,6 +535,7 @@ func EditTagProtection(ctx *context.APIContext) {
 	//   in: path
 	//   description: id of protected tag
 	//   type: integer
+	//   format: int64
 	//   required: true
 	// - name: body
 	//   in: body
@@ -638,6 +641,7 @@ func DeleteTagProtection(ctx *context.APIContext) {
 	//   in: path
 	//   description: id of protected tag
 	//   type: integer
+	//   format: int64
 	//   required: true
 	// responses:
 	//   "204":

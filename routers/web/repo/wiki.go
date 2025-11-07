@@ -6,6 +6,7 @@ package repo
 
 import (
 	"bytes"
+	gocontext "context"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,25 +14,25 @@ import (
 	"path/filepath"
 	"strings"
 
-	git_model "code.gitea.io/gitea/models/git"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/charset"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/markup/markdown"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/common"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/forms"
-	notify_service "code.gitea.io/gitea/services/notify"
-	wiki_service "code.gitea.io/gitea/services/wiki"
+	git_model "forgejo.org/models/git"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/charset"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/markup/markdown"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/common"
+	"forgejo.org/services/context"
+	"forgejo.org/services/forms"
+	notify_service "forgejo.org/services/notify"
+	wiki_service "forgejo.org/services/wiki"
 )
 
 const (
@@ -392,7 +393,7 @@ func renderRevisionPage(ctx *context.Context) (*git.Repository, *git.TreeEntry) 
 		ctx.ServerError("CommitsByFileAndRange", err)
 		return nil, nil
 	}
-	ctx.Data["Commits"] = git_model.ConvertFromGitCommit(ctx, commitsHistory, ctx.Repo.Repository)
+	ctx.Data["Commits"] = git_model.ParseCommitsWithStatus(ctx, commitsHistory, ctx.Repo.Repository)
 
 	pager := context.NewPagination(int(commitsCount), setting.Git.CommitsRangeSize, page, 5)
 	pager.SetDefaultParams(ctx)
@@ -534,6 +535,9 @@ func Wiki(ctx *context.Context) {
 	}
 	ctx.Data["Author"] = lastCommit.Author
 
+	ctx.Data["OpenGraphTitle"] = ctx.Data["Title"]
+	ctx.Data["OpenGraphURL"] = fmt.Sprintf("%s%s", setting.AppURL, ctx.Data["Link"])
+
 	ctx.HTML(http.StatusOK, tplWikiView)
 }
 
@@ -598,22 +602,32 @@ func WikiPages(ctx *context.Context) {
 		}
 	}()
 
-	entries, err := commit.ListEntries()
+	treePath := "" // To support list sub folders' pages in the future
+	tree, err := commit.SubTree(treePath)
+	if err != nil {
+		ctx.ServerError("SubTree", err)
+		return
+	}
+
+	allEntries, err := tree.ListEntries()
 	if err != nil {
 		ctx.ServerError("ListEntries", err)
 		return
 	}
+	allEntries.CustomSort(base.NaturalSortLess)
+
+	entries, _, err := allEntries.GetCommitsInfo(gocontext.Context(ctx), commit, treePath)
+	if err != nil {
+		ctx.ServerError("GetCommitsInfo", err)
+		return
+	}
+
 	pages := make([]PageMeta, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsRegular() {
+		if !entry.Entry.IsRegular() {
 			continue
 		}
-		c, err := wikiRepo.GetCommitByPath(entry.Name())
-		if err != nil {
-			ctx.ServerError("GetCommit", err)
-			return
-		}
-		wikiName, err := wiki_service.GitPathToWebPath(entry.Name())
+		wikiName, err := wiki_service.GitPathToWebPath(entry.Entry.Name())
 		if err != nil {
 			if repo_model.IsErrWikiInvalidFileName(err) {
 				continue
@@ -625,8 +639,8 @@ func WikiPages(ctx *context.Context) {
 		pages = append(pages, PageMeta{
 			Name:         displayName,
 			SubURL:       wiki_service.WebPathToURLPath(wikiName),
-			GitEntryName: entry.Name(),
-			UpdatedUnix:  timeutil.TimeStamp(c.Author.When.Unix()),
+			GitEntryName: entry.Entry.Name(),
+			UpdatedUnix:  timeutil.TimeStamp(entry.Commit.Author.When.Unix()),
 		})
 	}
 	ctx.Data["Pages"] = pages

@@ -4,9 +4,9 @@
 package issues
 
 import (
-	"code.gitea.io/gitea/models/db"
-	issues_model "code.gitea.io/gitea/models/issues"
-	"code.gitea.io/gitea/modules/optional"
+	"forgejo.org/models/db"
+	issues_model "forgejo.org/models/issues"
+	"forgejo.org/modules/optional"
 )
 
 func ToSearchOptions(keyword string, opts *issues_model.IssuesOptions) *SearchOptions {
@@ -78,7 +78,9 @@ func ToSearchOptions(keyword string, opts *issues_model.IssuesOptions) *SearchOp
 	searchOpt.Paginator = opts.Paginator
 
 	switch opts.SortType {
-	case "", "latest":
+	case "", "relevance":
+		searchOpt.SortBy = SortByScore
+	case "latest":
 		searchOpt.SortBy = SortByCreatedDesc
 	case "oldest":
 		searchOpt.SortBy = SortByCreatedAsc

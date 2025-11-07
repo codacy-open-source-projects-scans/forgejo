@@ -9,9 +9,9 @@ import (
 	"path"
 	"strings"
 
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/storage"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/storage"
+	"forgejo.org/modules/util"
 )
 
 // BlobHash256Key is the key to address a blob content
@@ -37,8 +37,8 @@ func (s *ContentStore) ShouldServeDirect() bool {
 	return setting.Packages.Storage.MinioConfig.ServeDirect
 }
 
-func (s *ContentStore) GetServeDirectURL(key BlobHash256Key, filename string) (*url.URL, error) {
-	return s.store.URL(KeyToRelativePath(key), filename)
+func (s *ContentStore) GetServeDirectURL(key BlobHash256Key, filename string, reqParams url.Values) (*url.URL, error) {
+	return s.store.URL(KeyToRelativePath(key), filename, reqParams)
 }
 
 // FIXME: Workaround to be removed in v1.20

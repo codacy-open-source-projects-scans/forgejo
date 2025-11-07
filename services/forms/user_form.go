@@ -9,14 +9,14 @@ import (
 	"net/http"
 	"strings"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web/middleware"
-	"code.gitea.io/gitea/services/context"
+	auth_model "forgejo.org/models/auth"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/validation"
+	"forgejo.org/modules/web/middleware"
+	"forgejo.org/services/context"
 
-	"gitea.com/go-chi/binding"
+	"code.forgejo.org/go-chi/binding"
 )
 
 // InstallForm form for installation page
@@ -109,8 +109,8 @@ func (f *RegisterForm) Validate(req *http.Request, errs binding.Errors) binding.
 // The email is marked as allowed if it matches any of the
 // domains in the whitelist or if it doesn't match any of
 // domains in the blocklist, if any such list is not empty.
-func (f *RegisterForm) IsEmailDomainAllowed() bool {
-	return user_model.IsEmailDomainAllowed(f.Email)
+func (f *RegisterForm) IsEmailDomainAllowed() (validEmail, ok bool) {
+	return validation.IsEmailDomainAllowed(f.Email)
 }
 
 // MustChangePasswordForm form for updating your password after account creation
@@ -224,6 +224,7 @@ type UpdateProfileForm struct {
 	Biography           string `binding:"MaxSize(255)"`
 	Visibility          structs.VisibleType
 	KeepActivityPrivate bool
+	KeepPronounsPrivate bool
 }
 
 // Validate validates the fields
@@ -258,7 +259,7 @@ const (
 type AvatarForm struct {
 	Source      string
 	Avatar      *multipart.FileHeader
-	Gravatar    string `binding:"OmitEmpty;Email;MaxSize(254)"`
+	Gravatar    string `binding:"OmitEmpty;EmailWithAllowedDomain;MaxSize(254)"`
 	Federavatar bool
 }
 
@@ -270,7 +271,7 @@ func (f *AvatarForm) Validate(req *http.Request, errs binding.Errors) binding.Er
 
 // AddEmailForm form for adding new email
 type AddEmailForm struct {
-	Email string `binding:"Required;Email;MaxSize(254)"`
+	Email string `binding:"Required;EmailWithAllowedDomain;MaxSize(254)"`
 }
 
 // Validate validates the fields
@@ -290,7 +291,7 @@ func (f *UpdateThemeForm) Validate(req *http.Request, errs binding.Errors) bindi
 	return middleware.Validate(errs, ctx.Data, f, ctx.Locale)
 }
 
-// IsThemeExists checks if the theme is a theme available in the config.
+// IsThemeExists checks if the theme is available in the config.
 func (f UpdateThemeForm) IsThemeExists() bool {
 	var exists bool
 
@@ -388,7 +389,7 @@ func (f *NewAccessTokenForm) GetScope() (auth_model.AccessTokenScope, error) {
 // EditOAuth2ApplicationForm form for editing oauth2 applications
 type EditOAuth2ApplicationForm struct {
 	Name               string `binding:"Required;MaxSize(255)" form:"application_name"`
-	RedirectURIs       string `binding:"Required" form:"redirect_uris"`
+	RedirectURIs       string `binding:"Required;ValidUrlList" form:"redirect_uris"`
 	ConfidentialClient bool   `form:"confidential_client"`
 }
 

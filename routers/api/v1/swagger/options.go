@@ -5,9 +5,9 @@
 package swagger
 
 import (
-	ffed "code.gitea.io/gitea/modules/forgefed"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/services/forms"
+	ffed "forgejo.org/modules/forgefed"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/services/forms"
 )
 
 // not actually a response, just a hack to get go-swagger to include definitions
@@ -100,6 +100,8 @@ type swaggerParameterBodies struct {
 	CreateRepoOption api.CreateRepoOption
 	// in:body
 	EditRepoOption api.EditRepoOption
+	// in:body
+	UpdateBranchRepoOption api.UpdateBranchRepoOption
 	// in:body
 	TransferRepoOption api.TransferRepoOption
 	// in:body
@@ -215,6 +217,9 @@ type swaggerParameterBodies struct {
 	CreateVariableOption api.CreateVariableOption
 
 	// in:body
+	RenameOrgOption api.RenameOrgOption
+
+	// in:body
 	UpdateVariableOption api.UpdateVariableOption
 
 	// in:body
@@ -231,4 +236,7 @@ type swaggerParameterBodies struct {
 
 	// in:body
 	SetUserQuotaGroupsOptions api.SetUserQuotaGroupsOptions
+
+	// in:body
+	NoteOptions api.NoteOptions
 }

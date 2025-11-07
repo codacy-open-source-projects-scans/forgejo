@@ -4,11 +4,12 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
-	"code.gitea.io/gitea/modules/setting"
+	"forgejo.org/modules/setting"
 
 	mc "code.forgejo.org/go-chi/cache"
 
@@ -48,7 +49,7 @@ const (
 
 func Test() (time.Duration, error) {
 	if conn == nil {
-		return 0, fmt.Errorf("default cache not initialized")
+		return 0, errors.New("default cache not initialized")
 	}
 
 	testData := fmt.Sprintf("%x", make([]byte, 500))
@@ -63,10 +64,10 @@ func Test() (time.Duration, error) {
 	}
 	testVal := conn.Get(testCacheKey)
 	if testVal == nil {
-		return 0, fmt.Errorf("expect cache hit but got none")
+		return 0, errors.New("expect cache hit but got none")
 	}
 	if testVal != testData {
-		return 0, fmt.Errorf("expect cache to return same value as stored but got other")
+		return 0, errors.New("expect cache to return same value as stored but got other")
 	}
 
 	return time.Since(start), nil
@@ -79,7 +80,7 @@ func GetCache() mc.Cache {
 
 // GetString returns the key value from cache with callback when no key exists in cache
 func GetString(key string, getFunc func() (string, error)) (string, error) {
-	if conn == nil || setting.CacheService.TTL == 0 {
+	if conn == nil || setting.CacheService.TTL <= 0 {
 		return getFunc()
 	}
 
@@ -106,7 +107,7 @@ func GetString(key string, getFunc func() (string, error)) (string, error) {
 
 // GetInt returns key value from cache with callback when no key exists in cache
 func GetInt(key string, getFunc func() (int, error)) (int, error) {
-	if conn == nil || setting.CacheService.TTL == 0 {
+	if conn == nil || setting.CacheService.TTL <= 0 {
 		return getFunc()
 	}
 
@@ -141,7 +142,7 @@ func GetInt(key string, getFunc func() (int, error)) (int, error) {
 
 // GetInt64 returns key value from cache with callback when no key exists in cache
 func GetInt64(key string, getFunc func() (int64, error)) (int64, error) {
-	if conn == nil || setting.CacheService.TTL == 0 {
+	if conn == nil || setting.CacheService.TTL <= 0 {
 		return getFunc()
 	}
 

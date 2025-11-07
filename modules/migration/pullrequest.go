@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"code.gitea.io/gitea/modules/git"
+	"forgejo.org/modules/git"
 )
 
 // PullRequest defines a standard pull request information
@@ -34,9 +34,11 @@ type PullRequest struct {
 	Assignees      []string
 	IsLocked       bool `yaml:"is_locked"`
 	Reactions      []*Reaction
+	Flow           int64
 	ForeignIndex   int64
 	Context        DownloaderContext `yaml:"-"`
 	EnsuredSafe    bool              `yaml:"ensured_safe"`
+	IsDraft        bool              `yaml:"is_draft"`
 }
 
 func (p *PullRequest) GetLocalIndex() int64          { return p.Number }

@@ -7,17 +7,17 @@ import (
 	"encoding/base64"
 	"net/http"
 
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/services/context"
-	user_service "code.gitea.io/gitea/services/user"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/services/context"
+	user_service "forgejo.org/services/user"
 )
 
-// UpdateAvatar updates the Avatar of an User
+// UpdateAvatar updates doer's avatar
 func UpdateAvatar(ctx *context.APIContext) {
 	// swagger:operation POST /user/avatar user userUpdateAvatar
 	// ---
-	// summary: Update Avatar
+	// summary: Update avatar of the current user
 	// produces:
 	// - application/json
 	// parameters:
@@ -28,6 +28,10 @@ func UpdateAvatar(ctx *context.APIContext) {
 	// responses:
 	//   "204":
 	//     "$ref": "#/responses/empty"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	form := web.GetForm(ctx).(*api.UpdateUserAvatarOption)
 
 	content, err := base64.StdEncoding.DecodeString(form.Image)
@@ -45,16 +49,20 @@ func UpdateAvatar(ctx *context.APIContext) {
 	ctx.Status(http.StatusNoContent)
 }
 
-// DeleteAvatar deletes the Avatar of an User
+// DeleteAvatar deletes doer's avatar
 func DeleteAvatar(ctx *context.APIContext) {
 	// swagger:operation DELETE /user/avatar user userDeleteAvatar
 	// ---
-	// summary: Delete Avatar
+	// summary: Delete avatar of the current user. It will be replaced by a default one
 	// produces:
 	// - application/json
 	// responses:
 	//   "204":
 	//     "$ref": "#/responses/empty"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	err := user_service.DeleteAvatar(ctx, ctx.Doer)
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "DeleteAvatar", err)

@@ -140,6 +140,23 @@
   --color-pink-dark-2: #b11d5f;
   --color-brown-dark-2: #a47252;
   --color-black-dark-2: #111827;
+  /* ansi colors used for actions console and console files */
+  --color-ansi-black: #1d2328;
+  --color-ansi-red: #cc4848;
+  --color-ansi-green: #87ab63;
+  --color-ansi-yellow: #cc9903;
+  --color-ansi-blue: #3a8ac6;
+  --color-ansi-magenta: #d22e8b;
+  --color-ansi-cyan: #00918a;
+  --color-ansi-white: var(--color-console-fg-subtle);
+  --color-ansi-bright-black: #424851;
+  --color-ansi-bright-red: #d15a5a;
+  --color-ansi-bright-green: #93b373;
+  --color-ansi-bright-yellow: #eaaf03;
+  --color-ansi-bright-blue: #4e96cc;
+  --color-ansi-bright-magenta: #d74397;
+  --color-ansi-bright-cyan: #00b6ad;
+  --color-ansi-bright-white: var(--color-console-fg);
   /* other colors */
   --color-gold: #b1983b;
   --color-white: #ffffff;
@@ -179,11 +196,24 @@
   --color-orange-badge: #ea580c;
   --color-orange-badge-bg: #ea580c22;
   --color-orange-badge-hover-bg: #ea580c44;
-  --color-git: #f05133;
-  /* Icon colors (PR/Issue/...) */
-  --color-icon-green: #3fb950;
-  --color-icon-red: #f85149;
-  --color-icon-purple: #aa76ff;
+
+  /* Colors for thin elements: octicons, text, borders */
+  --thin-lightness: 0.68;
+  --regular-chroma: 0.19;
+  --color-thin-green: oklch(var(--thin-lightness) var(--regular-chroma) 145deg);
+  --color-thin-red: oklch(var(--thin-lightness) var(--regular-chroma) 27deg);
+  --color-thin-purple: oklch(var(--thin-lightness) var(--regular-chroma) 298deg);
+  --color-thin-orange: oklch(var(--thin-lightness) var(--regular-chroma) 41deg);
+
+  /* Ditto but when additional highlight is needed, e.g. on user interaction */
+  --thin-lightness-highlight: 0.75;
+  --color-thin-red-highlight: oklch(var(--thin-lightness-highlight) var(--regular-chroma) 27deg);
+
+  /* Background colors. WIP, currently only covers danger buttons */
+  --bg-lightness: 0.26;
+  --bg-chroma: 0.05;
+  --color-danger-bg: oklch(var(--bg-lightness) var(--bg-chroma) 27deg);
+
   /* target-based colors */
   --color-body: var(--steel-800);
   --color-box-header: var(--steel-700);
@@ -211,6 +241,8 @@
   --color-active: var(--steel-650);
   --color-menu: var(--steel-700);
   --color-card: var(--steel-700);
+  --fancy-card-bg: var(--steel-650);
+  --fancy-card-border: var(--steel-600);
   --color-markup-table-row: #ffffff06;
   --color-markup-code-block: var(--steel-800);
   --color-markup-code-inline: var(--steel-850);
@@ -291,11 +323,6 @@ i.grey.icon.icon.icon.icon {
 .ui.primary.labels .label {
   background-color: var(--color-primary-light-3) !important;
 }
-.repository.view.issue .comment-list .code-comment + .code-comment {
-  margin: 1.25rem 0 !important;
-  padding-top: 1.25rem !important;
-  border-top-color: var(--steel-650) !important;
-}
 .ui.labeled.icon.buttons > .button > .icon,
 .ui.labeled.icon.button > .icon {
   background-color: var(--color-light) !important;
@@ -309,8 +336,8 @@ i.grey.icon.icon.icon.icon {
 .ui.ui.ui.basic.primary.label {
   color: var(--color-text-dark) !important;
 }
-.ui.basic.yellow.label.pending-label {
-  background: var(--color-light) !important;
+.ui.yellow.label.pending-label {
+  color: var(--color-warning-text) !important;
 }
 ::selection {
   background: var(--steel-100) !important;

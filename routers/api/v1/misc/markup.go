@@ -6,12 +6,12 @@ package misc
 import (
 	"net/http"
 
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/markup/markdown"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/common"
-	"code.gitea.io/gitea/services/context"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/markup/markdown"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/common"
+	"forgejo.org/services/context"
 )
 
 // Markup render markup document to HTML
@@ -41,7 +41,16 @@ func Markup(ctx *context.APIContext) {
 		return
 	}
 
-	common.RenderMarkup(ctx.Base, ctx.Repo, form.Mode, form.Text, form.Context, form.FilePath, form.Wiki)
+	re := common.Renderer{
+		Mode:       form.Mode,
+		Text:       form.Text,
+		URLPrefix:  form.Context,
+		FilePath:   form.FilePath,
+		BranchPath: form.BranchPath,
+		IsWiki:     form.Wiki,
+	}
+
+	re.RenderMarkup(ctx.Base, ctx.Repo)
 }
 
 // Markdown render markdown document to HTML
@@ -76,7 +85,14 @@ func Markdown(ctx *context.APIContext) {
 		mode = form.Mode
 	}
 
-	common.RenderMarkup(ctx.Base, ctx.Repo, mode, form.Text, form.Context, "", form.Wiki)
+	re := common.Renderer{
+		Mode:      mode,
+		Text:      form.Text,
+		URLPrefix: form.Context,
+		IsWiki:    form.Wiki,
+	}
+
+	re.RenderMarkup(ctx.Base, ctx.Repo)
 }
 
 // MarkdownRaw render raw markdown HTML

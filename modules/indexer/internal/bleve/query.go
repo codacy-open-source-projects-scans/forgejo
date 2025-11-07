@@ -4,7 +4,7 @@
 package bleve
 
 import (
-	"code.gitea.io/gitea/modules/optional"
+	"forgejo.org/modules/optional"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -13,18 +13,28 @@ import (
 // NumericEqualityQuery generates a numeric equality query for the given value and field
 func NumericEqualityQuery(value int64, field string) *query.NumericRangeQuery {
 	f := float64(value)
-	tru := true                                                  // codespell-ignore
-	q := bleve.NewNumericRangeInclusiveQuery(&f, &f, &tru, &tru) // codespell-ignore
+	tru := true                                                  // codespell:ignore
+	q := bleve.NewNumericRangeInclusiveQuery(&f, &f, &tru, &tru) // codespell:ignore
 	q.SetField(field)
 	return q
 }
 
-// MatchPhraseQuery generates a match phrase query for the given phrase, field and analyzer
-func MatchPhraseQuery(matchPhrase, field, analyzer string, fuzziness int) *query.MatchPhraseQuery {
-	q := bleve.NewMatchPhraseQuery(matchPhrase)
+// MatchQuery generates a match query for the given phrase, field and analyzer
+func MatchQuery(matchTerm, field, analyzer string, fuzziness int) *query.MatchQuery {
+	q := bleve.NewMatchQuery(matchTerm)
 	q.FieldVal = field
 	q.Analyzer = analyzer
 	q.Fuzziness = fuzziness
+	return q
+}
+
+// MatchPhraseQuery generates a match phrase query for the given phrase, field and analyzer
+func MatchPhraseQuery(matchPhrase, field, analyzer string, autoFuzzy bool, boost float64) *query.MatchPhraseQuery {
+	q := bleve.NewMatchPhraseQuery(matchPhrase)
+	q.FieldVal = field
+	q.Analyzer = analyzer
+	q.SetAutoFuzziness(autoFuzzy)
+	q.SetBoost(boost)
 	return q
 }
 

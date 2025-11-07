@@ -5,19 +5,16 @@ package auth
 
 import (
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base32"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/modules/secret"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	"forgejo.org/modules/keying"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/pbkdf2"
@@ -49,9 +46,9 @@ func (err ErrTwoFactorNotEnrolled) Unwrap() error {
 
 // TwoFactor represents a two-factor authentication token.
 type TwoFactor struct {
-	ID               int64 `xorm:"pk autoincr"`
-	UID              int64 `xorm:"UNIQUE"`
-	Secret           string
+	ID               int64  `xorm:"pk autoincr"`
+	UID              int64  `xorm:"UNIQUE"`
+	Secret           []byte `xorm:"BLOB"`
 	ScratchSalt      string
 	ScratchHash      string
 	LastUsedPasscode string             `xorm:"VARCHAR(10)"`
@@ -64,17 +61,13 @@ func init() {
 }
 
 // GenerateScratchToken recreates the scratch token the user is using.
-func (t *TwoFactor) GenerateScratchToken() (string, error) {
-	tokenBytes, err := util.CryptoRandomBytes(6)
-	if err != nil {
-		return "", err
-	}
+func (t *TwoFactor) GenerateScratchToken() string {
 	// these chars are specially chosen, avoid ambiguous chars like `0`, `O`, `1`, `I`.
 	const base32Chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	token := base32.NewEncoding(base32Chars).WithPadding(base32.NoPadding).EncodeToString(tokenBytes)
+	token := base32.NewEncoding(base32Chars).WithPadding(base32.NoPadding).EncodeToString(util.CryptoRandomBytes(6))
 	t.ScratchSalt, _ = util.CryptoRandomString(10)
 	t.ScratchHash = HashToken(token, t.ScratchSalt)
-	return token, nil
+	return token
 }
 
 // HashToken return the hashable salt
@@ -92,39 +85,35 @@ func (t *TwoFactor) VerifyScratchToken(token string) bool {
 	return subtle.ConstantTimeCompare([]byte(t.ScratchHash), []byte(tempHash)) == 1
 }
 
-func (t *TwoFactor) getEncryptionKey() []byte {
-	k := md5.Sum([]byte(setting.SecretKey))
-	return k[:]
-}
-
 // SetSecret sets the 2FA secret.
-func (t *TwoFactor) SetSecret(secretString string) error {
-	secretBytes, err := secret.AesEncrypt(t.getEncryptionKey(), []byte(secretString))
-	if err != nil {
-		return err
-	}
-	t.Secret = base64.StdEncoding.EncodeToString(secretBytes)
-	return nil
+func (t *TwoFactor) SetSecret(secretString string) {
+	key := keying.DeriveKey(keying.ContextTOTP)
+	t.Secret = key.Encrypt([]byte(secretString), keying.ColumnAndID("secret", t.ID))
 }
 
 // ValidateTOTP validates the provided passcode.
 func (t *TwoFactor) ValidateTOTP(passcode string) (bool, error) {
-	decodedStoredSecret, err := base64.StdEncoding.DecodeString(t.Secret)
+	key := keying.DeriveKey(keying.ContextTOTP)
+	secret, err := key.Decrypt(t.Secret, keying.ColumnAndID("secret", t.ID))
 	if err != nil {
 		return false, err
 	}
-	secretBytes, err := secret.AesDecrypt(t.getEncryptionKey(), decodedStoredSecret)
-	if err != nil {
-		return false, err
-	}
-	secretStr := string(secretBytes)
-	return totp.Validate(passcode, secretStr), nil
+	return totp.Validate(passcode, string(secret)), nil
 }
 
 // NewTwoFactor creates a new two-factor authentication token.
-func NewTwoFactor(ctx context.Context, t *TwoFactor) error {
-	_, err := db.GetEngine(ctx).Insert(t)
-	return err
+func NewTwoFactor(ctx context.Context, t *TwoFactor, secret string) error {
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		sess := db.GetEngine(ctx)
+		_, err := sess.Insert(t)
+		if err != nil {
+			return err
+		}
+
+		t.SetSecret(secret)
+		_, err = sess.Cols("secret").ID(t.ID).Update(t)
+		return err
+	})
 }
 
 // UpdateTwoFactor updates a two-factor authentication token.
@@ -146,9 +135,9 @@ func GetTwoFactorByUID(ctx context.Context, uid int64) (*TwoFactor, error) {
 	return twofa, nil
 }
 
-// HasTwoFactorByUID returns the two-factor authentication token associated with
-// the user, if any.
-func HasTwoFactorByUID(ctx context.Context, uid int64) (bool, error) {
+// HasTOTPByUID returns the TOTP authentication token associated with
+// the user, if the user has TOTP enabled for their account.
+func HasTOTPByUID(ctx context.Context, uid int64) (bool, error) {
 	return db.GetEngine(ctx).Where("uid=?", uid).Exist(&TwoFactor{})
 }
 

@@ -5,18 +5,18 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	auth_model "code.gitea.io/gitea/models/auth"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/modules/web/middleware"
+	actions_model "forgejo.org/models/actions"
+	auth_model "forgejo.org/models/auth"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/web/middleware"
 )
 
 // Ensure the struct implements the interface.
@@ -96,9 +96,8 @@ func (b *Basic) Verify(req *http.Request, w http.ResponseWriter, store DataStore
 			return nil, err
 		}
 
-		token.UpdatedUnix = timeutil.TimeStampNow()
-		if err = auth_model.UpdateAccessToken(req.Context(), token); err != nil {
-			log.Error("UpdateAccessToken:  %v", err)
+		if err = token.UpdateLastUsed(req.Context()); err != nil {
+			log.Error("UpdateLastUsed:  %v", err)
 		}
 
 		store.GetData()["IsApiToken"] = true
@@ -132,6 +131,16 @@ func (b *Basic) Verify(req *http.Request, w http.ResponseWriter, store DataStore
 		return nil, err
 	}
 
+	hashWebAuthn, err := auth_model.HasWebAuthnRegistrationsByUID(req.Context(), u.ID)
+	if err != nil {
+		log.Error("HasWebAuthnRegistrationsByUID: %v", err)
+		return nil, err
+	}
+
+	if hashWebAuthn {
+		return nil, errors.New("Basic authorization is not allowed while having security keys enrolled")
+	}
+
 	if skipper, ok := source.Cfg.(LocalTwoFASkipper); !ok || !skipper.IsSkipLocalTwoFA() {
 		if err := validateTOTP(req, u); err != nil {
 			return nil, err
@@ -140,6 +149,7 @@ func (b *Basic) Verify(req *http.Request, w http.ResponseWriter, store DataStore
 
 	log.Trace("Basic Authorization: Logged in user %-v", u)
 
+	store.GetData()["IsPasswordLogin"] = true
 	return u, nil
 }
 

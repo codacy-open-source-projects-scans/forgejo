@@ -6,8 +6,8 @@ package oauth2
 import (
 	"html/template"
 
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/svg"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/svg"
 )
 
 // BaseProvider represents a common base for Provider
@@ -46,6 +46,10 @@ func (b *BaseProvider) IconHTML(size int) template.HTML {
 // CustomURLSettings returns the custom url settings for this provider
 func (b *BaseProvider) CustomURLSettings() *CustomURLSettings {
 	return nil
+}
+
+func (b *BaseProvider) CanProvideSSHKeys() bool {
+	return false
 }
 
 var _ Provider = &BaseProvider{}

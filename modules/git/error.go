@@ -4,27 +4,13 @@
 package git
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/modules/util"
 )
-
-// ErrExecTimeout error when exec timed out
-type ErrExecTimeout struct {
-	Duration time.Duration
-}
-
-// IsErrExecTimeout if some error is ErrExecTimeout
-func IsErrExecTimeout(err error) bool {
-	_, ok := err.(ErrExecTimeout)
-	return ok
-}
-
-func (err ErrExecTimeout) Error() string {
-	return fmt.Sprintf("execution is timeout [duration: %v]", err.Duration)
-}
 
 // ErrNotExist commit not exist error
 type ErrNotExist struct {
@@ -60,21 +46,6 @@ func (err ErrBadLink) Error() string {
 func IsErrBadLink(err error) bool {
 	_, ok := err.(ErrBadLink)
 	return ok
-}
-
-// ErrUnsupportedVersion error when required git version not matched
-type ErrUnsupportedVersion struct {
-	Required string
-}
-
-// IsErrUnsupportedVersion if some error is ErrUnsupportedVersion
-func IsErrUnsupportedVersion(err error) bool {
-	_, ok := err.(ErrUnsupportedVersion)
-	return ok
-}
-
-func (err ErrUnsupportedVersion) Error() string {
-	return fmt.Sprintf("Operation requires higher version [required: %s]", err.Required)
 }
 
 // ErrBranchNotExist represents a "BranchNotExist" kind of error.
@@ -149,10 +120,7 @@ func (err *ErrPushRejected) GenerateMessage() {
 		err.Message = ""
 		return
 	}
-	for {
-		if len(err.StdErr) <= i+8 {
-			break
-		}
+	for len(err.StdErr) > i+8 {
 		if err.StdErr[i:i+8] != "remote: " {
 			break
 		}
@@ -184,4 +152,11 @@ func IsErrMoreThanOne(err error) bool {
 
 func (err *ErrMoreThanOne) Error() string {
 	return fmt.Sprintf("ErrMoreThanOne Error: %v: %s\n%s", err.Err, err.StdErr, err.StdOut)
+}
+
+func IsErrCanceledOrKilled(err error) bool {
+	// When "cancel()" a git command's context, the returned error of "Run()" could be one of them:
+	// - context.Canceled
+	// - *exec.ExitError: "signal: killed"
+	return err != nil && (errors.Is(err, context.Canceled) || err.Error() == "signal: killed")
 }

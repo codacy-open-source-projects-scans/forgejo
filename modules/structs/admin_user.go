@@ -15,7 +15,7 @@ type CreateUserOption struct {
 	FullName string `json:"full_name" binding:"MaxSize(100)"`
 	// required: true
 	// swagger:strfmt email
-	Email              string `json:"email" binding:"Required;Email;MaxSize(254)"`
+	Email              string `json:"email" binding:"Required;EmailForAdmin;MaxSize(254)"`
 	Password           string `json:"password" binding:"MaxSize(255)"`
 	MustChangePassword *bool  `json:"must_change_password"`
 	SendNotify         bool   `json:"send_notify"`
@@ -50,4 +50,5 @@ type EditUserOption struct {
 	AllowCreateOrganization *bool   `json:"allow_create_organization"`
 	Restricted              *bool   `json:"restricted"`
 	Visibility              string  `json:"visibility" binding:"In(,public,limited,private)"`
+	HideEmail               *bool   `json:"hide_email"`
 }

@@ -9,10 +9,10 @@ import (
 	"image/png"
 	"testing"
 
-	"code.gitea.io/gitea/models/db"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	"code.gitea.io/gitea/modules/avatar"
+	"forgejo.org/models/db"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unittest"
+	"forgejo.org/modules/avatar"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ func TestUploadAvatar(t *testing.T) {
 
 	err := UploadAvatar(db.DefaultContext, repo, buff.Bytes())
 	require.NoError(t, err)
-	assert.Equal(t, avatar.HashAvatar(10, buff.Bytes()), repo.Avatar)
+	assert.Equal(t, avatar.HashAvatar(repo.ID, buff.Bytes()), repo.Avatar)
 }
 
 func TestUploadBigAvatar(t *testing.T) {
@@ -60,5 +60,29 @@ func TestDeleteAvatar(t *testing.T) {
 	err = DeleteAvatar(db.DefaultContext, repo)
 	require.NoError(t, err)
 
-	assert.Equal(t, "", repo.Avatar)
+	assert.Empty(t, repo.Avatar)
+}
+
+func TestTemplateGenerateAvatar(t *testing.T) {
+	// Generate image
+	myImage := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	var buff bytes.Buffer
+	png.Encode(&buff, myImage)
+
+	require.NoError(t, unittest.PrepareTestDatabase())
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 10})
+
+	// Upload Avatar
+	err := UploadAvatar(db.DefaultContext, repo, buff.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, avatar.HashAvatar(repo.ID, buff.Bytes()), repo.Avatar)
+
+	// Generate the Avatar for Another Repo
+	genRepo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 11})
+	err = generateAvatar(db.DefaultContext, repo, genRepo)
+	require.NoError(t, err)
+	assert.Equal(t, avatar.HashAvatar(genRepo.ID, buff.Bytes()), genRepo.Avatar)
+
+	// Make sure The 2 Hashes are not the same
+	assert.NotEqual(t, repo.Avatar, genRepo.Avatar)
 }

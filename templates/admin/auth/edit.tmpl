@@ -6,7 +6,6 @@
 		<div class="ui attached segment">
 			<form class="ui form" action="{{.Link}}" method="post">
 				{{template "base/disable_form_autofill"}}
-				{{.CsrfTokenHtml}}
 				<input type="hidden" name="id" value="{{.Source.ID}}">
 				<div class="inline field">
 					<label>{{ctx.Locale.Tr "admin.auths.auth_type"}}</label>
@@ -299,6 +298,13 @@
 							<p class="help">{{ctx.Locale.Tr "admin.auths.skip_local_two_fa_helper"}}</p>
 						</div>
 					</div>
+					<div class="optional field">
+						<div class="ui checkbox">
+							<label for="allow_username_change"><strong>{{ctx.Locale.Tr "admin.auths.allow_username_change"}}</strong></label>
+							<input id="allow_username_change" name="allow_username_change" type="checkbox" {{if $cfg.AllowUsernameChange}}checked{{end}}>
+							<p class="help">{{ctx.Locale.Tr "admin.auths.allow_username_change.description"}}</p>
+						</div>
+					</div>
 					<div class="oauth2_use_custom_url inline field">
 						<div class="ui checkbox">
 							<label><strong>{{ctx.Locale.Tr "admin.auths.oauth2_use_custom_url"}}</strong></label>
@@ -326,18 +332,27 @@
 						<input id="oauth2_tenant" name="oauth2_tenant" value="{{if $cfg.CustomURLMapping}}{{$cfg.CustomURLMapping.Tenant}}{{end}}">
 					</div>
 
-					{{range .OAuth2Providers}}{{if .CustomURLSettings}}
-						<input id="{{.Name}}_customURLSettings" type="hidden" data-required="{{.CustomURLSettings.Required}}" data-available="true">
-						<input id="{{.Name}}_token_url" value="{{.CustomURLSettings.TokenURL.Value}}" data-available="{{.CustomURLSettings.TokenURL.Available}}" data-required="{{.CustomURLSettings.TokenURL.Required}}" type="hidden">
-						<input id="{{.Name}}_auth_url" value="{{.CustomURLSettings.AuthURL.Value}}" data-available="{{.CustomURLSettings.AuthURL.Available}}" data-required="{{.CustomURLSettings.AuthURL.Required}}" type="hidden">
-						<input id="{{.Name}}_profile_url" value="{{.CustomURLSettings.ProfileURL.Value}}" data-available="{{.CustomURLSettings.ProfileURL.Available}}" data-required="{{.CustomURLSettings.ProfileURL.Required}}" type="hidden">
-						<input id="{{.Name}}_email_url" value="{{.CustomURLSettings.EmailURL.Value}}" data-available="{{.CustomURLSettings.EmailURL.Available}}" data-required="{{.CustomURLSettings.EmailURL.Required}}" type="hidden">
-						<input id="{{.Name}}_tenant" value="{{.CustomURLSettings.Tenant.Value}}" data-available="{{.CustomURLSettings.Tenant.Available}}" data-required="{{.CustomURLSettings.Tenant.Required}}" type="hidden">
-					{{end}}{{end}}
+					{{range .OAuth2Providers}}
+						{{if .CustomURLSettings}}
+							<input id="{{.Name}}_customURLSettings" type="hidden" data-required="{{.CustomURLSettings.Required}}" data-available="true">
+							<input id="{{.Name}}_token_url" value="{{.CustomURLSettings.TokenURL.Value}}" data-available="{{.CustomURLSettings.TokenURL.Available}}" data-required="{{.CustomURLSettings.TokenURL.Required}}" type="hidden">
+							<input id="{{.Name}}_auth_url" value="{{.CustomURLSettings.AuthURL.Value}}" data-available="{{.CustomURLSettings.AuthURL.Available}}" data-required="{{.CustomURLSettings.AuthURL.Required}}" type="hidden">
+							<input id="{{.Name}}_profile_url" value="{{.CustomURLSettings.ProfileURL.Value}}" data-available="{{.CustomURLSettings.ProfileURL.Available}}" data-required="{{.CustomURLSettings.ProfileURL.Required}}" type="hidden">
+							<input id="{{.Name}}_email_url" value="{{.CustomURLSettings.EmailURL.Value}}" data-available="{{.CustomURLSettings.EmailURL.Available}}" data-required="{{.CustomURLSettings.EmailURL.Required}}" type="hidden">
+							<input id="{{.Name}}_tenant" value="{{.CustomURLSettings.Tenant.Value}}" data-available="{{.CustomURLSettings.Tenant.Available}}" data-required="{{.CustomURLSettings.Tenant.Required}}" type="hidden">
+						{{end}}
+						{{if .CanProvideSSHKeys}}
+							<input id="{{.Name}}_canProvideSSHKeys" type="hidden">
+						{{end}}
+					{{end}}
 
 					<div class="field">
 						<label for="oauth2_scopes">{{ctx.Locale.Tr "admin.auths.oauth2_scopes"}}</label>
 						<input id="oauth2_scopes" name="oauth2_scopes" value="{{if $cfg.Scopes}}{{StringUtils.Join $cfg.Scopes ","}}{{end}}">
+					</div>
+					<div class="oauth2_attribute_ssh_public_key field">
+						<label for="oauth2_attribute_ssh_public_key">{{ctx.Locale.Tr "admin.auths.attribute_ssh_public_key"}}</label>
+						<input id="oauth2_attribute_ssh_public_key" name="oauth2_attribute_ssh_public_key" value="{{$cfg.AttributeSSHPublicKey}}" placeholder="sshpubkey">
 					</div>
 					<div class="field">
 						<label for="oauth2_required_claim_name">{{ctx.Locale.Tr "admin.auths.oauth2_required_claim_name"}}</label>
@@ -371,52 +386,7 @@
 					</div>
 				{{end}}
 
-				<!-- SSPI -->
-				{{if .Source.IsSSPI}}
-					{{$cfg:=.Source.Cfg}}
-					<div class="field">
-						<div class="ui checkbox">
-							<label for="sspi_auto_create_users"><strong>{{ctx.Locale.Tr "admin.auths.sspi_auto_create_users"}}</strong></label>
-							<input id="sspi_auto_create_users" name="sspi_auto_create_users" class="sspi-auto-create-users" type="checkbox" {{if $cfg.AutoCreateUsers}}checked{{end}}>
-							<p class="help">{{ctx.Locale.Tr "admin.auths.sspi_auto_create_users_helper"}}</p>
-						</div>
-					</div>
-					<div class="field">
-						<div class="ui checkbox">
-							<label for="sspi_auto_activate_users"><strong>{{ctx.Locale.Tr "admin.auths.sspi_auto_activate_users"}}</strong></label>
-							<input id="sspi_auto_activate_users" name="sspi_auto_activate_users" class="sspi-auto-activate-users" type="checkbox" {{if $cfg.AutoActivateUsers}}checked{{end}}>
-							<p class="help">{{ctx.Locale.Tr "admin.auths.sspi_auto_activate_users_helper"}}</p>
-						</div>
-					</div>
-					<div class="field">
-						<div class="ui checkbox">
-							<label for="sspi_strip_domain_names"><strong>{{ctx.Locale.Tr "admin.auths.sspi_strip_domain_names"}}</strong></label>
-							<input id="sspi_strip_domain_names" name="sspi_strip_domain_names" class="sspi-strip-domain-names" type="checkbox" {{if $cfg.StripDomainNames}}checked{{end}}>
-							<p class="help">{{ctx.Locale.Tr "admin.auths.sspi_strip_domain_names_helper"}}</p>
-						</div>
-					</div>
-					<div class="required field">
-						<label for="sspi_separator_replacement">{{ctx.Locale.Tr "admin.auths.sspi_separator_replacement"}}</label>
-						<input id="sspi_separator_replacement" name="sspi_separator_replacement" value="{{$cfg.SeparatorReplacement}}" required>
-						<p class="help">{{ctx.Locale.Tr "admin.auths.sspi_separator_replacement_helper"}}</p>
-					</div>
-					<div class="field">
-						<label for="sspi_default_language">{{ctx.Locale.Tr "admin.auths.sspi_default_language"}}</label>
-						<div class="ui language selection dropdown" id="sspi_default_language">
-							<input name="sspi_default_language" type="hidden" value="{{$cfg.DefaultLanguage}}">
-							{{svg "octicon-triangle-down" 14 "dropdown icon"}}
-							<div class="text">{{range .AllLangs}}{{if eq $cfg.DefaultLanguage .Lang}}{{.Name}}{{end}}{{end}}</div>
-							<div class="menu">
-								<div class="item{{if not $.SSPIDefaultLanguage}} active selected{{end}}" data-value="">-</div>
-							{{range .AllLangs}}
-								<div class="item{{if eq $cfg.DefaultLanguage .Lang}} active selected{{end}}" data-value="{{.Lang}}">{{.Name}}</div>
-							{{end}}
-							</div>
-						</div>
-						<p class="help">{{ctx.Locale.Tr "admin.auths.sspi_default_language_helper"}}</p>
-					</div>
-				{{end}}
-				{{if (or .Source.IsLDAP .Source.IsOAuth2)}}
+				{{if .Source.IsLDAP}}
 					<div class="inline field">
 						<div class="ui checkbox">
 							<label><strong>{{ctx.Locale.Tr "admin.auths.syncenabled"}}</strong></label>
@@ -433,7 +403,7 @@
 
 				<div class="field">
 					<button class="ui primary button">{{ctx.Locale.Tr "admin.auths.update"}}</button>
-					<button class="ui red button delete-button" data-url="{{$.Link}}/delete" data-id="{{.Source.ID}}">{{ctx.Locale.Tr "admin.auths.delete"}}</button>
+					<button class="ui red button delete-button" data-url="{{$.Link}}/delete" data-id="{{.Source.ID}}" data-modal-id="delete-auth-source">{{ctx.Locale.Tr "admin.auths.delete"}}</button>
 				</div>
 			</form>
 		</div>
@@ -450,7 +420,7 @@
 		</div>
 	</div>
 
-<div class="ui g-modal-confirm delete modal">
+<div class="ui g-modal-confirm delete modal" id="delete-auth-source">
 	<div class="header">
 		{{svg "octicon-trash"}}
 		{{ctx.Locale.Tr "admin.auths.delete_auth_title"}}

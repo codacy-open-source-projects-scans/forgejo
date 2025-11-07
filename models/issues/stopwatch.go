@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	"forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 )
 
 // ErrIssueStopwatchNotExist represents an error that stopwatch is not exist
@@ -32,8 +32,8 @@ func (err ErrIssueStopwatchNotExist) Unwrap() error {
 // Stopwatch represents a stopwatch for time tracking.
 type Stopwatch struct {
 	ID          int64              `xorm:"pk autoincr"`
-	IssueID     int64              `xorm:"INDEX"`
-	UserID      int64              `xorm:"INDEX"`
+	IssueID     int64              `xorm:"INDEX REFERENCES(issue, id)"`
+	UserID      int64              `xorm:"INDEX REFERENCES(user, id)"`
 	CreatedUnix timeutil.TimeStamp `xorm:"created"`
 }
 
@@ -60,34 +60,19 @@ func getStopwatch(ctx context.Context, userID, issueID int64) (sw *Stopwatch, ex
 	return sw, exists, err
 }
 
-// UserIDCount is a simple coalition of UserID and Count
-type UserStopwatch struct {
-	UserID      int64
-	StopWatches []*Stopwatch
-}
-
 // GetUIDsAndNotificationCounts between the two provided times
-func GetUIDsAndStopwatch(ctx context.Context) ([]*UserStopwatch, error) {
+func GetUIDsAndStopwatch(ctx context.Context) (map[int64][]*Stopwatch, error) {
 	sws := []*Stopwatch{}
-	if err := db.GetEngine(ctx).Where("issue_id != 0").Find(&sws); err != nil {
+	if err := db.GetEngine(ctx).Find(&sws); err != nil {
 		return nil, err
 	}
+	res := map[int64][]*Stopwatch{}
 	if len(sws) == 0 {
-		return []*UserStopwatch{}, nil
+		return res, nil
 	}
 
-	lastUserID := int64(-1)
-	res := []*UserStopwatch{}
 	for _, sw := range sws {
-		if lastUserID == sw.UserID {
-			lastUserStopwatch := res[len(res)-1]
-			lastUserStopwatch.StopWatches = append(lastUserStopwatch.StopWatches, sw)
-		} else {
-			res = append(res, &UserStopwatch{
-				UserID:      sw.UserID,
-				StopWatches: []*Stopwatch{sw},
-			})
-		}
+		res[sw.UserID] = append(res[sw.UserID], sw)
 	}
 	return res, nil
 }
@@ -96,7 +81,7 @@ func GetUIDsAndStopwatch(ctx context.Context) ([]*UserStopwatch, error) {
 func GetUserStopwatches(ctx context.Context, userID int64, listOptions db.ListOptions) ([]*Stopwatch, error) {
 	sws := make([]*Stopwatch, 0, 8)
 	sess := db.GetEngine(ctx).Where("stopwatch.user_id = ?", userID)
-	if listOptions.Page != 0 {
+	if listOptions.Page > 0 {
 		sess = db.SetSessionPagination(sess, &listOptions)
 	}
 

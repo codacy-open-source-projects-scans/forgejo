@@ -4,13 +4,7 @@
 package base
 
 import (
-	"crypto/sha1"
-	"fmt"
 	"testing"
-	"time"
-
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/test"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,57 +40,6 @@ func TestBasicAuthDecode(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestVerifyTimeLimitCode(t *testing.T) {
-	defer test.MockVariableValue(&setting.InstallLock, true)()
-	initGeneralSecret := func(secret string) {
-		setting.InstallLock = true
-		setting.CfgProvider, _ = setting.NewConfigProviderFromData(fmt.Sprintf(`
-[oauth2]
-JWT_SECRET = %s
-`, secret))
-		setting.LoadCommonSettings()
-	}
-
-	initGeneralSecret("KZb_QLUd4fYVyxetjxC4eZkrBgWM2SndOOWDNtgUUko")
-	now := time.Now()
-
-	t.Run("TestGenericParameter", func(t *testing.T) {
-		time2000 := time.Date(2000, 1, 2, 3, 4, 5, 0, time.Local)
-		assert.Equal(t, "2000010203040000026fa5221b2731b7cf80b1b506f5e39e38c115fee5", CreateTimeLimitCode("test-sha1", 2, time2000, sha1.New()))
-		assert.Equal(t, "2000010203040000026fa5221b2731b7cf80b1b506f5e39e38c115fee5", CreateTimeLimitCode("test-sha1", 2, "200001020304", sha1.New()))
-		assert.Equal(t, "2000010203040000024842227a2f87041ff82025199c0187410a9297bf", CreateTimeLimitCode("test-hmac", 2, time2000, nil))
-		assert.Equal(t, "2000010203040000024842227a2f87041ff82025199c0187410a9297bf", CreateTimeLimitCode("test-hmac", 2, "200001020304", nil))
-	})
-
-	t.Run("TestInvalidCode", func(t *testing.T) {
-		assert.False(t, VerifyTimeLimitCode(now, "data", 2, ""))
-		assert.False(t, VerifyTimeLimitCode(now, "data", 2, "invalid code"))
-	})
-
-	t.Run("TestCreateAndVerify", func(t *testing.T) {
-		code := CreateTimeLimitCode("data", 2, now, nil)
-		assert.False(t, VerifyTimeLimitCode(now.Add(-time.Minute), "data", 2, code)) // not started yet
-		assert.True(t, VerifyTimeLimitCode(now, "data", 2, code))
-		assert.True(t, VerifyTimeLimitCode(now.Add(time.Minute), "data", 2, code))
-		assert.False(t, VerifyTimeLimitCode(now.Add(time.Minute), "DATA", 2, code))   // invalid data
-		assert.False(t, VerifyTimeLimitCode(now.Add(2*time.Minute), "data", 2, code)) // expired
-	})
-
-	t.Run("TestDifferentSecret", func(t *testing.T) {
-		// use another secret to ensure the code is invalid for different secret
-		verifyDataCode := func(c string) bool {
-			return VerifyTimeLimitCode(now, "data", 2, c)
-		}
-		code1 := CreateTimeLimitCode("data", 2, now, sha1.New())
-		code2 := CreateTimeLimitCode("data", 2, now, nil)
-		assert.True(t, verifyDataCode(code1))
-		assert.True(t, verifyDataCode(code2))
-		initGeneralSecret("000_QLUd4fYVyxetjxC4eZkrBgWM2SndOOWDNtgUUko")
-		assert.False(t, verifyDataCode(code1))
-		assert.False(t, verifyDataCode(code2))
-	})
-}
-
 func TestFileSize(t *testing.T) {
 	var size int64 = 512
 	assert.Equal(t, "512 B", FileSize(size))
@@ -130,7 +73,7 @@ func TestEllipsisString(t *testing.T) {
 }
 
 func TestTruncateString(t *testing.T) {
-	assert.Equal(t, "", TruncateString("foobar", 0))
+	assert.Empty(t, TruncateString("foobar", 0))
 	assert.Equal(t, "f", TruncateString("foobar", 1))
 	assert.Equal(t, "fo", TruncateString("foobar", 2))
 	assert.Equal(t, "foo", TruncateString("foobar", 3))
@@ -182,5 +125,5 @@ func TestFormatNumberSI(t *testing.T) {
 	assert.Equal(t, "1.3k", FormatNumberSI(int64(1317)))
 	assert.Equal(t, "21.3M", FormatNumberSI(21317675))
 	assert.Equal(t, "45.7G", FormatNumberSI(45721317675))
-	assert.Equal(t, "", FormatNumberSI("test"))
+	assert.Empty(t, FormatNumberSI("test"))
 }

@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/tests"
+	"forgejo.org/models/auth"
+	"forgejo.org/models/db"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,7 +71,6 @@ func TestLTACookie(t *testing.T) {
 	sess := emptyTestSession(t)
 
 	req := NewRequestWithValues(t, "POST", "/user/login", map[string]string{
-		"_csrf":     GetCSRF(t, sess, "/user/login"),
 		"user_name": user.Name,
 		"password":  userPassword,
 		"remember":  "true",
@@ -84,7 +83,7 @@ func TestLTACookie(t *testing.T) {
 	assert.True(t, found)
 	rawValidator, err := hex.DecodeString(validator)
 	require.NoError(t, err)
-	unittest.AssertExistsAndLoadBean(t, &auth.AuthorizationToken{LookupKey: lookupKey, HashedValidator: auth.HashValidator(rawValidator), UID: user.ID})
+	unittest.AssertExistsAndLoadBean(t, &auth.AuthorizationToken{LookupKey: lookupKey, HashedValidator: auth.HashValidator(rawValidator), UID: user.ID, Purpose: auth.LongTermAuthorization})
 
 	// Check if the LTA cookie it provides authentication.
 	// If LTA cookie provides authentication /user/login shouldn't return status 200.
@@ -106,7 +105,6 @@ func TestLTAPasswordChange(t *testing.T) {
 
 	// Make a simple password change.
 	req := NewRequestWithValues(t, "POST", "/user/settings/account", map[string]string{
-		"_csrf":        GetCSRF(t, sess, "/user/settings/account"),
 		"old_password": userPassword,
 		"password":     "password2",
 		"retype":       "password2",
@@ -116,7 +114,7 @@ func TestLTAPasswordChange(t *testing.T) {
 	assert.NotNil(t, rememberCookie)
 
 	// Check if the password really changed.
-	assert.NotEqualValues(t, unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1}).Passwd, user.Passwd)
+	assert.NotEqual(t, unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1}).Passwd, user.Passwd)
 
 	// /user/settings/account should provide with a new LTA cookie, so check for that.
 	// If LTA cookie provides authentication /user/login shouldn't return status 200.
@@ -143,7 +141,7 @@ func TestLTAExpiry(t *testing.T) {
 	assert.True(t, found)
 
 	// Ensure it's not expired.
-	lta := unittest.AssertExistsAndLoadBean(t, &auth.AuthorizationToken{UID: user.ID, LookupKey: lookupKey})
+	lta := unittest.AssertExistsAndLoadBean(t, &auth.AuthorizationToken{UID: user.ID, LookupKey: lookupKey, Purpose: auth.LongTermAuthorization})
 	assert.False(t, lta.IsExpired())
 
 	// Manually stub LTA's expiry.
@@ -151,7 +149,7 @@ func TestLTAExpiry(t *testing.T) {
 	require.NoError(t, err)
 
 	// Ensure it's expired.
-	lta = unittest.AssertExistsAndLoadBean(t, &auth.AuthorizationToken{UID: user.ID, LookupKey: lookupKey})
+	lta = unittest.AssertExistsAndLoadBean(t, &auth.AuthorizationToken{UID: user.ID, LookupKey: lookupKey, Purpose: auth.LongTermAuthorization})
 	assert.True(t, lta.IsExpired())
 
 	// Should return 200 OK, because LTA doesn't provide authorization anymore.
@@ -160,5 +158,5 @@ func TestLTAExpiry(t *testing.T) {
 	session.MakeRequest(t, req, http.StatusOK)
 
 	// Ensure it's deleted.
-	unittest.AssertNotExistsBean(t, &auth.AuthorizationToken{UID: user.ID, LookupKey: lookupKey})
+	unittest.AssertNotExistsBean(t, &auth.AuthorizationToken{UID: user.ID, LookupKey: lookupKey, Purpose: auth.LongTermAuthorization})
 }

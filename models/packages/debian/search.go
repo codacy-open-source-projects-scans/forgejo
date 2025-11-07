@@ -7,9 +7,9 @@ import (
 	"context"
 	"strconv"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/packages"
-	debian_module "code.gitea.io/gitea/modules/packages/debian"
+	"forgejo.org/models/db"
+	"forgejo.org/models/packages"
+	debian_module "forgejo.org/modules/packages/debian"
 
 	"xorm.io/builder"
 )
@@ -83,16 +83,13 @@ func SearchPackages(ctx context.Context, opts *PackageSearchOptions, iter func(*
 		Join("INNER", "package", "package.id = package_version.package_id").
 		Where(opts.toCond()).
 		Asc("package.lower_name", "package_version.created_unix").
-		Iterate(new(packages.PackageFile), func(_ int, bean any) error {
+		Iterate(&packages.PackageFile{}, func(i int, bean any) error {
 			pf := bean.(*packages.PackageFile)
-
 			pfd, err := packages.GetPackageFileDescriptor(ctx, pf)
 			if err != nil {
 				return err
 			}
-
 			iter(pfd)
-
 			return nil
 		})
 }

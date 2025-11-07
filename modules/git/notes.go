@@ -1,4 +1,5 @@
 // Copyright 2019 The Gitea Authors. All rights reserved.
+// Copyright 2025 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package git
@@ -6,9 +7,9 @@ package git
 import (
 	"context"
 	"io"
-	"strings"
+	"os"
 
-	"code.gitea.io/gitea/modules/log"
+	"forgejo.org/modules/log"
 )
 
 // NotesRef is the git ref where Gitea will look for git-notes data.
@@ -22,16 +23,14 @@ type Note struct {
 }
 
 // GetNote retrieves the git-notes data for a given commit.
-// FIXME: Add LastCommitCache support
-func GetNote(ctx context.Context, repo *Repository, commitID string, note *Note) error {
+func GetNote(ctx context.Context, repo *Repository, commitID string) (*Note, error) {
 	log.Trace("Searching for git note corresponding to the commit %q in the repository %q", commitID, repo.Path)
 	notes, err := repo.GetCommit(NotesRef)
 	if err != nil {
-		if IsErrNotExist(err) {
-			return err
+		if !IsErrNotExist(err) {
+			log.Error("Unable to get commit from ref %q. Error: %v", NotesRef, err)
 		}
-		log.Error("Unable to get commit from ref %q. Error: %v", NotesRef, err)
-		return err
+		return nil, err
 	}
 
 	path := ""
@@ -57,7 +56,7 @@ func GetNote(ctx context.Context, repo *Repository, commitID string, note *Note)
 			if !IsErrNotExist(err) {
 				log.Error("Unable to find git note corresponding to the commit %q. Error: %v", originalCommitID, err)
 			}
-			return err
+			return nil, err
 		}
 	}
 
@@ -65,7 +64,7 @@ func GetNote(ctx context.Context, repo *Repository, commitID string, note *Note)
 	dataRc, err := blob.DataAsync()
 	if err != nil {
 		log.Error("Unable to read blob with ID %q. Error: %v", blob.ID, err)
-		return err
+		return nil, err
 	}
 	closed := false
 	defer func() {
@@ -76,24 +75,54 @@ func GetNote(ctx context.Context, repo *Repository, commitID string, note *Note)
 	d, err := io.ReadAll(dataRc)
 	if err != nil {
 		log.Error("Unable to read blob with ID %q. Error: %v", blob.ID, err)
-		return err
+		return nil, err
 	}
 	_ = dataRc.Close()
 	closed = true
-	note.Message = d
 
-	treePath := ""
-	if idx := strings.LastIndex(path, "/"); idx > -1 {
-		treePath = path[:idx]
-		path = path[idx+1:]
+	lastCommit, err := repo.getCommitByPathWithID(notes.ID, path)
+	if err != nil {
+		log.Error("Unable to get the commit for the path %q. Error: %v", path, err)
+		return nil, err
 	}
 
-	lastCommits, err := GetLastCommitForPaths(ctx, notes, treePath, []string{path})
+	return &Note{Message: d, Commit: lastCommit}, nil
+}
+
+func SetNote(ctx context.Context, repo *Repository, commitID, notes, doerName, doerEmail string) error {
+	_, err := repo.GetCommit(commitID)
 	if err != nil {
-		log.Error("Unable to get the commit for the path %q. Error: %v", treePath, err)
 		return err
 	}
-	note.Commit = lastCommits[path]
+
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME="+doerName,
+		"GIT_AUTHOR_EMAIL="+doerEmail,
+		"GIT_COMMITTER_NAME="+doerName,
+		"GIT_COMMITTER_EMAIL="+doerEmail,
+	)
+
+	cmd := NewCommand(ctx, "notes", "add", "-f", "-m")
+	cmd.AddDynamicArguments(notes, commitID)
+
+	_, stderr, err := cmd.RunStdString(&RunOpts{Dir: repo.Path, Env: env})
+	if err != nil {
+		log.Error("Error while running git notes add: %s", stderr)
+		return err
+	}
+
+	return nil
+}
+
+func RemoveNote(ctx context.Context, repo *Repository, commitID string) error {
+	cmd := NewCommand(ctx, "notes", "remove")
+	cmd.AddDynamicArguments(commitID)
+
+	_, stderr, err := cmd.RunStdString(&RunOpts{Dir: repo.Path})
+	if err != nil {
+		log.Error("Error while running git notes remove: %s", stderr)
+		return err
+	}
 
 	return nil
 }

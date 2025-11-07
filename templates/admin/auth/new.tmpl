@@ -6,7 +6,6 @@
 		<div class="ui attached segment">
 			<form class="ui form" action="{{.Link}}" method="post">
 				{{template "base/disable_form_autofill"}}
-				{{.CsrfTokenHtml}}
 				<!-- Types and name -->
 				<div class="inline required field {{if .Err_Type}}error{{end}}">
 					<label>{{ctx.Locale.Tr "admin.auths.auth_type"}}</label>
@@ -50,16 +49,13 @@
 				<!-- OAuth2 -->
 				{{template "admin/auth/source/oauth" .}}
 
-				<!-- SSPI -->
-				{{template "admin/auth/source/sspi" .}}
-
 				<div class="ldap field">
 					<div class="ui checkbox">
 						<label><strong>{{ctx.Locale.Tr "admin.auths.attributes_in_bind"}}</strong></label>
 						<input name="attributes_in_bind" type="checkbox" {{if .attributes_in_bind}}checked{{end}}>
 					</div>
 				</div>
-				<div class="oauth2 ldap inline field {{if not (or (eq .type 2) (eq .type 6))}}tw-hidden{{end}}">
+				<div class="ldap inline field {{if not (eq .type 2)}}tw-hidden{{end}}">
 					<div class="ui checkbox">
 						<label><strong>{{ctx.Locale.Tr "admin.auths.syncenabled"}}</strong></label>
 						<input name="is_sync_enabled" type="checkbox" {{if .is_sync_enabled}}checked{{end}}>

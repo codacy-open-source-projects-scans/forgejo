@@ -1,4 +1,5 @@
 // Copyright 2021 The Gitea Authors. All rights reserved.
+// Copyright 2025 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package feed
@@ -12,17 +13,19 @@ import (
 	"strconv"
 	"strings"
 
-	activities_model "code.gitea.io/gitea/models/activities"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/markup/markdown"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/templates"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/services/context"
+	activities_model "forgejo.org/models/activities"
+	issues_model "forgejo.org/models/issues"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/markup/markdown"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/templates"
+	"forgejo.org/modules/util"
+	"forgejo.org/services/context"
 
 	"github.com/gorilla/feeds"
-	"github.com/jaytaylor/html2text"
+	"github.com/inbucket/html2text"
 )
 
 func toBranchLink(ctx *context.Context, act *activities_model.Action) string {
@@ -207,7 +210,7 @@ func feedActionsToFeedItems(ctx *context.Context, actions activities_model.Actio
 		{
 			switch act.OpType {
 			case activities_model.ActionCommitRepo, activities_model.ActionMirrorSyncPush:
-				push := templates.ActionContent2Commits(act)
+				push := templates.ActionContent2Commits(ctx, act)
 
 				for _, commit := range push.Commits {
 					if len(desc) != 0 {
@@ -232,6 +235,16 @@ func feedActionsToFeedItems(ctx *context.Context, actions activities_model.Actio
 			case activities_model.ActionCommentIssue, activities_model.ActionApprovePullRequest, activities_model.ActionRejectPullRequest, activities_model.ActionCommentPull:
 				desc = act.GetIssueTitle(ctx)
 				comment := act.GetIssueInfos()[1]
+				if strings.HasSuffix(comment, "…") {
+					// Comment was truncated get the full content from the database.
+					// This truncation is done in `NotifyCreateIssueComment`.
+					commentModel, err := issues_model.GetCommentByID(ctx, act.CommentID)
+					if err != nil {
+						log.Error("Couldn't get comment[%d] for RSS feed: %v", act.CommentID, err)
+					} else {
+						comment = commentModel.Content
+					}
+				}
 				if len(comment) != 0 {
 					desc += "\n\n" + string(renderMarkdown(ctx, act, comment))
 				}
@@ -286,14 +299,14 @@ func GetFeedType(name string, req *http.Request) (bool, string, string) {
 	return false, name, ""
 }
 
-// feedActionsToFeedItems convert gitea's Repo's Releases to feeds Item
-func releasesToFeedItems(ctx *context.Context, releases []*repo_model.Release) (items []*feeds.Item, err error) {
-	for _, rel := range releases {
-		err := rel.LoadAttributes(ctx)
-		if err != nil {
-			return nil, err
-		}
+// feedActionsToFeedItems convert repository releases into feed items.
+func releasesToFeedItems(ctx *context.Context, releases repo_model.ReleaseList) (items []*feeds.Item, err error) {
+	if err := releases.LoadAttributes(ctx); err != nil {
+		return nil, err
+	}
 
+	composeCache := make(map[int64]map[string]string)
+	for _, rel := range releases {
 		var title string
 		var content template.HTML
 
@@ -303,13 +316,19 @@ func releasesToFeedItems(ctx *context.Context, releases []*repo_model.Release) (
 			title = rel.Title
 		}
 
+		metas, ok := composeCache[rel.RepoID]
+		if !ok {
+			metas = rel.Repo.ComposeMetas(ctx)
+			composeCache[rel.RepoID] = metas
+		}
+
 		link := &feeds.Link{Href: rel.HTMLURL()}
 		content, err = markdown.RenderString(&markup.RenderContext{
 			Ctx: ctx,
 			Links: markup.Links{
 				Base: rel.Repo.Link(),
 			},
-			Metas: rel.Repo.ComposeMetas(ctx),
+			Metas: metas,
 		}, rel.Note)
 		if err != nil {
 			return nil, err

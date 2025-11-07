@@ -7,15 +7,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	asymkey_model "code.gitea.io/gitea/models/asymkey"
-	"code.gitea.io/gitea/modules/container"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
+	asymkey_model "forgejo.org/models/asymkey"
+	"forgejo.org/modules/container"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
 )
 
 const tplCommentPrefix = `# gitea public key`
@@ -77,7 +78,7 @@ func checkAuthorizedKeys(ctx context.Context, logger log.Logger, autofix bool) e
 				fPath,
 				"forgejo admin regenerate keys",
 				"forgejo doctor check --run authorized-keys --fix")
-			return fmt.Errorf(`authorized_keys is out of date and should be regenerated with "forgejo admin regenerate keys" or "forgejo doctor check --run authorized-keys --fix"`)
+			return errors.New(`authorized_keys is out of date and should be regenerated with "forgejo admin regenerate keys" or "forgejo doctor check --run authorized-keys --fix"`)
 		}
 		logger.Warn("authorized_keys is out of date. Attempting rewrite...")
 		err = asymkey_model.RewriteAllPublicKeys(ctx)

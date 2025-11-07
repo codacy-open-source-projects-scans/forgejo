@@ -4,19 +4,17 @@
 package git_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/structs"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/structs"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,8 +33,8 @@ func TestGetCommitStatuses(t *testing.T) {
 		SHA:         sha1,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 5, int(maxResults))
-	assert.Len(t, statuses, 5)
+	assert.EqualValues(t, 6, maxResults)
+	assert.Len(t, statuses, 6)
 
 	assert.Equal(t, "ci/awesomeness", statuses[0].Context)
 	assert.Equal(t, structs.CommitStatusPending, statuses[0].State)
@@ -58,13 +56,17 @@ func TestGetCommitStatuses(t *testing.T) {
 	assert.Equal(t, structs.CommitStatusError, statuses[4].State)
 	assert.Equal(t, "https://try.gitea.io/api/v1/repos/user2/repo1/statuses/1234123412341234123412341234123412341234", statuses[4].APIURL(db.DefaultContext))
 
+	assert.Equal(t, "deploy/awesomeness", statuses[5].Context)
+	assert.Equal(t, structs.CommitStatusPending, statuses[5].State)
+	assert.Equal(t, "https://try.gitea.io/api/v1/repos/user2/repo1/statuses/1234123412341234123412341234123412341234", statuses[5].APIURL(db.DefaultContext))
+
 	statuses, maxResults, err = db.FindAndCount[git_model.CommitStatus](db.DefaultContext, &git_model.CommitStatusOptions{
 		ListOptions: db.ListOptions{Page: 2, PageSize: 50},
 		RepoID:      repo1.ID,
 		SHA:         sha1,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 5, int(maxResults))
+	assert.EqualValues(t, 6, maxResults)
 	assert.Empty(t, statuses)
 }
 
@@ -241,27 +243,4 @@ func TestFindRepoRecentCommitStatusContexts(t *testing.T) {
 	if assert.Len(t, contexts, 1) {
 		assert.Equal(t, "compliance/lint-backend", contexts[0])
 	}
-}
-
-func TestCommitStatusesHideActionsURL(t *testing.T) {
-	require.NoError(t, unittest.PrepareTestDatabase())
-
-	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 4})
-	run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 791, RepoID: repo.ID})
-	require.NoError(t, run.LoadAttributes(db.DefaultContext))
-
-	statuses := []*git_model.CommitStatus{
-		{
-			RepoID:    repo.ID,
-			TargetURL: fmt.Sprintf("%s/jobs/%d", run.Link(), run.Index),
-		},
-		{
-			RepoID:    repo.ID,
-			TargetURL: "https://mycicd.org/1",
-		},
-	}
-
-	git_model.CommitStatusesHideActionsURL(db.DefaultContext, statuses)
-	assert.Empty(t, statuses[0].TargetURL)
-	assert.Equal(t, "https://mycicd.org/1", statuses[1].TargetURL)
 }

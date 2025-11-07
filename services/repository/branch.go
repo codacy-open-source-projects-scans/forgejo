@@ -9,24 +9,29 @@ import (
 	"fmt"
 	"strings"
 
-	"code.gitea.io/gitea/models"
-	actions_model "code.gitea.io/gitea/models/actions"
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	issues_model "code.gitea.io/gitea/models/issues"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/graceful"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/queue"
-	repo_module "code.gitea.io/gitea/modules/repository"
-	"code.gitea.io/gitea/modules/timeutil"
-	webhook_module "code.gitea.io/gitea/modules/webhook"
-	notify_service "code.gitea.io/gitea/services/notify"
-	files_service "code.gitea.io/gitea/services/repository/files"
+	"forgejo.org/models"
+	actions_model "forgejo.org/models/actions"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	issues_model "forgejo.org/models/issues"
+	"forgejo.org/models/perm/access"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/graceful"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/queue"
+	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
+	webhook_module "forgejo.org/modules/webhook"
+	actions_service "forgejo.org/services/actions"
+	notify_service "forgejo.org/services/notify"
+	pull_service "forgejo.org/services/pull"
+	files_service "forgejo.org/services/repository/files"
 
 	"xorm.io/builder"
 )
@@ -246,11 +251,11 @@ func SyncBranchesToDB(ctx context.Context, repoID, pusherID int64, branchNames, 
 	// For other batches, it will hit optimization 4.
 
 	if len(branchNames) != len(commitIDs) {
-		return fmt.Errorf("branchNames and commitIDs length not match")
+		return errors.New("branchNames and commitIDs length not match")
 	}
 
 	return db.WithTx(ctx, func(ctx context.Context) error {
-		branches, err := git_model.GetBranches(ctx, repoID, branchNames)
+		branches, err := git_model.GetBranches(ctx, repoID, branchNames, true)
 		if err != nil {
 			return fmt.Errorf("git_model.GetBranches: %v", err)
 		}
@@ -373,7 +378,7 @@ func RenameBranch(ctx context.Context, repo *repo_model.Repository, doer *user_m
 				log.Error("DeleteCronTaskByRepo: %v", err)
 			}
 			// cancel running cron jobs of this repository and delete old schedules
-			if err := actions_model.CancelPreviousJobs(
+			if err := actions_service.CancelPreviousJobs(
 				ctx,
 				repo.ID,
 				from,
@@ -475,6 +480,41 @@ func DeleteBranch(ctx context.Context, doer *user_model.User, repo *repo_model.R
 	return nil
 }
 
+// DeleteBranchAfterMerge deletes the head branch after a PR was merged associated with the head branch.
+func DeleteBranchAfterMerge(ctx context.Context, doer *user_model.User, pr *issues_model.PullRequest, headRepo *git.Repository) error {
+	// Don't cleanup when there are other PR's that use this branch as head branch.
+	exist, err := issues_model.HasUnmergedPullRequestsByHeadInfo(ctx, pr.HeadRepoID, pr.HeadBranch)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil
+	}
+
+	// Ensure the doer has write permissions to the head repository of the branch it wants to delete.
+	perm, err := access.GetUserRepoPermission(ctx, pr.HeadRepo, doer)
+	if err != nil {
+		return err
+	}
+	if !perm.CanWrite(unit.TypeCode) {
+		return util.NewPermissionDeniedErrorf("Must have write permission to the head repository")
+	}
+
+	if err := pull_service.RetargetChildrenOnMerge(ctx, doer, pr); err != nil {
+		return err
+	}
+	if err := DeleteBranch(ctx, doer, pr.HeadRepo, headRepo, pr.HeadBranch); err != nil {
+		return err
+	}
+
+	if err := issues_model.AddDeletePRBranchComment(ctx, doer, pr.BaseRepo, pr.Issue.ID, pr.HeadBranch); err != nil {
+		// Do not fail here as branch has already been deleted
+		log.Error("DeleteBranchAfterMerge: %v", err)
+	}
+
+	return nil
+}
+
 type BranchSyncOptions struct {
 	RepoID int64
 }
@@ -539,7 +579,7 @@ func SetRepoDefaultBranch(ctx context.Context, repo *repo_model.Repository, gitR
 			log.Error("DeleteCronTaskByRepo: %v", err)
 		}
 		// cancel running cron jobs of this repository and delete old schedules
-		if err := actions_model.CancelPreviousJobs(
+		if err := actions_service.CancelPreviousJobs(
 			ctx,
 			repo.ID,
 			oldDefaultBranchName,
@@ -549,12 +589,7 @@ func SetRepoDefaultBranch(ctx context.Context, repo *repo_model.Repository, gitR
 			log.Error("CancelPreviousJobs: %v", err)
 		}
 
-		if err := gitrepo.SetDefaultBranch(ctx, repo, newBranchName); err != nil {
-			if !git.IsErrUnsupportedVersion(err) {
-				return err
-			}
-		}
-		return nil
+		return gitrepo.SetDefaultBranch(ctx, repo, newBranchName)
 	}); err != nil {
 		return err
 	}

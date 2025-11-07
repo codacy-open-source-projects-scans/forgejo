@@ -6,6 +6,8 @@
 package templates
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"html"
 	"html/template"
@@ -14,21 +16,37 @@ import (
 	"strings"
 	"time"
 
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/svg"
-	"code.gitea.io/gitea/modules/templates/eval"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/services/gitdiff"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/svg"
+	"forgejo.org/modules/templates/eval"
+	"forgejo.org/modules/util"
+	"forgejo.org/services/gitdiff"
 )
 
 // NewFuncMap returns functions for injecting to templates
 func NewFuncMap() template.FuncMap {
 	return map[string]any{
 		"ctx": func() any { return nil }, // template context function
+
+		"ExecuteTemplate": func(ctx context.Context, tmplName string, args any) template.HTML {
+			h := HTMLRenderer()
+			tmpl, err := h.TemplateLookup(tmplName, ctx)
+			if err != nil {
+				panic("Template not found: " + tmplName)
+			}
+
+			buf := bytes.Buffer{}
+			if err := tmpl.Execute(&buf, args); err != nil {
+				panic("Error while executing template")
+			}
+
+			// We can safely return this as `template.HTML` as html/template will
+			// already make sure it's sanitized.
+			return template.HTML(buf.String())
+		},
 
 		"DumpVar": dumpVar,
 
@@ -52,6 +70,7 @@ func NewFuncMap() template.FuncMap {
 		"StringUtils": NewStringUtils,
 		"SliceUtils":  NewSliceUtils,
 		"JsonUtils":   NewJsonUtils,
+		"DateUtils":   NewDateUtils,
 
 		// -----------------------------------------------------------------
 		// svg / avatar / icon / color
@@ -64,15 +83,17 @@ func NewFuncMap() template.FuncMap {
 
 		// -----------------------------------------------------------------
 		// time / number / format
-		"FileSize":      FileSizePanic,
-		"CountFmt":      base.FormatNumberSI,
-		"TimeSince":     timeutil.TimeSince,
-		"TimeSinceUnix": timeutil.TimeSinceUnix,
-		"DateTime":      timeutil.DateTime,
-		"Sec2Time":      util.SecToTime,
+		"FileSize": FileSizePanic,
+		"CountFmt": base.FormatNumberSI,
+		"Sec2Time": util.SecToTime,
 		"LoadTimes": func(startTime time.Time) string {
 			return fmt.Sprint(time.Since(startTime).Nanoseconds()/1e6) + "ms"
 		},
+
+		// for backward compatibility only, do not use them anymore
+		"TimeSince":     timeSinceLegacy,
+		"TimeSinceUnix": timeSinceLegacy,
+		"DateTime":      dateTimeLegacy,
 
 		// -----------------------------------------------------------------
 		// setting
@@ -101,6 +122,10 @@ func NewFuncMap() template.FuncMap {
 		"AppVer": func() string {
 			return setting.AppVer
 		},
+		"AppVerNoMetadata": func() string {
+			version, _, _ := strings.Cut(setting.AppVer, "+")
+			return version
+		},
 		"AppDomain": func() string { // documented in mail-templates.md
 			return setting.Domain
 		},
@@ -122,8 +147,8 @@ func NewFuncMap() template.FuncMap {
 		"AllowedReactions": func() []string {
 			return setting.UI.Reactions
 		},
-		"CustomEmojis": func() map[string]string {
-			return setting.UI.CustomEmojisMap
+		"CustomEmojis": func() []string {
+			return setting.UI.CustomEmojis
 		},
 		"MetaAuthor": func() string {
 			return setting.UI.Meta.Author
@@ -182,6 +207,8 @@ func NewFuncMap() template.FuncMap {
 		"RenderMarkdownToHtml": RenderMarkdownToHtml,
 		"RenderLabel":          RenderLabel,
 		"RenderLabels":         RenderLabels,
+		"RenderUser":           RenderUser,
+		"RenderReviewRequest":  RenderReviewRequest,
 
 		// -----------------------------------------------------------------
 		// misc

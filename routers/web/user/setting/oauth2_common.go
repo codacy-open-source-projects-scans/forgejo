@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"net/http"
 
-	"code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/modules/web"
-	shared_user "code.gitea.io/gitea/routers/web/shared/user"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/forms"
+	"forgejo.org/models/auth"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/web"
+	shared_user "forgejo.org/routers/web/shared/user"
+	"forgejo.org/services/context"
+	"forgejo.org/services/forms"
 )
 
 type OAuth2CommonHandlers struct {
@@ -47,7 +47,6 @@ func (oa *OAuth2CommonHandlers) AddApp(ctx *context.Context) {
 		return
 	}
 
-	// TODO validate redirect URI
 	app, err := auth.CreateOAuth2Application(ctx, auth.CreateOAuth2ApplicationOptions{
 		Name:               form.Name,
 		RedirectURIs:       util.SplitTrimSpace(form.RedirectURIs, "\n"),
@@ -95,11 +94,25 @@ func (oa *OAuth2CommonHandlers) EditSave(ctx *context.Context) {
 	form := web.GetForm(ctx).(*forms.EditOAuth2ApplicationForm)
 
 	if ctx.HasError() {
+		app, err := auth.GetOAuth2ApplicationByID(ctx, ctx.ParamsInt64("id"))
+		if err != nil {
+			if auth.IsErrOAuthApplicationNotFound(err) {
+				ctx.NotFound("Application not found", err)
+				return
+			}
+			ctx.ServerError("GetOAuth2ApplicationByID", err)
+			return
+		}
+		if app.UID != oa.OwnerID {
+			ctx.NotFound("Application not found", nil)
+			return
+		}
+		ctx.Data["App"] = app
+
 		oa.renderEditPage(ctx)
 		return
 	}
 
-	// TODO validate redirect URI
 	var err error
 	if ctx.Data["App"], err = auth.UpdateOAuth2Application(ctx, auth.UpdateOAuth2ApplicationOptions{
 		ID:                 ctx.ParamsInt64("id"),

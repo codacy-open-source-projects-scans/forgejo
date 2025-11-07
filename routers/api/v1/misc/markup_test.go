@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/setting"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/services/contexttest"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/setting"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/services/contexttest"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -76,7 +76,7 @@ func TestAPI_RenderGFM(t *testing.T) {
 <ul>
 <li><a href="` + FullURL + `wiki/Links" rel="nofollow">Links, Language bindings, Engine bindings</a></li>
 <li><a href="` + FullURL + `wiki/Tips" rel="nofollow">Tips</a></li>
-<li>Bezier widget (by <a href="` + AppURL + `r-lyeh" rel="nofollow">@r-lyeh</a>) <a href="https://github.com/ocornut/imgui/issues/786" rel="nofollow">https://github.com/ocornut/imgui/issues/786</a></li>
+<li>Bezier widget (by <a href="` + AppURL + `r-lyeh" class="mention" rel="nofollow">@r-lyeh</a>) <a href="https://github.com/ocornut/imgui/issues/786" rel="nofollow">https://github.com/ocornut/imgui/issues/786</a></li>
 </ul>
 `,
 		// Guard wiki sidebar: special syntax
@@ -112,7 +112,7 @@ Here are some links to the most important topics. You can find the full list of 
 <h2 id="user-content-quick-links">Quick Links</h2>
 <p>Here are some links to the most important topics. You can find the full list of pages at the sidebar.</p>
 <p><a href="` + FullURL + `wiki/Configuration" rel="nofollow">Configuration</a>
-<a href="` + FullURL + `wiki/raw/images/icon-bug.png" rel="nofollow"><img src="` + FullURL + `wiki/raw/images/icon-bug.png" title="icon-bug.png" alt="images/icon-bug.png"/></a></p>
+<a href="` + FullURL + `wiki/raw/images/icon-bug.png" rel="nofollow"><img src="` + FullURL + `wiki/raw/images/icon-bug.png" title="icon-bug.png" alt=""/></a></p>
 `,
 	}
 

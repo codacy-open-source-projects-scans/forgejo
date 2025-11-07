@@ -9,15 +9,15 @@ import (
 	"strconv"
 	"testing"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/organization"
-	packages_model "code.gitea.io/gitea/models/packages"
-	project_model "code.gitea.io/gitea/models/project"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/tests"
+	"forgejo.org/models/db"
+	"forgejo.org/models/organization"
+	packages_model "forgejo.org/models/packages"
+	project_model "forgejo.org/models/project"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/optional"
+	"forgejo.org/tests"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/assert"
@@ -75,8 +75,9 @@ func (countTest *userCountTest) Init(t *testing.T, doerID, userID int64) {
 	require.NoError(t, err)
 
 	countTest.memberCount, err = organization.CountOrgMembers(db.DefaultContext, &organization.FindOrgMembersOpts{
-		OrgID:      org.ID,
-		PublicOnly: !isMember,
+		Doer:         countTest.doer,
+		OrgID:        org.ID,
+		IsDoerMember: isMember,
 	})
 	require.NoError(t, err)
 
@@ -98,6 +99,7 @@ func (countTest *userCountTest) getCount(doc *goquery.Document, name string) (in
 
 func (countTest *userCountTest) TestPage(t *testing.T, page string, orgLink bool) {
 	t.Run(page, func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
 		var userLink string
 
 		if orgLink {

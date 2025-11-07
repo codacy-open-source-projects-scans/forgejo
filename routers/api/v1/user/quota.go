@@ -4,8 +4,8 @@
 package user
 
 import (
-	"code.gitea.io/gitea/routers/api/v1/shared"
-	"code.gitea.io/gitea/services/context"
+	"forgejo.org/routers/api/v1/shared"
+	"forgejo.org/services/context"
 )
 
 // GetQuota returns the quota information for the authenticated user
@@ -18,6 +18,8 @@ func GetQuota(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/QuotaInfo"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
 
@@ -31,9 +33,19 @@ func CheckQuota(ctx *context.APIContext) {
 	// summary: Check if the authenticated user is over quota for a given subject
 	// produces:
 	// - application/json
+	// parameters:
+	// - name: subject
+	//   in: query
+	//   description: subject of the quota
+	//   type: string
+	//   required: true
 	// responses:
 	//   "200":
-	//     "$ref": "#/responses/boolean"
+	//     description: Returns true if the action is accepted.
+	//     schema:
+	//       type: boolean
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
 	//   "422":
@@ -61,6 +73,8 @@ func ListQuotaAttachments(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/QuotaUsedAttachmentList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
 
@@ -86,6 +100,8 @@ func ListQuotaPackages(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/QuotaUsedPackageList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
 
@@ -111,6 +127,8 @@ func ListQuotaArtifacts(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/QuotaUsedArtifactList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
 

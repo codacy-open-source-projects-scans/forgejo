@@ -9,19 +9,19 @@ import (
 	"sync"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting/config"
-	"code.gitea.io/gitea/modules/timeutil"
+	"forgejo.org/models/db"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting/config"
+	"forgejo.org/modules/timeutil"
 
 	"xorm.io/builder"
 )
 
 type Setting struct {
-	ID           int64              `xorm:"pk autoincr"`
-	SettingKey   string             `xorm:"varchar(255) unique"` // key should be lowercase
-	SettingValue string             `xorm:"text"`
-	Version      int                `xorm:"version"`
+	ID           int64  `xorm:"pk autoincr"`
+	SettingKey   string `xorm:"varchar(255) unique"` // key should be lowercase
+	SettingValue string `xorm:"text"`
+	Version      int
 	Created      timeutil.TimeStamp `xorm:"created"`
 	Updated      timeutil.TimeStamp `xorm:"updated"`
 }

@@ -11,31 +11,12 @@ import (
 	"net/url"
 	"os"
 
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
 )
 
 // ErrURLNotSupported represents url is not supported
 var ErrURLNotSupported = errors.New("url method not supported")
-
-// ErrInvalidConfiguration is called when there is invalid configuration for a storage
-type ErrInvalidConfiguration struct {
-	cfg any
-	err error
-}
-
-func (err ErrInvalidConfiguration) Error() string {
-	if err.err != nil {
-		return fmt.Sprintf("Invalid Configuration Argument: %v: Error: %v", err.cfg, err.err)
-	}
-	return fmt.Sprintf("Invalid Configuration Argument: %v", err.cfg)
-}
-
-// IsErrInvalidConfiguration checks if an error is an ErrInvalidConfiguration
-func IsErrInvalidConfiguration(err error) bool {
-	_, ok := err.(ErrInvalidConfiguration)
-	return ok
-}
 
 type Type = setting.StorageType
 
@@ -63,7 +44,7 @@ type ObjectStorage interface {
 	Save(path string, r io.Reader, size int64) (int64, error)
 	Stat(path string) (os.FileInfo, error)
 	Delete(path string) error
-	URL(path, name string) (*url.URL, error)
+	URL(path, name string, reqParams url.Values) (*url.URL, error)
 	IterateObjects(path string, iterator func(path string, obj Object) error) error
 }
 
@@ -131,7 +112,7 @@ var (
 	ActionsArtifacts ObjectStorage = UninitializedStorage
 )
 
-// Init init the stoarge
+// Init init the storage
 func Init() error {
 	for _, f := range []func() error{
 		initAttachments,

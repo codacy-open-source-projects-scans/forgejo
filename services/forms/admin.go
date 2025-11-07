@@ -6,11 +6,11 @@ package forms
 import (
 	"net/http"
 
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web/middleware"
-	"code.gitea.io/gitea/services/context"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/web/middleware"
+	"forgejo.org/services/context"
 
-	"gitea.com/go-chi/binding"
+	"code.forgejo.org/go-chi/binding"
 )
 
 // AdminCreateUserForm form for admin to create user
@@ -18,7 +18,7 @@ type AdminCreateUserForm struct {
 	LoginType          string `binding:"Required"`
 	LoginName          string
 	UserName           string `binding:"Required;Username;MaxSize(40)"`
-	Email              string `binding:"Required;Email;MaxSize(254)"`
+	Email              string `binding:"Required;EmailForAdmin;MaxSize(254)"`
 	Password           string `binding:"MaxSize(255)"`
 	SendNotify         bool
 	MustChangePassword bool
@@ -37,7 +37,7 @@ type AdminEditUserForm struct {
 	UserName                string `binding:"Username;MaxSize(40)"`
 	LoginName               string
 	FullName                string `binding:"MaxSize(100)"`
-	Email                   string `binding:"Required;Email;MaxSize(254)"`
+	Email                   string `binding:"Required;EmailForAdmin;MaxSize(254)"`
 	Password                string `binding:"MaxSize(255)"`
 	Website                 string `binding:"ValidUrl;MaxSize(255)"`
 	Location                string `binding:"MaxSize(50)"`
@@ -53,6 +53,7 @@ type AdminEditUserForm struct {
 	ProhibitLogin           bool
 	Reset2FA                bool `form:"reset_2fa"`
 	Visibility              structs.VisibleType
+	HideEmail               bool `form:"hide_email"`
 }
 
 // Validate validates form fields

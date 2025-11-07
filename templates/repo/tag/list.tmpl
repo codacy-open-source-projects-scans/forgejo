@@ -27,7 +27,7 @@
 								<div class="download tw-flex tw-items-center">
 									{{if $.Permission.CanRead $.UnitTypeCode}}
 										{{if .CreatedUnix}}
-											<span class="tw-mr-2">{{svg "octicon-clock" 16 "tw-mr-1"}}{{TimeSinceUnix .CreatedUnix ctx.Locale}}</span>
+											<span class="tw-mr-2">{{svg "octicon-clock" 16 "tw-mr-1"}}{{DateUtils.TimeSince .CreatedUnix}}</span>
 										{{end}}
 
 										<a class="tw-mr-2 tw-font-mono muted" href="{{$.RepoLink}}/src/commit/{{.Sha1}}" rel="nofollow">{{svg "octicon-git-commit" 16 "tw-mr-1"}}{{ShortSha .Sha1}}</a>
@@ -42,7 +42,7 @@
 										{{end}}
 
 										{{if (and ($.Permission.CanWrite $.UnitTypeCode) $release.IsTag)}}
-											<a class="ui delete-button tw-mr-2 muted" data-url="{{$.RepoLink}}/tags/delete" data-id="{{.ID}}">
+											<a class="ui delete-button tw-mr-2 muted" data-url="{{$.RepoLink}}/tags/delete" data-id="{{.ID}}" data-modal-id="delete-tag">
 												{{svg "octicon-trash" 16 "tw-mr-1"}}{{ctx.Locale.Tr "repo.release.delete_tag"}}
 											</a>
 										{{end}}
@@ -64,7 +64,7 @@
 </div>
 
 {{if $.Permission.CanWrite $.UnitTypeCode}}
-<div class="ui g-modal-confirm delete modal">
+<div class="ui g-modal-confirm delete modal" id="delete-tag">
 	<div class="header">
 		{{svg "octicon-trash"}}
 		{{ctx.Locale.Tr "repo.release.delete_tag"}}

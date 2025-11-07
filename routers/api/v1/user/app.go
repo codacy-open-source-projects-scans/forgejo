@@ -11,13 +11,13 @@ import (
 	"strconv"
 	"strings"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/db"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	auth_model "forgejo.org/models/auth"
+	"forgejo.org/models/db"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/web"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
 // ListAccessTokens list all the access tokens
@@ -46,6 +46,8 @@ func ListAccessTokens(ctx *context.APIContext) {
 	//     "$ref": "#/responses/AccessTokenList"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
 
 	opts := auth_model.ListAccessTokensOptions{UserID: ctx.ContextUser.ID, ListOptions: utils.GetListOptions(ctx)}
 
@@ -69,11 +71,11 @@ func ListAccessTokens(ctx *context.APIContext) {
 	ctx.JSON(http.StatusOK, &apiTokens)
 }
 
-// CreateAccessToken create access tokens
+// CreateAccessToken creates an access token for doer
 func CreateAccessToken(ctx *context.APIContext) {
 	// swagger:operation POST /users/{username}/tokens user userCreateToken
 	// ---
-	// summary: Create an access token
+	// summary: Generate an access token for the current user
 	// consumes:
 	// - application/json
 	// produces:
@@ -95,6 +97,8 @@ func CreateAccessToken(ctx *context.APIContext) {
 	//     "$ref": "#/responses/error"
 	//   "403":
 	//     "$ref": "#/responses/forbidden"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
 
 	form := web.GetForm(ctx).(*api.CreateAccessTokenOption)
 
@@ -137,11 +141,11 @@ func CreateAccessToken(ctx *context.APIContext) {
 	})
 }
 
-// DeleteAccessToken delete access tokens
+// DeleteAccessToken deletes an access token from doer's account
 func DeleteAccessToken(ctx *context.APIContext) {
 	// swagger:operation DELETE /users/{username}/tokens/{token} user userDeleteAccessToken
 	// ---
-	// summary: delete an access token
+	// summary: Delete an access token from current user's account
 	// produces:
 	// - application/json
 	// parameters:
@@ -210,7 +214,7 @@ func DeleteAccessToken(ctx *context.APIContext) {
 func CreateOauth2Application(ctx *context.APIContext) {
 	// swagger:operation POST /user/applications/oauth2 user userCreateOAuth2Application
 	// ---
-	// summary: creates a new OAuth2 application
+	// summary: Creates a new OAuth2 application
 	// produces:
 	// - application/json
 	// parameters:
@@ -224,6 +228,10 @@ func CreateOauth2Application(ctx *context.APIContext) {
 	//     "$ref": "#/responses/OAuth2Application"
 	//   "400":
 	//     "$ref": "#/responses/error"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 
 	data := web.GetForm(ctx).(*api.CreateOAuth2ApplicationOptions)
 
@@ -266,6 +274,10 @@ func ListOauth2Applications(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/OAuth2ApplicationList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 
 	apps, total, err := db.FindAndCount[auth_model.OAuth2Application](ctx, auth_model.FindOAuth2ApplicationsOptions{
 		ListOptions: utils.GetListOptions(ctx),
@@ -286,11 +298,11 @@ func ListOauth2Applications(ctx *context.APIContext) {
 	ctx.JSON(http.StatusOK, &apiApps)
 }
 
-// DeleteOauth2Application delete OAuth2 Application
+// DeleteOauth2Application delete OAuth2 application
 func DeleteOauth2Application(ctx *context.APIContext) {
 	// swagger:operation DELETE /user/applications/oauth2/{id} user userDeleteOAuth2Application
 	// ---
-	// summary: delete an OAuth2 Application
+	// summary: Delete an OAuth2 application
 	// produces:
 	// - application/json
 	// parameters:
@@ -303,6 +315,10 @@ func DeleteOauth2Application(ctx *context.APIContext) {
 	// responses:
 	//   "204":
 	//     "$ref": "#/responses/empty"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 	appID := ctx.ParamsInt64(":id")
@@ -318,11 +334,11 @@ func DeleteOauth2Application(ctx *context.APIContext) {
 	ctx.Status(http.StatusNoContent)
 }
 
-// GetOauth2Application get OAuth2 Application
+// GetOauth2Application returns an OAuth2 application
 func GetOauth2Application(ctx *context.APIContext) {
 	// swagger:operation GET /user/applications/oauth2/{id} user userGetOAuth2Application
 	// ---
-	// summary: get an OAuth2 Application
+	// summary: Get an OAuth2 application
 	// produces:
 	// - application/json
 	// parameters:
@@ -335,6 +351,10 @@ func GetOauth2Application(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/OAuth2Application"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 	appID := ctx.ParamsInt64(":id")
@@ -357,11 +377,11 @@ func GetOauth2Application(ctx *context.APIContext) {
 	ctx.JSON(http.StatusOK, convert.ToOAuth2Application(app))
 }
 
-// UpdateOauth2Application update OAuth2 Application
+// UpdateOauth2Application updates an OAuth2 application
 func UpdateOauth2Application(ctx *context.APIContext) {
 	// swagger:operation PATCH /user/applications/oauth2/{id} user userUpdateOAuth2Application
 	// ---
-	// summary: update an OAuth2 Application, this includes regenerating the client secret
+	// summary: Update an OAuth2 application, this includes regenerating the client secret
 	// produces:
 	// - application/json
 	// parameters:
@@ -379,6 +399,10 @@ func UpdateOauth2Application(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/OAuth2Application"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 	appID := ctx.ParamsInt64(":id")

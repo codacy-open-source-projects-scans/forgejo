@@ -1,56 +1,59 @@
 // Copyright 2017 The Gitea Authors. All rights reserved.
+// Copyright 2023 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package web
 
 import (
 	gocontext "context"
+	"fmt"
 	"net/http"
 	"strings"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	quota_model "code.gitea.io/gitea/models/quota"
-	"code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/metrics"
-	"code.gitea.io/gitea/modules/public"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/storage"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/templates"
-	"code.gitea.io/gitea/modules/validation"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/modules/web/middleware"
-	"code.gitea.io/gitea/modules/web/routing"
-	"code.gitea.io/gitea/routers/common"
-	"code.gitea.io/gitea/routers/web/admin"
-	"code.gitea.io/gitea/routers/web/auth"
-	"code.gitea.io/gitea/routers/web/devtest"
-	"code.gitea.io/gitea/routers/web/events"
-	"code.gitea.io/gitea/routers/web/explore"
-	"code.gitea.io/gitea/routers/web/feed"
-	"code.gitea.io/gitea/routers/web/healthcheck"
-	"code.gitea.io/gitea/routers/web/misc"
-	"code.gitea.io/gitea/routers/web/org"
-	org_setting "code.gitea.io/gitea/routers/web/org/setting"
-	"code.gitea.io/gitea/routers/web/repo"
-	"code.gitea.io/gitea/routers/web/repo/actions"
-	"code.gitea.io/gitea/routers/web/repo/badges"
-	repo_flags "code.gitea.io/gitea/routers/web/repo/flags"
-	repo_setting "code.gitea.io/gitea/routers/web/repo/setting"
-	"code.gitea.io/gitea/routers/web/shared/project"
-	"code.gitea.io/gitea/routers/web/user"
-	user_setting "code.gitea.io/gitea/routers/web/user/setting"
-	"code.gitea.io/gitea/routers/web/user/setting/security"
-	auth_service "code.gitea.io/gitea/services/auth"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/forms"
-	"code.gitea.io/gitea/services/lfs"
+	auth_model "forgejo.org/models/auth"
+	"forgejo.org/models/perm"
+	quota_model "forgejo.org/models/quota"
+	"forgejo.org/models/unit"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/metrics"
+	"forgejo.org/modules/public"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/storage"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/templates"
+	"forgejo.org/modules/validation"
+	"forgejo.org/modules/web"
+	"forgejo.org/modules/web/middleware"
+	"forgejo.org/modules/web/routing"
+	"forgejo.org/routers/common"
+	"forgejo.org/routers/web/admin"
+	"forgejo.org/routers/web/auth"
+	"forgejo.org/routers/web/devtest"
+	"forgejo.org/routers/web/events"
+	"forgejo.org/routers/web/explore"
+	"forgejo.org/routers/web/feed"
+	"forgejo.org/routers/web/healthcheck"
+	"forgejo.org/routers/web/misc"
+	"forgejo.org/routers/web/moderation"
+	"forgejo.org/routers/web/org"
+	org_setting "forgejo.org/routers/web/org/setting"
+	"forgejo.org/routers/web/repo"
+	"forgejo.org/routers/web/repo/actions"
+	"forgejo.org/routers/web/repo/badges"
+	repo_flags "forgejo.org/routers/web/repo/flags"
+	repo_setting "forgejo.org/routers/web/repo/setting"
+	"forgejo.org/routers/web/shared/project"
+	"forgejo.org/routers/web/user"
+	user_setting "forgejo.org/routers/web/user/setting"
+	"forgejo.org/routers/web/user/setting/security"
+	auth_service "forgejo.org/services/auth"
+	"forgejo.org/services/context"
+	"forgejo.org/services/forms"
+	"forgejo.org/services/lfs"
 
-	_ "code.gitea.io/gitea/modules/session" // to registers all internal adapters
+	_ "forgejo.org/modules/session" // to registers all internal adapters
 
+	"code.forgejo.org/go-chi/binding"
 	"code.forgejo.org/go-chi/captcha"
 	chi_middleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -110,10 +113,6 @@ func buildAuthGroup() *auth_service.Group {
 	}
 	group.Add(&auth_service.Session{})
 
-	if setting.IsWindows && auth_model.IsSSPIEnabled(db.DefaultContext) {
-		group.Add(&auth_service.SSPI{}) // it MUST be the last, see the comment of SSPI
-	}
-
 	return group
 }
 
@@ -121,7 +120,7 @@ func webAuth(authMethod auth_service.Method) func(*context.Context) {
 	return func(ctx *context.Context) {
 		ar, err := common.AuthShared(ctx.Base, ctx.Session, authMethod)
 		if err != nil {
-			log.Error("Failed to verify user: %v", err)
+			log.Info("Failed to verify user: %v", err)
 			ctx.Error(http.StatusUnauthorized, ctx.Locale.TrString("auth.unauthorized_credentials", "https://codeberg.org/forgejo/forgejo/issues/2809"))
 			return
 		}
@@ -132,13 +131,12 @@ func webAuth(authMethod auth_service.Method) func(*context.Context) {
 			// ensure the session uid is deleted
 			_ = ctx.Session.Delete("uid")
 		}
-
-		ctx.Csrf.PrepareForSessionUser(ctx)
 	}
 }
 
 // verifyAuthWithOptions checks authentication according to options
 func verifyAuthWithOptions(options *common.VerifyOptions) func(ctx *context.Context) {
+	crossOrginProtection := http.NewCrossOriginProtection()
 	return func(ctx *context.Context) {
 		// Check prohibit login users.
 		if ctx.IsSigned {
@@ -173,6 +171,19 @@ func verifyAuthWithOptions(options *common.VerifyOptions) func(ctx *context.Cont
 				ctx.Redirect(setting.AppSubURL + "/")
 				return
 			}
+
+			if ctx.Doer.MustHaveTwoFactor() && !strings.HasPrefix(ctx.Req.URL.Path, "/user/settings/security") {
+				hasTwoFactor, err := auth_model.HasTwoFactorByUID(ctx, ctx.Doer.ID)
+				if err != nil {
+					log.Error("Error getting 2fa: %s", err)
+					ctx.Error(http.StatusInternalServerError, "HasTwoFactorByUID", err.Error())
+					return
+				}
+				if !hasTwoFactor {
+					ctx.Redirect(setting.AppSubURL + "/user/settings/security")
+					return
+				}
+			}
 		}
 
 		// Redirect to dashboard (or alternate location) if user tries to visit any non-login page.
@@ -181,9 +192,9 @@ func verifyAuthWithOptions(options *common.VerifyOptions) func(ctx *context.Cont
 			return
 		}
 
-		if !options.SignOutRequired && !options.DisableCSRF && ctx.Req.Method == "POST" {
-			ctx.Csrf.Validate(ctx)
-			if ctx.Written() {
+		if !options.SignOutRequired && !options.DisableCSRF {
+			if err := crossOrginProtection.Check(ctx.Req); err != nil {
+				http.Error(ctx.Resp, err.Error(), http.StatusForbidden)
 				return
 			}
 		}
@@ -294,7 +305,7 @@ func Routes() *web.Route {
 	return routes
 }
 
-var ignSignInAndCsrf = verifyAuthWithOptions(&common.VerifyOptions{DisableCSRF: true})
+var ignoreCSRF = verifyAuthWithOptions(&common.VerifyOptions{DisableCSRF: true})
 
 // registerRoutes register routes
 func registerRoutes(m *web.Route) {
@@ -313,6 +324,20 @@ func registerRoutes(m *web.Route) {
 		}
 	}
 
+	requiredTwoFactor := func(ctx *context.Context) {
+		if !ctx.Doer.MustHaveTwoFactor() {
+			return
+		}
+
+		hasTwoFactor, err := auth_model.HasTwoFactorByUID(ctx, ctx.Doer.ID)
+		if err != nil {
+			ctx.Error(http.StatusInternalServerError, fmt.Sprintf("Error getting 2fa: %s", err))
+			return
+		}
+		ctx.Data["MustEnableTwoFactor"] = !hasTwoFactor
+		ctx.Data["HideNavbarLinks"] = !hasTwoFactor
+	}
+
 	openIDSignInEnabled := func(ctx *context.Context) {
 		if !setting.Service.EnableOpenIDSignIn {
 			ctx.Error(http.StatusForbidden)
@@ -322,6 +347,13 @@ func registerRoutes(m *web.Route) {
 
 	openIDSignUpEnabled := func(ctx *context.Context) {
 		if !setting.Service.EnableOpenIDSignUp {
+			ctx.Error(http.StatusForbidden)
+			return
+		}
+	}
+
+	oauth2Enabled := func(ctx *context.Context) {
+		if !setting.OAuth2.Enabled {
 			ctx.Error(http.StatusForbidden)
 			return
 		}
@@ -472,6 +504,11 @@ func registerRoutes(m *web.Route) {
 		m.Get("/search", repo.SearchIssues)
 	}, reqSignIn)
 
+	if setting.Moderation.Enabled {
+		m.Get("/report_abuse", reqSignIn, moderation.NewReport)
+		m.Post("/report_abuse", reqSignIn, web.Bind(forms.ReportAbuseForm{}), moderation.CreatePost)
+	}
+
 	m.Get("/pulls", reqSignIn, user.Pulls)
 	m.Get("/milestones", reqSignIn, reqMilestonesDashboardPageEnabled, user.Milestones)
 
@@ -516,16 +553,20 @@ func registerRoutes(m *web.Route) {
 	m.Any("/user/events", routing.MarkLongPolling, events.Events)
 
 	m.Group("/login/oauth", func() {
-		m.Get("/authorize", web.Bind(forms.AuthorizationForm{}), auth.AuthorizeOAuth)
-		m.Post("/grant", web.Bind(forms.GrantApplicationForm{}), auth.GrantApplicationOAuth)
-		// TODO manage redirection
-		m.Post("/authorize", web.Bind(forms.AuthorizationForm{}), auth.AuthorizeOAuth)
-	}, ignSignInAndCsrf, reqSignIn)
+		m.Group("", func() {
+			m.Get("/authorize", web.Bind(forms.AuthorizationForm{}), auth.AuthorizeOAuth)
+			m.Post("/grant", web.Bind(forms.GrantApplicationForm{}), auth.GrantApplicationOAuth)
+			// TODO manage redirection
+			m.Post("/authorize", web.Bind(forms.AuthorizationForm{}), auth.AuthorizeOAuth)
+		}, reqSignIn)
 
-	m.Methods("GET, OPTIONS", "/login/oauth/userinfo", optionsCorsHandler(), ignSignInAndCsrf, auth.InfoOAuth)
-	m.Methods("POST, OPTIONS", "/login/oauth/access_token", optionsCorsHandler(), web.Bind(forms.AccessTokenForm{}), ignSignInAndCsrf, auth.AccessTokenOAuth)
-	m.Methods("GET, OPTIONS", "/login/oauth/keys", optionsCorsHandler(), ignSignInAndCsrf, auth.OIDCKeys)
-	m.Methods("POST, OPTIONS", "/login/oauth/introspect", optionsCorsHandler(), web.Bind(forms.IntrospectTokenForm{}), ignSignInAndCsrf, auth.IntrospectOAuth)
+		m.Group("", func() {
+			m.Methods("GET, POST, OPTIONS", "/userinfo", auth.InfoOAuth)
+			m.Methods("POST, OPTIONS", "/access_token", web.Bind(forms.AccessTokenForm{}), auth.AccessTokenOAuth)
+			m.Methods("GET, OPTIONS", "/keys", auth.OIDCKeys)
+			m.Methods("POST, OPTIONS", "/introspect", web.Bind(forms.IntrospectTokenForm{}), auth.IntrospectOAuth)
+		}, optionsCorsHandler(), ignoreCSRF)
+	}, oauth2Enabled)
 
 	m.Group("/user/settings", func() {
 		m.Get("", user_setting.Profile)
@@ -554,6 +595,8 @@ func registerRoutes(m *web.Route) {
 				m.Post("/disable", security.DisableTwoFactor)
 				m.Get("/enroll", security.EnrollTwoFactor)
 				m.Post("/enroll", web.Bind(forms.TwoFactorAuthForm{}), security.EnrollTwoFactorPost)
+				m.Get("/reenroll", security.ReenrollTwoFactor)
+				m.Post("/reenroll", web.Bind(forms.TwoFactorAuthForm{}), security.ReenrollTwoFactorPost)
 			})
 			m.Group("/webauthn", func() {
 				m.Post("/request_register", web.Bind(forms.WebauthnRegistrationForm{}), security.WebAuthnRegister)
@@ -566,18 +609,26 @@ func registerRoutes(m *web.Route) {
 				m.Post("/toggle_visibility", security.ToggleOpenIDVisibility)
 			}, openIDSignInEnabled)
 			m.Post("/account_link", linkAccountEnabled, security.DeleteAccountLink)
+		}, requiredTwoFactor)
+
+		m.Group("/applications", func() {
+			// oauth2 applications
+			m.Group("/oauth2", func() {
+				m.Get("/{id}", user_setting.OAuth2ApplicationShow)
+				m.Post("/{id}", web.Bind(forms.EditOAuth2ApplicationForm{}), user_setting.OAuthApplicationsEdit)
+				m.Post("/{id}/regenerate_secret", user_setting.OAuthApplicationsRegenerateSecret)
+				m.Post("", web.Bind(forms.EditOAuth2ApplicationForm{}), user_setting.OAuthApplicationsPost)
+				m.Post("/{id}/delete", user_setting.DeleteOAuth2Application)
+				m.Post("/{id}/revoke/{grantId}", user_setting.RevokeOAuth2Grant)
+			}, oauth2Enabled)
+
+			// access token applications
+			m.Combo("").Get(user_setting.Applications).
+				Post(web.Bind(forms.NewAccessTokenForm{}), user_setting.ApplicationsPost)
+			m.Post("/delete", user_setting.DeleteApplication)
+			m.Post("/regenerate", user_setting.RegenerateApplication)
 		})
-		m.Group("/applications/oauth2", func() {
-			m.Get("/{id}", user_setting.OAuth2ApplicationShow)
-			m.Post("/{id}", web.Bind(forms.EditOAuth2ApplicationForm{}), user_setting.OAuthApplicationsEdit)
-			m.Post("/{id}/regenerate_secret", user_setting.OAuthApplicationsRegenerateSecret)
-			m.Post("", web.Bind(forms.EditOAuth2ApplicationForm{}), user_setting.OAuthApplicationsPost)
-			m.Post("/{id}/delete", user_setting.DeleteOAuth2Application)
-			m.Post("/{id}/revoke/{grantId}", user_setting.RevokeOAuth2Grant)
-		})
-		m.Combo("/applications").Get(user_setting.Applications).
-			Post(web.Bind(forms.NewAccessTokenForm{}), user_setting.ApplicationsPost)
-		m.Post("/applications/delete", user_setting.DeleteApplication)
+
 		m.Combo("/keys").Get(user_setting.Keys).
 			Post(web.Bind(forms.AddKeyForm{}), user_setting.KeysPost)
 		m.Post("/keys/delete", user_setting.DeleteKey)
@@ -628,7 +679,8 @@ func registerRoutes(m *web.Route) {
 			m.Get("", user_setting.BlockedUsers)
 			m.Post("/unblock", user_setting.UnblockUser)
 		})
-	}, reqSignIn, ctxDataSet("PageIsUserSettings", true, "AllThemes", setting.UI.Themes, "EnablePackages", setting.Packages.Enabled))
+		m.Get("/storage_overview", user_setting.StorageOverview)
+	}, reqSignIn, ctxDataSet("PageIsUserSettings", true, "EnablePackages", setting.Packages.Enabled, "EnableQuota", setting.Quota.Enabled))
 
 	m.Group("/user", func() {
 		m.Get("/activate", auth.Activate)
@@ -642,7 +694,7 @@ func registerRoutes(m *web.Route) {
 		m.Post("/logout", auth.SignOut)
 		m.Get("/task/{task}", reqSignIn, user.TaskStatus)
 		m.Get("/stopwatches", reqSignIn, user.GetStopwatches)
-		m.Get("/search", ignExploreSignIn, user.Search)
+		m.Get("/search_candidates", ignExploreSignIn, user.SearchCandidates)
 		m.Group("/oauth2", func() {
 			m.Get("/{provider}", auth.SignInOAuth)
 			m.Get("/{provider}/callback", auth.SignInOAuthCallback)
@@ -755,19 +807,21 @@ func registerRoutes(m *web.Route) {
 				m.Post("/regenerate_secret", admin.ApplicationsRegenerateSecret)
 				m.Post("/delete", admin.DeleteApplication)
 			})
-		}, func(ctx *context.Context) {
-			if !setting.OAuth2.Enabled {
-				ctx.Error(http.StatusForbidden)
-				return
-			}
-		})
+		}, oauth2Enabled)
 
 		m.Group("/actions", func() {
 			m.Get("", admin.RedirectToDefaultSetting)
 			addSettingsRunnersRoutes()
 			addSettingsVariablesRoutes()
 		})
-	}, adminReq, ctxDataSet("EnableOAuth2", setting.OAuth2.Enabled, "EnablePackages", setting.Packages.Enabled))
+
+		if setting.Moderation.Enabled {
+			m.Group("/moderation/reports", func() {
+				m.Get("", admin.AbuseReports)
+				m.Get("/type/{type:1|2|3|4}/id/{id}", admin.AbuseReportDetails)
+			})
+		}
+	}, adminReq, ctxDataSet("EnableOAuth2", setting.OAuth2.Enabled, "EnablePackages", setting.Packages.Enabled, "EnableModeration", setting.Moderation.Enabled))
 	// ***** END: Admin *****
 
 	m.Group("", func() {
@@ -804,13 +858,13 @@ func registerRoutes(m *web.Route) {
 	individualPermsChecker := func(ctx *context.Context) {
 		// org permissions have been checked in context.OrgAssignment(), but individual permissions haven't been checked.
 		if ctx.ContextUser.IsIndividual() {
-			switch {
-			case ctx.ContextUser.Visibility == structs.VisibleTypePrivate:
+			switch ctx.ContextUser.Visibility {
+			case structs.VisibleTypePrivate:
 				if ctx.Doer == nil || (ctx.ContextUser.ID != ctx.Doer.ID && !ctx.Doer.IsAdmin) {
 					ctx.NotFound("Visit Project", nil)
 					return
 				}
-			case ctx.ContextUser.Visibility == structs.VisibleTypeLimited:
+			case structs.VisibleTypeLimited:
 				if ctx.Doer == nil {
 					ctx.NotFound("Visit Project", nil)
 					return
@@ -883,12 +937,7 @@ func registerRoutes(m *web.Route) {
 						m.Post("/regenerate_secret", org.OAuthApplicationsRegenerateSecret)
 						m.Post("/delete", org.DeleteOAuth2Application)
 					})
-				}, func(ctx *context.Context) {
-					if !setting.OAuth2.Enabled {
-						ctx.Error(http.StatusForbidden)
-						return
-					}
-				})
+				}, oauth2Enabled)
 
 				m.Group("/hooks", func() {
 					m.Get("", org.Webhooks)
@@ -924,6 +973,7 @@ func registerRoutes(m *web.Route) {
 					m.Post("/block", org_setting.BlockedUsersBlock)
 					m.Post("/unblock", org_setting.BlockedUsersUnblock)
 				})
+				m.Get("/storage_overview", org_setting.StorageOverview)
 
 				m.Group("/packages", func() {
 					m.Get("", org.Packages)
@@ -943,7 +993,7 @@ func registerRoutes(m *web.Route) {
 						m.Post("/rebuild", org.RebuildCargoIndex)
 					})
 				}, packagesEnabled)
-			}, ctxDataSet("EnableOAuth2", setting.OAuth2.Enabled, "EnablePackages", setting.Packages.Enabled, "PageIsOrgSettings", true))
+			}, ctxDataSet("EnableOAuth2", setting.OAuth2.Enabled, "EnablePackages", setting.Packages.Enabled, "EnableQuota", setting.Quota.Enabled, "PageIsOrgSettings", true))
 		}, context.OrgAssignment(true, true))
 	}, reqSignIn)
 	// ***** END: Organization *****
@@ -1140,8 +1190,10 @@ func registerRoutes(m *web.Route) {
 		m.Group("/{type:issues|pulls}", func() {
 			m.Group("/{index}", func() {
 				m.Get("/info", repo.GetIssueInfo)
+				m.Get("/summary-card", repo.DrawIssueSummaryCard)
 			})
 		})
+		m.Get("/-/summary-card", repo.DrawRepoSummaryCard)
 	}, ignSignIn, context.RepoAssignment, context.UnitTypes()) // for "/{username}/{reponame}" which doesn't require authentication
 
 	// Grouping for those endpoints that do require authentication
@@ -1247,7 +1299,7 @@ func registerRoutes(m *web.Route) {
 					Post(web.Bind(forms.DeleteRepoFileForm{}), repo.DeleteFilePost)
 				m.Combo("/_upload/*", repo.MustBeAbleToUpload).
 					Get(repo.UploadFile).
-					Post(web.Bind(forms.UploadRepoFileForm{}), repo.UploadFilePost)
+					Post(BindUpload(), repo.UploadFilePost)
 				m.Combo("/_diffpatch/*").Get(repo.NewDiffPatch).
 					Post(web.Bind(forms.EditRepoFileForm{}), repo.NewDiffPatchPost)
 				m.Combo("/_cherrypick/{sha:([a-f0-9]{4,64})}/*").Get(repo.CherryPick).
@@ -1291,6 +1343,7 @@ func registerRoutes(m *web.Route) {
 			m.Get("/latest", repo.LatestRelease)
 			m.Get(".rss", feedEnabled, repo.ReleasesFeedRSS)
 			m.Get(".atom", feedEnabled, repo.ReleasesFeedAtom)
+			m.Get("/summary-card/*", repo.DrawReleaseSummaryCard)
 		}, ctxDataSet("EnableFeed", setting.Other.EnableFeed),
 			repo.MustBeNotEmpty, context.RepoRefByType(context.RepoRefTag, true))
 		m.Get("/releases/attachments/{uuid}", repo.MustBeNotEmpty, repo.GetAttachment)
@@ -1386,25 +1439,28 @@ func registerRoutes(m *web.Route) {
 			m.Get("", actions.List)
 			m.Post("/disable", reqRepoAdmin, actions.DisableWorkflowFile)
 			m.Post("/enable", reqRepoAdmin, actions.EnableWorkflowFile)
-			m.Post("/manual", reqRepoAdmin, actions.ManualRunWorkflow)
+			m.Post("/manual", reqRepoActionsWriter, actions.ManualRunWorkflow)
 
 			m.Group("/runs", func() {
 				m.Get("/latest", actions.ViewLatest)
 				m.Group("/{run}", func() {
 					m.Combo("").
-						Get(actions.View).
+						Get(actions.RedirectToLatestAttempt).
 						Post(web.Bind(actions.ViewRequest{}), actions.ViewPost)
 					m.Group("/jobs/{job}", func() {
 						m.Combo("").
-							Get(actions.View).
+							Get(actions.RedirectToLatestAttempt).
 							Post(web.Bind(actions.ViewRequest{}), actions.ViewPost)
 						m.Post("/rerun", reqRepoActionsWriter, actions.Rerun)
 						m.Get("/logs", actions.Logs)
+						m.Combo("/attempt/{attempt}").
+							Get(actions.View).
+							Post(web.Bind(actions.ViewRequest{}), actions.ViewPost)
 					})
 					m.Post("/cancel", reqRepoActionsWriter, actions.Cancel)
 					m.Post("/approve", reqRepoActionsWriter, actions.Approve)
 					m.Get("/artifacts", actions.ArtifactsView)
-					m.Get("/artifacts/{artifact_name}", actions.ArtifactsDownloadView)
+					m.Get("/artifacts/{artifact_name_or_id}", actions.ArtifactsDownloadView)
 					m.Delete("/artifacts/{artifact_name}", reqRepoActionsWriter, actions.ArtifactsDeleteView)
 					m.Post("/rerun", reqRepoActionsWriter, actions.Rerun)
 				})
@@ -1448,7 +1504,7 @@ func registerRoutes(m *web.Route) {
 			}, repo.MustBeNotEmpty, context.RequireRepoReaderOr(unit.TypeCode))
 			m.Group("/recent-commits", func() {
 				m.Get("", repo.RecentCommits)
-				m.Get("/data", repo.RecentCommitsData)
+				m.Get("/data", repo.CodeFrequencyData)
 			}, repo.MustBeNotEmpty, context.RequireRepoReaderOr(unit.TypeCode))
 		}, context.RepoRef(), context.RequireRepoReaderOr(unit.TypeCode, unit.TypePullRequests, unit.TypeIssues, unit.TypeReleases))
 
@@ -1497,7 +1553,10 @@ func registerRoutes(m *web.Route) {
 			m.Group("/commits", func() {
 				m.Get("", context.RepoRef(), repo.SetWhitespaceBehavior, repo.GetPullDiffStats, repo.ViewPullCommits)
 				m.Get("/list", context.RepoRef(), repo.GetPullCommits)
-				m.Get("/{sha:[a-f0-9]{4,40}}", context.RepoRef(), repo.SetEditorconfigIfExists, repo.SetDiffViewStyle, repo.SetWhitespaceBehavior, repo.SetShowOutdatedComments, repo.ViewPullFilesForSingleCommit)
+				m.Group("/{sha:[a-f0-9]{4,40}}", func() {
+					m.Get("", context.RepoRef(), repo.SetEditorconfigIfExists, repo.SetDiffViewStyle, repo.SetWhitespaceBehavior, repo.SetShowOutdatedComments, repo.ViewPullFilesForSingleCommit)
+					m.Post("/reviews/submit", context.RepoMustNotBeArchived(), web.Bind(forms.SubmitReviewForm{}), repo.SubmitReview)
+				})
 			})
 			m.Post("/merge", context.RepoMustNotBeArchived(), web.Bind(forms.MergePullRequestForm{}), context.EnforceQuotaWeb(quota_model.LimitSubjectSizeGitAll, context.QuotaTargetRepo), repo.MergePullRequest)
 			m.Post("/cancel_auto_merge", context.RepoMustNotBeArchived(), repo.CancelAutoMergePullRequest)
@@ -1559,11 +1618,17 @@ func registerRoutes(m *web.Route) {
 			m.Get("/graph", repo.Graph)
 			m.Get("/commit/{sha:([a-f0-9]{4,64})$}", repo.SetEditorconfigIfExists, repo.SetDiffViewStyle, repo.SetWhitespaceBehavior, repo.Diff)
 			m.Get("/commit/{sha:([a-f0-9]{4,64})$}/load-branches-and-tags", repo.LoadBranchesAndTags)
+			m.Group("/commit/{sha:([a-f0-9]{4,64})$}/notes", func() {
+				m.Post("", web.Bind(forms.CommitNotesForm{}), repo.SetCommitNotes)
+				m.Post("/remove", repo.RemoveCommitNotes)
+			}, reqSignIn, reqRepoCodeWriter)
 			m.Get("/cherry-pick/{sha:([a-f0-9]{4,64})$}", repo.SetEditorconfigIfExists, repo.CherryPick)
 		}, repo.MustBeNotEmpty, context.RepoRef(), reqRepoCodeReader)
 
-		m.Get("/rss/branch/*", repo.MustBeNotEmpty, context.RepoRefByType(context.RepoRefBranch), feedEnabled, feed.RenderBranchFeed("rss"))
-		m.Get("/atom/branch/*", repo.MustBeNotEmpty, context.RepoRefByType(context.RepoRefBranch), feedEnabled, feed.RenderBranchFeed("atom"))
+		m.Group("", func() {
+			m.Get("/rss/branch/*", feed.RenderBranchFeed("rss"))
+			m.Get("/atom/branch/*", feed.RenderBranchFeed("atom"))
+		}, repo.MustBeNotEmpty, context.RepoRefByType(context.RepoRefBranch), reqRepoCodeReader, feedEnabled)
 
 		m.Group("/src", func() {
 			m.Get("/branch/*", context.RepoRefByType(context.RepoRefBranch), repo.Home)
@@ -1579,9 +1644,11 @@ func registerRoutes(m *web.Route) {
 			}, context.RepoRef(), reqRepoCodeReader)
 		}
 		m.Get("/commit/{sha:([a-f0-9]{4,64})}.{ext:patch|diff}", repo.MustBeNotEmpty, reqRepoCodeReader, repo.RawDiff)
+
+		m.Post("/sync_fork", context.RepoMustNotBeArchived(), repo.MustBeNotEmpty, reqRepoCodeWriter, repo.SyncFork)
 	}, ignSignIn, context.RepoAssignment, context.UnitTypes())
 
-	m.Post("/{username}/{reponame}/lastcommit/*", ignSignInAndCsrf, context.RepoAssignment, context.UnitTypes(), context.RepoRefByType(context.RepoRefCommit), reqRepoCodeReader, repo.LastCommit)
+	m.Post("/{username}/{reponame}/lastcommit/*", reqSignIn, context.RepoAssignment, context.UnitTypes(), context.RepoRefByType(context.RepoRefCommit), reqRepoCodeReader, repo.LastCommit)
 
 	m.Group("/{username}/{reponame}", func() {
 		if !setting.Repository.DisableStars {
@@ -1618,7 +1685,7 @@ func registerRoutes(m *web.Route) {
 				m.Any("/*", func(ctx *context.Context) {
 					ctx.NotFound("", nil)
 				})
-			}, ignSignInAndCsrf, lfsServerEnabled)
+			}, ignoreCSRF, lfsServerEnabled)
 
 			gitHTTPRouters(m)
 		})
@@ -1649,10 +1716,28 @@ func registerRoutes(m *web.Route) {
 		m.Any("/devtest", devtest.List)
 		m.Any("/devtest/fetch-action-test", devtest.FetchActionTest)
 		m.Any("/devtest/{sub}", devtest.Tmpl)
+		m.Get("/devtest/error/{errcode}", devtest.ErrorPage)
 	}
 
 	m.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		ctx := context.GetWebContext(req)
 		ctx.NotFound("", nil)
 	})
+}
+
+func BindUpload() http.HandlerFunc {
+	return func(resp http.ResponseWriter, req *http.Request) {
+		theObj := new(forms.UploadRepoFileForm) // create a new form obj for every request but not use obj directly
+		data := middleware.GetContextData(req.Context())
+		binding.Bind(req, theObj)
+		files := theObj.Files
+		var fullpaths []string
+		for _, fileID := range files {
+			fullPath := req.Form.Get("files_fullpath[" + fileID + "]")
+			fullpaths = append(fullpaths, fullPath)
+		}
+		theObj.FullPaths = fullpaths
+		data.GetData()["__form"] = theObj
+		middleware.AssignForm(theObj, data)
+	}
 }

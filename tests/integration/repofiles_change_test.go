@@ -1,4 +1,5 @@
 // Copyright 2019 The Gitea Authors. All rights reserved.
+// Copyright 2025 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package integration
@@ -10,14 +11,16 @@ import (
 	"testing"
 	"time"
 
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/setting"
-	api "code.gitea.io/gitea/modules/structs"
-	files_service "code.gitea.io/gitea/services/repository/files"
+	"forgejo.org/models/asymkey"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/setting"
+	api "forgejo.org/modules/structs"
+	files_service "forgejo.org/services/repository/files"
+	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,8 +66,8 @@ func getDeleteRepoFilesOptions(repo *repo_model.Repository) *files_service.Chang
 		Files: []*files_service.ChangeRepoFile{
 			{
 				Operation: "delete",
-				TreePath:  "README.md",
-				SHA:       "4b4851ad51df6a7d9f25c979345979eaeb5b349f",
+				TreePath:  "README_new.md",
+				SHA:       "dbf8d00e022e05b7e5cf7e535de857de57925647",
 			},
 		},
 		LastCommitID: "",
@@ -100,14 +103,14 @@ func getExpectedFileResponseForRepofilesDelete() *api.FileResponse {
 		},
 		Verification: &api.PayloadCommitVerification{
 			Verified:  false,
-			Reason:    "gpg.error.not_signed_commit",
+			Reason:    asymkey.NotSigned,
 			Signature: "",
 			Payload:   "",
 		},
 	}
 }
 
-func getExpectedFileResponseForRepofilesCreate(commitID, lastCommitSHA string) *api.FileResponse {
+func getExpectedFileResponseForRepofilesCreate(commitID, lastCommitSHA string, lastCommitWhen time.Time) *api.FileResponse {
 	treePath := "new/file.txt"
 	encoding := "base64"
 	content := "VGhpcyBpcyBhIE5FVyBmaWxl"
@@ -117,18 +120,19 @@ func getExpectedFileResponseForRepofilesCreate(commitID, lastCommitSHA string) *
 	downloadURL := setting.AppURL + "user2/repo1/raw/branch/master/" + treePath
 	return &api.FileResponse{
 		Content: &api.ContentsResponse{
-			Name:          filepath.Base(treePath),
-			Path:          treePath,
-			SHA:           "103ff9234cefeee5ec5361d22b49fbb04d385885",
-			LastCommitSHA: lastCommitSHA,
-			Type:          "file",
-			Size:          18,
-			Encoding:      &encoding,
-			Content:       &content,
-			URL:           &selfURL,
-			HTMLURL:       &htmlURL,
-			GitURL:        &gitURL,
-			DownloadURL:   &downloadURL,
+			Name:           filepath.Base(treePath),
+			Path:           treePath,
+			SHA:            "103ff9234cefeee5ec5361d22b49fbb04d385885",
+			LastCommitSHA:  lastCommitSHA,
+			LastCommitWhen: lastCommitWhen,
+			Type:           "file",
+			Size:           18,
+			Encoding:       &encoding,
+			Content:        &content,
+			URL:            &selfURL,
+			HTMLURL:        &htmlURL,
+			GitURL:         &gitURL,
+			DownloadURL:    &downloadURL,
 			Links: &api.FileLinksResponse{
 				Self:    &selfURL,
 				GitURL:  &gitURL,
@@ -169,14 +173,14 @@ func getExpectedFileResponseForRepofilesCreate(commitID, lastCommitSHA string) *
 		},
 		Verification: &api.PayloadCommitVerification{
 			Verified:  false,
-			Reason:    "gpg.error.not_signed_commit",
+			Reason:    asymkey.NotSigned,
 			Signature: "",
 			Payload:   "",
 		},
 	}
 }
 
-func getExpectedFileResponseForRepofilesUpdate(commitID, filename, lastCommitSHA string) *api.FileResponse {
+func getExpectedFileResponseForRepofilesUpdate(commitID, filename, lastCommitSHA string, lastCommitWhen time.Time) *api.FileResponse {
 	encoding := "base64"
 	content := "VGhpcyBpcyBVUERBVEVEIGNvbnRlbnQgZm9yIHRoZSBSRUFETUUgZmlsZQ=="
 	selfURL := setting.AppURL + "api/v1/repos/user2/repo1/contents/" + filename + "?ref=master"
@@ -185,18 +189,19 @@ func getExpectedFileResponseForRepofilesUpdate(commitID, filename, lastCommitSHA
 	downloadURL := setting.AppURL + "user2/repo1/raw/branch/master/" + filename
 	return &api.FileResponse{
 		Content: &api.ContentsResponse{
-			Name:          filename,
-			Path:          filename,
-			SHA:           "dbf8d00e022e05b7e5cf7e535de857de57925647",
-			LastCommitSHA: lastCommitSHA,
-			Type:          "file",
-			Size:          43,
-			Encoding:      &encoding,
-			Content:       &content,
-			URL:           &selfURL,
-			HTMLURL:       &htmlURL,
-			GitURL:        &gitURL,
-			DownloadURL:   &downloadURL,
+			Name:           filename,
+			Path:           filename,
+			SHA:            "dbf8d00e022e05b7e5cf7e535de857de57925647",
+			LastCommitSHA:  lastCommitSHA,
+			LastCommitWhen: lastCommitWhen,
+			Type:           "file",
+			Size:           43,
+			Encoding:       &encoding,
+			Content:        &content,
+			URL:            &selfURL,
+			HTMLURL:        &htmlURL,
+			GitURL:         &gitURL,
+			DownloadURL:    &downloadURL,
 			Links: &api.FileLinksResponse{
 				Self:    &selfURL,
 				GitURL:  &gitURL,
@@ -237,197 +242,179 @@ func getExpectedFileResponseForRepofilesUpdate(commitID, filename, lastCommitSHA
 		},
 		Verification: &api.PayloadCommitVerification{
 			Verified:  false,
-			Reason:    "gpg.error.not_signed_commit",
+			Reason:    asymkey.NotSigned,
 			Signature: "",
 			Payload:   "",
 		},
 	}
 }
 
-func TestChangeRepoFilesForCreate(t *testing.T) {
-	// setup
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
+func TestChangeRepoFiles(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-		opts := getCreateRepoFilesOptions(repo)
 
-		// test
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
-
-		// asserts
+		gitRepo, err := gitrepo.OpenRepository(git.DefaultContext, repo)
 		require.NoError(t, err)
-		gitRepo, _ := gitrepo.OpenRepository(git.DefaultContext, repo)
 		defer gitRepo.Close()
 
-		commitID, _ := gitRepo.GetBranchCommitID(opts.NewBranch)
-		lastCommit, _ := gitRepo.GetCommitByPath("new/file.txt")
-		expectedFileResponse := getExpectedFileResponseForRepofilesCreate(commitID, lastCommit.ID.String())
-		assert.NotNil(t, expectedFileResponse)
-		if expectedFileResponse != nil {
-			assert.EqualValues(t, expectedFileResponse.Content, filesResponse.Files[0])
-			assert.EqualValues(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
-			assert.EqualValues(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
-			assert.EqualValues(t, expectedFileResponse.Commit.Author.Email, filesResponse.Commit.Author.Email)
-			assert.EqualValues(t, expectedFileResponse.Commit.Author.Name, filesResponse.Commit.Author.Name)
-		}
-	})
-}
+		t.Run("Create", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getCreateRepoFilesOptions(repo)
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
 
-func TestChangeRepoFilesForUpdate(t *testing.T) {
-	// setup
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
-		doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-		opts := getUpdateRepoFilesOptions(repo)
+			commitID, err := gitRepo.GetBranchCommitID(opts.NewBranch)
+			require.NoError(t, err)
+			lastCommit, err := gitRepo.GetCommitByPath("new/file.txt")
+			require.NoError(t, err)
+			expectedFileResponse := getExpectedFileResponseForRepofilesCreate(commitID, lastCommit.ID.String(), lastCommit.Committer.When)
+			assert.Equal(t, expectedFileResponse.Content, filesResponse.Files[0])
+			assert.Equal(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
+			assert.Equal(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Email, filesResponse.Commit.Author.Email)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Name, filesResponse.Commit.Author.Name)
+		})
 
-		// test
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+		t.Run("Update", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getUpdateRepoFilesOptions(repo)
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
 
-		// asserts
-		require.NoError(t, err)
-		gitRepo, _ := gitrepo.OpenRepository(git.DefaultContext, repo)
-		defer gitRepo.Close()
+			commit, err := gitRepo.GetBranchCommit(opts.NewBranch)
+			require.NoError(t, err)
+			lastCommit, err := commit.GetCommitByPath(opts.Files[0].TreePath)
+			require.NoError(t, err)
+			expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String(), lastCommit.Committer.When)
+			assert.Equal(t, expectedFileResponse.Content, filesResponse.Files[0])
+			assert.Equal(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
+			assert.Equal(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Email, filesResponse.Commit.Author.Email)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Name, filesResponse.Commit.Author.Name)
+		})
 
-		commit, _ := gitRepo.GetBranchCommit(opts.NewBranch)
-		lastCommit, _ := commit.GetCommitByPath(opts.Files[0].TreePath)
-		expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String())
-		assert.EqualValues(t, expectedFileResponse.Content, filesResponse.Files[0])
-		assert.EqualValues(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
-		assert.EqualValues(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
-		assert.EqualValues(t, expectedFileResponse.Commit.Author.Email, filesResponse.Commit.Author.Email)
-		assert.EqualValues(t, expectedFileResponse.Commit.Author.Name, filesResponse.Commit.Author.Name)
-	})
-}
+		t.Run("Update with commit ID (without blob sha)", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getUpdateRepoFilesOptions(repo)
 
-func TestChangeRepoFilesForUpdateWithFileMove(t *testing.T) {
-	// setup
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
-		doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-		opts := getUpdateRepoFilesOptions(repo)
-		opts.Files[0].FromTreePath = "README.md"
-		opts.Files[0].TreePath = "README_new.md" // new file name, README_new.md
+			commit, err := gitRepo.GetBranchCommit(opts.NewBranch)
+			require.NoError(t, err)
 
-		// test
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			opts.Files[0].SHA = ""
+			opts.LastCommitID = commit.ID.String()
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
 
-		// asserts
-		require.NoError(t, err)
-		gitRepo, _ := gitrepo.OpenRepository(git.DefaultContext, repo)
-		defer gitRepo.Close()
+			commit, err = gitRepo.GetBranchCommit(opts.NewBranch)
+			require.NoError(t, err)
+			lastCommit, err := commit.GetCommitByPath(opts.Files[0].TreePath)
+			require.NoError(t, err)
+			expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String(), lastCommit.Committer.When)
+			assert.Equal(t, expectedFileResponse.Content, filesResponse.Files[0])
+			assert.Equal(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
+			assert.Equal(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Email, filesResponse.Commit.Author.Email)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Name, filesResponse.Commit.Author.Name)
+		})
 
-		commit, _ := gitRepo.GetBranchCommit(opts.NewBranch)
-		lastCommit, _ := commit.GetCommitByPath(opts.Files[0].TreePath)
-		expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String())
-		// assert that the old file no longer exists in the last commit of the branch
-		fromEntry, err := commit.GetTreeEntryByPath(opts.Files[0].FromTreePath)
-		switch err.(type) {
-		case git.ErrNotExist:
-			// correct, continue
-		default:
-			t.Fatalf("expected git.ErrNotExist, got:%v", err)
-		}
-		toEntry, err := commit.GetTreeEntryByPath(opts.Files[0].TreePath)
-		require.NoError(t, err)
-		assert.Nil(t, fromEntry)  // Should no longer exist here
-		assert.NotNil(t, toEntry) // Should exist here
-		// assert SHA has remained the same but paths use the new file name
-		assert.EqualValues(t, expectedFileResponse.Content.SHA, filesResponse.Files[0].SHA)
-		assert.EqualValues(t, expectedFileResponse.Content.Name, filesResponse.Files[0].Name)
-		assert.EqualValues(t, expectedFileResponse.Content.Path, filesResponse.Files[0].Path)
-		assert.EqualValues(t, expectedFileResponse.Content.URL, filesResponse.Files[0].URL)
-		assert.EqualValues(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
-		assert.EqualValues(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
-	})
-}
+		t.Run("Update and move", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getUpdateRepoFilesOptions(repo)
+			opts.Files[0].SHA = "dbf8d00e022e05b7e5cf7e535de857de57925647"
+			opts.Files[0].FromTreePath = "README.md"
+			opts.Files[0].TreePath = "README_new.md" // new file name, README_new.md
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
 
-// Test opts with branch names removed, should get same results as above test
-func TestChangeRepoFilesWithoutBranchNames(t *testing.T) {
-	// setup
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
-		doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-		opts := getUpdateRepoFilesOptions(repo)
-		opts.OldBranch = ""
-		opts.NewBranch = ""
+			commit, err := gitRepo.GetBranchCommit(opts.NewBranch)
+			require.NoError(t, err)
+			lastCommit, err := commit.GetCommitByPath(opts.Files[0].TreePath)
+			require.NoError(t, err)
+			expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String(), lastCommit.Committer.When)
 
-		// test
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			// assert that the old file no longer exists in the last commit of the branch
+			fromEntry, err := commit.GetTreeEntryByPath(opts.Files[0].FromTreePath)
+			switch err.(type) {
+			case git.ErrNotExist:
+				// correct, continue
+			default:
+				t.Fatalf("expected git.ErrNotExist, got:%v", err)
+			}
+			toEntry, err := commit.GetTreeEntryByPath(opts.Files[0].TreePath)
+			require.NoError(t, err)
+			assert.Nil(t, fromEntry)  // Should no longer exist here
+			assert.NotNil(t, toEntry) // Should exist here
+			// assert SHA has remained the same but paths use the new file name
+			assert.Equal(t, expectedFileResponse.Content.SHA, filesResponse.Files[0].SHA)
+			assert.Equal(t, expectedFileResponse.Content.Name, filesResponse.Files[0].Name)
+			assert.Equal(t, expectedFileResponse.Content.Path, filesResponse.Files[0].Path)
+			assert.Equal(t, expectedFileResponse.Content.URL, filesResponse.Files[0].URL)
+			assert.Equal(t, expectedFileResponse.Commit.SHA, filesResponse.Commit.SHA)
+			assert.Equal(t, expectedFileResponse.Commit.HTMLURL, filesResponse.Commit.HTMLURL)
+		})
 
-		// asserts
-		require.NoError(t, err)
-		gitRepo, _ := gitrepo.OpenRepository(git.DefaultContext, repo)
-		defer gitRepo.Close()
+		t.Run("Change without branch names", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getUpdateRepoFilesOptions(repo)
+			opts.OldBranch = ""
+			opts.NewBranch = ""
+			opts.Files[0].TreePath = "README_new.md"
+			opts.Files[0].SHA = "dbf8d00e022e05b7e5cf7e535de857de57925647"
 
-		commit, _ := gitRepo.GetBranchCommit(repo.DefaultBranch)
-		lastCommit, _ := commit.GetCommitByPath(opts.Files[0].TreePath)
-		expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String())
-		assert.EqualValues(t, expectedFileResponse.Content, filesResponse.Files[0])
-	})
-}
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
 
-func TestChangeRepoFilesForDelete(t *testing.T) {
-	onGiteaRun(t, testDeleteRepoFiles)
-}
+			commit, _ := gitRepo.GetBranchCommit(repo.DefaultBranch)
+			lastCommit, _ := commit.GetCommitByPath(opts.Files[0].TreePath)
+			expectedFileResponse := getExpectedFileResponseForRepofilesUpdate(commit.ID.String(), opts.Files[0].TreePath, lastCommit.ID.String(), lastCommit.Committer.When)
+			assert.Equal(t, expectedFileResponse.Content, filesResponse.Files[0])
+		})
 
-func testDeleteRepoFiles(t *testing.T, u *url.URL) {
-	// setup
-	unittest.PrepareTestEnv(t)
-	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-	opts := getDeleteRepoFilesOptions(repo)
+		t.Run("Delete files", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getDeleteRepoFilesOptions(repo)
 
-	t.Run("Delete README.md file", func(t *testing.T) {
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
-		require.NoError(t, err)
-		expectedFileResponse := getExpectedFileResponseForRepofilesDelete()
-		assert.NotNil(t, filesResponse)
-		assert.Nil(t, filesResponse.Files[0])
-		assert.EqualValues(t, expectedFileResponse.Commit.Message, filesResponse.Commit.Message)
-		assert.EqualValues(t, expectedFileResponse.Commit.Author.Identity, filesResponse.Commit.Author.Identity)
-		assert.EqualValues(t, expectedFileResponse.Commit.Committer.Identity, filesResponse.Commit.Committer.Identity)
-		assert.EqualValues(t, expectedFileResponse.Verification, filesResponse.Verification)
-	})
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
+			expectedFileResponse := getExpectedFileResponseForRepofilesDelete()
+			assert.NotNil(t, filesResponse)
+			assert.Nil(t, filesResponse.Files[0])
+			assert.Equal(t, expectedFileResponse.Commit.Message, filesResponse.Commit.Message)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Identity, filesResponse.Commit.Author.Identity)
+			assert.Equal(t, expectedFileResponse.Commit.Committer.Identity, filesResponse.Commit.Committer.Identity)
+			assert.Equal(t, expectedFileResponse.Verification, filesResponse.Verification)
 
-	t.Run("Verify README.md has been deleted", func(t *testing.T) {
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
-		assert.Nil(t, filesResponse)
-		expectedError := "repository file does not exist [path: " + opts.Files[0].TreePath + "]"
-		assert.EqualError(t, err, expectedError)
-	})
-}
+			filesResponse, err = files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			assert.Nil(t, filesResponse)
+			expectedError := "repository file does not exist [path: " + opts.Files[0].TreePath + "]"
+			assert.EqualError(t, err, expectedError)
+		})
 
-// Test opts with branch names removed, same results
-func TestChangeRepoFilesForDeleteWithoutBranchNames(t *testing.T) {
-	onGiteaRun(t, testDeleteRepoFilesWithoutBranchNames)
-}
+		t.Run("Delete without branch name", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			opts := getDeleteRepoFilesOptions(repo)
+			opts.OldBranch = ""
+			opts.NewBranch = ""
+			opts.Files[0].SHA = "103ff9234cefeee5ec5361d22b49fbb04d385885"
+			opts.Files[0].TreePath = "new/file.txt"
 
-func testDeleteRepoFilesWithoutBranchNames(t *testing.T, u *url.URL) {
-	// setup
-	unittest.PrepareTestEnv(t)
-	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-
-	opts := getDeleteRepoFilesOptions(repo)
-	opts.OldBranch = ""
-	opts.NewBranch = ""
-
-	t.Run("Delete README.md without Branch Name", func(t *testing.T) {
-		filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
-		require.NoError(t, err)
-		expectedFileResponse := getExpectedFileResponseForRepofilesDelete()
-		assert.NotNil(t, filesResponse)
-		assert.Nil(t, filesResponse.Files[0])
-		assert.EqualValues(t, expectedFileResponse.Commit.Message, filesResponse.Commit.Message)
-		assert.EqualValues(t, expectedFileResponse.Commit.Author.Identity, filesResponse.Commit.Author.Identity)
-		assert.EqualValues(t, expectedFileResponse.Commit.Committer.Identity, filesResponse.Commit.Committer.Identity)
-		assert.EqualValues(t, expectedFileResponse.Verification, filesResponse.Verification)
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			require.NoError(t, err)
+			expectedFileResponse := getExpectedFileResponseForRepofilesDelete()
+			assert.NotNil(t, filesResponse)
+			assert.Nil(t, filesResponse.Files[0])
+			assert.Equal(t, expectedFileResponse.Commit.Message, filesResponse.Commit.Message)
+			assert.Equal(t, expectedFileResponse.Commit.Author.Identity, filesResponse.Commit.Author.Identity)
+			assert.Equal(t, expectedFileResponse.Commit.Committer.Identity, filesResponse.Commit.Committer.Identity)
+			assert.Equal(t, expectedFileResponse.Verification, filesResponse.Verification)
+		})
 	})
 }
 
 func TestChangeRepoFilesErrors(t *testing.T) {
 	// setup
-	onGiteaRun(t, func(t *testing.T, u *url.URL) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
 
@@ -449,6 +436,26 @@ func TestChangeRepoFilesErrors(t *testing.T) {
 			assert.Nil(t, filesResponse)
 			require.Error(t, err)
 			expectedError := "sha does not match [given: " + opts.Files[0].SHA + ", expected: " + origSHA + "]"
+			assert.EqualError(t, err, expectedError)
+		})
+
+		t.Run("missing SHA", func(t *testing.T) {
+			opts := getUpdateRepoFilesOptions(repo)
+			opts.Files[0].SHA = ""
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			assert.Nil(t, filesResponse)
+			require.Error(t, err)
+			expectedError := "a SHA or commit ID must be provided when updating a file"
+			assert.EqualError(t, err, expectedError)
+		})
+
+		t.Run("bad last commit ID", func(t *testing.T) {
+			opts := getUpdateRepoFilesOptions(repo)
+			opts.LastCommitID = "bad"
+			filesResponse, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, doer, opts)
+			assert.Nil(t, filesResponse)
+			require.Error(t, err)
+			expectedError := "ConvertToSHA1: Invalid last commit ID: object does not exist [id: bad, rel_path: ]"
 			assert.EqualError(t, err, expectedError)
 		})
 

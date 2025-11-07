@@ -8,11 +8,12 @@ import (
 	"fmt"
 	"strings"
 
-	"code.gitea.io/gitea/models/auth"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/auth/pam"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/setting"
+	"forgejo.org/models/auth"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/auth/pam"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/validation"
 
 	"github.com/google/uuid"
 )
@@ -39,13 +40,13 @@ func (source *Source) Authenticate(ctx context.Context, user *user_model.User, u
 	if idx > -1 {
 		username = pamLogin[:idx]
 	}
-	if user_model.ValidateEmail(email) != nil {
+	if validation.ValidateEmail(email) != nil {
 		if source.EmailDomain != "" {
 			email = fmt.Sprintf("%s@%s", username, source.EmailDomain)
 		} else {
 			email = fmt.Sprintf("%s@%s", username, setting.Service.NoReplyAddress)
 		}
-		if user_model.ValidateEmail(email) != nil {
+		if validation.ValidateEmail(email) != nil {
 			email = uuid.New().String() + "@localhost"
 		}
 	}

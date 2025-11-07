@@ -6,39 +6,26 @@ package user
 import (
 	"net/http"
 
-	"code.gitea.io/gitea/models/db"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	"forgejo.org/models/db"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/setting"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
-// Search search users
-func Search(ctx *context.Context) {
-	listOptions := db.ListOptions{
-		Page:     ctx.FormInt("page"),
-		PageSize: convert.ToCorrectPageSize(ctx.FormInt("limit")),
-	}
-
-	users, maxResults, err := user_model.SearchUsers(ctx, &user_model.SearchUserOptions{
+// SearchCandidates searches candidate users for dropdown list
+func SearchCandidates(ctx *context.Context) {
+	users, _, err := user_model.SearchUsers(ctx, &user_model.SearchUserOptions{
 		Actor:       ctx.Doer,
 		Keyword:     ctx.FormTrim("q"),
-		UID:         ctx.FormInt64("uid"),
 		Type:        user_model.UserTypeIndividual,
-		IsActive:    ctx.FormOptionalBool("active"),
-		ListOptions: listOptions,
+		IsActive:    optional.Some(true),
+		ListOptions: db.ListOptions{PageSize: setting.UI.MembersPagingNum},
 	})
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
-		})
+		ctx.ServerError("Unable to search users", err)
 		return
 	}
-
-	ctx.SetTotalCountHeader(maxResults)
-
-	ctx.JSON(http.StatusOK, map[string]any{
-		"ok":   true,
-		"data": convert.ToUsers(ctx, ctx.Doer, users),
-	})
+	ctx.JSON(http.StatusOK, map[string]any{"data": convert.ToUsers(ctx, ctx.Doer, users)})
 }

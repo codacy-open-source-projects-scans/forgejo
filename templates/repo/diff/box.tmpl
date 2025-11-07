@@ -53,7 +53,7 @@
 	{{if not .DiffNotAvailable}}
 		{{if and .IsShowingOnlySingleCommit .PageIsPullFiles}}
 			<div class="ui info message">
-				<div>{{ctx.Locale.Tr "repo.pulls.showing_only_single_commit" (ShortSha .AfterCommitID)}} - <a href="{{$.Issue.Link}}/files?style={{if $.IsSplitStyle}}split{{else}}unified{{end}}&whitespace={{$.WhitespaceBehavior}}&show-outdated={{$.ShowOutdatedComments}}">{{ctx.Locale.Tr "repo.pulls.show_all_commits"}}</a></div>
+				<div>{{ctx.Locale.Tr "repo.pulls.showing_only_single_commit" (ShortSha .CommitID)}} - <a href="{{$.Issue.Link}}/files?style={{if $.IsSplitStyle}}split{{else}}unified{{end}}&whitespace={{$.WhitespaceBehavior}}&show-outdated={{$.ShowOutdatedComments}}">{{ctx.Locale.Tr "repo.pulls.show_all_commits"}}</a></div>
 			</div>
 		{{else if and (not .IsShowingAllCommits) .PageIsPullFiles}}
 			<div class="ui info message">
@@ -85,7 +85,6 @@
 			diffFileInfo.files.push(...diffDataFiles);
 			window.config.pageData.diffFileInfo = diffFileInfo;
 		</script>
-		<div id="diff-file-list"></div>
 	{{end}}
 	<div id="diff-container">
 		{{if $showFileTree}}
@@ -93,6 +92,12 @@
 			<script>
 				if (diffTreeVisible) document.getElementById('diff-file-tree').classList.remove('tw-hidden');
 			</script>
+		{{end}}
+		<div id="diff-content-container">
+		{{if .IsShowingOnlySingleCommit}}
+			<div id="diff-commit-header">
+			{{template "repo/commit_header" .}}
+			</div>
 		{{end}}
 		{{if .DiffNotAvailable}}
 			<h4>{{ctx.Locale.Tr "repo.diff.data_not_available"}}</h4>
@@ -130,7 +135,7 @@
 								</div>
 								<span class="file tw-flex tw-items-center tw-font-mono tw-flex-1"><a class="muted file-link" title="{{if $file.IsRenamed}}{{$file.OldName}} → {{end}}{{$file.Name}}" href="#diff-{{$file.NameHash}}">{{if $file.IsRenamed}}{{$file.OldName}} → {{end}}{{$file.Name}}</a>
 									{{if .IsLFSFile}} ({{ctx.Locale.Tr "repo.stored_lfs"}}){{end}}
-									<button class="btn interact-fg tw-p-2" data-clipboard-text="{{$file.Name}}" data-tooltip-content="{{ctx.Locale.Tr "copy_generic"}}" aria-label="{{ctx.Locale.Tr "copy_generic"}}">{{svg "octicon-copy" 14}}</button>
+										<button class="btn interact-fg tw-p-2" data-clipboard-text="{{$file.Name}}" data-tooltip-content="{{ctx.Locale.Tr "copy_path"}}">{{svg "octicon-copy" 14}}</button>
 									{{if $file.IsGenerated}}
 										<span class="ui label">{{ctx.Locale.Tr "repo.diff.generated"}}</span>
 									{{end}}
@@ -231,6 +236,7 @@
 				{{end}}
 			</div>
 		{{end}}
+		</div>
 	</div>
 
 	{{if and (not $.Repository.IsArchived) (not .DiffNotAvailable)}}
@@ -248,8 +254,8 @@
 					</div>
 				{{end}}
 				<div class="text right edit buttons">
-					<button class="ui cancel button">{{ctx.Locale.Tr "repo.issues.cancel"}}</button>
-					<button class="ui primary save button">{{ctx.Locale.Tr "repo.issues.save"}}</button>
+					<button class="ui cancel button" data-button-name="cancel-edit">{{ctx.Locale.Tr "repo.issues.cancel"}}</button>
+					<button class="ui primary save button" data-button-name="save-edit">{{ctx.Locale.Tr "repo.issues.save"}}</button>
 				</div>
 			</div>
 		</template>

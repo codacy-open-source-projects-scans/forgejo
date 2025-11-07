@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strings"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/web/middleware"
+	auth_model "forgejo.org/models/auth"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/web/middleware"
 )
 
 const CookieNameFlash = "gitea_flash"
@@ -47,7 +47,7 @@ func (ctx *Context) GetSiteCookie(name string) string {
 // SetLTACookie will generate a LTA token and add it as an cookie.
 func (ctx *Context) SetLTACookie(u *user_model.User) error {
 	days := 86400 * setting.LogInRememberDays
-	lookup, validator, err := auth_model.GenerateAuthToken(ctx, u.ID, timeutil.TimeStampNow().Add(int64(days)))
+	lookup, validator, err := auth_model.GenerateAuthToken(ctx, u.ID, timeutil.TimeStampNow().Add(int64(days)), auth_model.LongTermAuthorization)
 	if err != nil {
 		return err
 	}

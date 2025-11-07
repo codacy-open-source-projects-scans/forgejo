@@ -5,16 +5,16 @@ package arch
 
 import (
 	"bytes"
-	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
-	"code.gitea.io/gitea/modules/packages"
+	"forgejo.org/modules/packages"
 
-	"github.com/mholt/archiver/v3"
+	"github.com/mholt/archives"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +25,7 @@ pkgbase = b
 pkgver = 1-2
 arch = x86_64
 `
-	fs := fstest.MapFS{
+	mapfs := fstest.MapFS{
 		"pkginfo": &fstest.MapFile{
 			Data:    []byte(PKGINFO),
 			Mode:    os.ModePerm,
@@ -39,65 +39,111 @@ arch = x86_64
 	}
 
 	// Test .PKGINFO file
-	pinf, err := fs.Stat("pkginfo")
-	require.NoError(t, err)
-
-	pfile, err := fs.Open("pkginfo")
-	require.NoError(t, err)
-
-	parcname, err := archiver.NameInArchive(pinf, ".PKGINFO", ".PKGINFO")
+	pinf, err := mapfs.Stat("pkginfo")
 	require.NoError(t, err)
 
 	// Test .MTREE file
-	minf, err := fs.Stat("mtree")
+	minf, err := mapfs.Stat("mtree")
 	require.NoError(t, err)
 
-	mfile, err := fs.Open("mtree")
-	require.NoError(t, err)
+	files := []archives.FileInfo{
+		{
+			FileInfo:      pinf,
+			NameInArchive: ".PKGINFO",
+			Open: func() (fs.File, error) {
+				return mapfs.Open("pkginfo")
+			},
+		},
+		{
+			FileInfo:      minf,
+			NameInArchive: ".MTREE",
+			Open: func() (fs.File, error) {
+				return mapfs.Open("mtree")
+			},
+		},
+	}
 
-	marcname, err := archiver.NameInArchive(minf, ".MTREE", ".MTREE")
-	require.NoError(t, err)
-
-	t.Run("normal archive", func(t *testing.T) {
+	t.Run("normal zst archive", func(t *testing.T) {
 		var buf bytes.Buffer
-
-		archive := archiver.NewTarZstd()
-		archive.Create(&buf)
-
-		err = archive.Write(archiver.File{
-			FileInfo: archiver.FileInfo{
-				FileInfo:   pinf,
-				CustomName: parcname,
-			},
-			ReadCloser: pfile,
-		})
-		require.NoError(t, errors.Join(pfile.Close(), err))
-
-		err = archive.Write(archiver.File{
-			FileInfo: archiver.FileInfo{
-				FileInfo:   minf,
-				CustomName: marcname,
-			},
-			ReadCloser: mfile,
-		})
-		require.NoError(t, errors.Join(mfile.Close(), archive.Close(), err))
+		archive := archives.CompressedArchive{
+			Archival:    archives.Tar{},
+			Compression: archives.Zstd{},
+		}
+		archive.Archive(t.Context(), &buf, files)
 
 		reader, err := packages.CreateHashedBufferFromReader(&buf)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		defer reader.Close()
-		_, err = ParsePackage(reader)
+		pkg, err := ParsePackage(reader)
+
+		require.Equal(t, "zst", pkg.CompressType)
+		require.Equal(t, "a", pkg.Name)
+		require.Equal(t, "b", pkg.VersionMetadata.Base)
+		require.Equal(t, "x86_64", pkg.FileMetadata.Arch)
+		require.Equal(t, "1-2", pkg.Version)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("normal xz archive", func(t *testing.T) {
+		var buf bytes.Buffer
+		archive := archives.CompressedArchive{
+			Archival:    archives.Tar{},
+			Compression: archives.Xz{},
+		}
+		archive.Archive(t.Context(), &buf, files)
+
+		reader, err := packages.CreateHashedBufferFromReader(&buf)
+		require.NoError(t, err)
+		defer reader.Close()
+		pkg, err := ParsePackage(reader)
+
+		require.Equal(t, "xz", pkg.CompressType)
+		require.Equal(t, "a", pkg.Name)
+		require.Equal(t, "b", pkg.VersionMetadata.Base)
+		require.Equal(t, "x86_64", pkg.FileMetadata.Arch)
+		require.Equal(t, "1-2", pkg.Version)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("normal gz archive", func(t *testing.T) {
+		var buf bytes.Buffer
+		archive := archives.CompressedArchive{
+			Archival:    archives.Tar{},
+			Compression: archives.Gz{},
+		}
+		archive.Archive(t.Context(), &buf, files)
+
+		reader, err := packages.CreateHashedBufferFromReader(&buf)
+		require.NoError(t, err)
+		defer reader.Close()
+		pkg, err := ParsePackage(reader)
+
+		require.Equal(t, "gz", pkg.CompressType)
+		require.Equal(t, "a", pkg.Name)
+		require.Equal(t, "b", pkg.VersionMetadata.Base)
+		require.Equal(t, "x86_64", pkg.FileMetadata.Arch)
+		require.Equal(t, "1-2", pkg.Version)
 
 		require.NoError(t, err)
 	})
 
 	t.Run("missing .PKGINFO", func(t *testing.T) {
 		var buf bytes.Buffer
-
-		archive := archiver.NewTarZstd()
-		archive.Create(&buf)
-		require.NoError(t, archive.Close())
+		archive := archives.CompressedArchive{
+			Archival:    archives.Tar{},
+			Compression: archives.Zstd{},
+		}
+		archive.Archive(t.Context(), &buf, []archives.FileInfo{
+			{
+				FileInfo:      minf,
+				NameInArchive: ".MTREE",
+				Open: func() (fs.File, error) {
+					return mapfs.Open("mtree")
+				},
+			},
+		})
 
 		reader, err := packages.CreateHashedBufferFromReader(&buf)
 		require.NoError(t, err)
@@ -111,21 +157,20 @@ arch = x86_64
 
 	t.Run("missing .MTREE", func(t *testing.T) {
 		var buf bytes.Buffer
-
-		pfile, err := fs.Open("pkginfo")
-		require.NoError(t, err)
-
-		archive := archiver.NewTarZstd()
-		archive.Create(&buf)
-
-		err = archive.Write(archiver.File{
-			FileInfo: archiver.FileInfo{
-				FileInfo:   pinf,
-				CustomName: parcname,
+		archive := archives.CompressedArchive{
+			Archival:    archives.Tar{},
+			Compression: archives.Zstd{},
+		}
+		archive.Archive(t.Context(), &buf, []archives.FileInfo{
+			{
+				FileInfo:      pinf,
+				NameInArchive: ".PKGINFO",
+				Open: func() (fs.File, error) {
+					return mapfs.Open("pkginfo")
+				},
 			},
-			ReadCloser: pfile,
 		})
-		require.NoError(t, errors.Join(pfile.Close(), archive.Close(), err))
+
 		reader, err := packages.CreateHashedBufferFromReader(&buf)
 		require.NoError(t, err)
 
@@ -344,8 +389,8 @@ func TestValidatePackageSpec(t *testing.T) {
 	})
 }
 
-func TestDescString(t *testing.T) {
-	const pkgdesc = `%FILENAME%
+func TestDescAndFileString(t *testing.T) {
+	const pkgDesc = `%FILENAME%
 zstd-1.5.5-1-x86_64.pkg.tar.zst
 
 %NAME%
@@ -417,6 +462,12 @@ dummy6
 
 `
 
+	const pkgFiles = `%FILES%
+usr/
+usr/bin/
+usr/bin/zstd
+`
+
 	md := &Package{
 		CompressType: "zst",
 		Name:         "zstd",
@@ -441,7 +492,9 @@ dummy6
 			BuildDate:      1681646714,
 			Packager:       "Jelle van der Waa <jelle@archlinux.org>",
 			Arch:           "x86_64",
+			Files:          []string{"usr/", "usr/bin/", "usr/bin/zstd"},
 		},
 	}
-	require.Equal(t, pkgdesc, md.Desc())
+	require.Equal(t, pkgDesc, md.Desc())
+	require.Equal(t, pkgFiles, md.Files())
 }

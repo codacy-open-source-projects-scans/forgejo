@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	"code.gitea.io/gitea/modules/json"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/test"
+	"forgejo.org/models/db"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unittest"
+	"forgejo.org/modules/json"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/test"
 
 	"code.forgejo.org/go-chi/cache"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +43,7 @@ func TestRepository_ContributorsGraph(t *testing.T) {
 	dataString, isData := mockCache.Get("key2").(string)
 	assert.True(t, isData)
 	// Verify that JSON is actually stored in the cache.
-	assert.EqualValues(t, `{"ethantkoenig@gmail.com":{"name":"Ethan Koenig","login":"","avatar_link":"https://secure.gravatar.com/avatar/b42fb195faa8c61b8d88abfefe30e9e3?d=identicon","home_link":"","total_commits":1,"weeks":{"1511654400000":{"week":1511654400000,"additions":3,"deletions":0,"commits":1}}},"jimmy.praet@telenet.be":{"name":"Jimmy Praet","login":"","avatar_link":"https://secure.gravatar.com/avatar/93c49b7c89eb156971d11161c9b52795?d=identicon","home_link":"","total_commits":1,"weeks":{"1624752000000":{"week":1624752000000,"additions":2,"deletions":0,"commits":1}}},"jon@allspice.io":{"name":"Jon","login":"","avatar_link":"https://secure.gravatar.com/avatar/00388ce725e6886f3e07c3733007289b?d=identicon","home_link":"","total_commits":1,"weeks":{"1607817600000":{"week":1607817600000,"additions":10,"deletions":0,"commits":1}}},"total":{"name":"Total","login":"","avatar_link":"","home_link":"","total_commits":3,"weeks":{"1511654400000":{"week":1511654400000,"additions":3,"deletions":0,"commits":1},"1607817600000":{"week":1607817600000,"additions":10,"deletions":0,"commits":1},"1624752000000":{"week":1624752000000,"additions":2,"deletions":0,"commits":1}}}}`, dataString)
+	assert.JSONEq(t, `{"ethantkoenig@gmail.com":{"name":"Ethan Koenig","login":"","avatar_link":"/assets/img/avatar_default.png","home_link":"","total_commits":1,"weeks":{"1511654400000":{"week":1511654400000,"additions":3,"deletions":0,"commits":1}}},"jimmy.praet@telenet.be":{"name":"Jimmy Praet","login":"","avatar_link":"/assets/img/avatar_default.png","home_link":"","total_commits":1,"weeks":{"1624752000000":{"week":1624752000000,"additions":2,"deletions":0,"commits":1}}},"jon@allspice.io":{"name":"Jon","login":"","avatar_link":"/assets/img/avatar_default.png","home_link":"","total_commits":1,"weeks":{"1607817600000":{"week":1607817600000,"additions":10,"deletions":0,"commits":1}}},"total":{"name":"Total","login":"","avatar_link":"","home_link":"","total_commits":3,"weeks":{"1511654400000":{"week":1511654400000,"additions":3,"deletions":0,"commits":1},"1607817600000":{"week":1607817600000,"additions":10,"deletions":0,"commits":1},"1624752000000":{"week":1624752000000,"additions":2,"deletions":0,"commits":1}}}}`, dataString)
 
 	var data map[string]*ContributorData
 	require.NoError(t, json.Unmarshal([]byte(dataString), &data))
@@ -53,16 +53,16 @@ func TestRepository_ContributorsGraph(t *testing.T) {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	assert.EqualValues(t, []string{
+	assert.Equal(t, []string{
 		"ethantkoenig@gmail.com",
 		"jimmy.praet@telenet.be",
 		"jon@allspice.io",
 		"total", // generated summary
 	}, keys)
 
-	assert.EqualValues(t, &ContributorData{
+	assert.Equal(t, &ContributorData{
 		Name:         "Ethan Koenig",
-		AvatarLink:   "https://secure.gravatar.com/avatar/b42fb195faa8c61b8d88abfefe30e9e3?d=identicon",
+		AvatarLink:   "/assets/img/avatar_default.png",
 		TotalCommits: 1,
 		Weeks: map[int64]*WeekData{
 			1511654400000: {
@@ -73,7 +73,7 @@ func TestRepository_ContributorsGraph(t *testing.T) {
 			},
 		},
 	}, data["ethantkoenig@gmail.com"])
-	assert.EqualValues(t, &ContributorData{
+	assert.Equal(t, &ContributorData{
 		Name:         "Total",
 		AvatarLink:   "",
 		TotalCommits: 3,

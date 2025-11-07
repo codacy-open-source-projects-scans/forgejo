@@ -10,21 +10,22 @@ import (
 	"fmt"
 	"strconv"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	"code.gitea.io/gitea/models/perm"
-	"code.gitea.io/gitea/models/perm/access"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/actions"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/json"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/webhook"
-	"code.gitea.io/gitea/services/convert"
+	actions_model "forgejo.org/models/actions"
+	"forgejo.org/models/perm"
+	"forgejo.org/models/perm/access"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/user"
+	"forgejo.org/modules/actions"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/json"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/webhook"
+	"forgejo.org/services/convert"
 
-	"github.com/nektos/act/pkg/jobparser"
-	act_model "github.com/nektos/act/pkg/model"
+	"code.forgejo.org/forgejo/runner/v11/act/jobparser"
+	act_model "code.forgejo.org/forgejo/runner/v11/act/model"
 )
 
 type InputRequiredErr struct {
@@ -49,15 +50,15 @@ type Workflow struct {
 
 type InputValueGetter func(key string) string
 
-func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGetter, repo *repo_model.Repository, doer *user.User) error {
+func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGetter, repo *repo_model.Repository, doer *user.User) (r *actions_model.ActionRun, j []string, err error) {
 	content, err := actions.GetContentFromEntry(entry.GitEntry)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	wf, err := act_model.ReadWorkflow(bytes.NewReader(content))
+	wf, err := act_model.ReadWorkflow(bytes.NewReader(content), false)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	fullWorkflowID := ".forgejo/workflows/" + entry.WorkflowID
@@ -68,6 +69,7 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 	}
 
 	inputs := make(map[string]string)
+	inputsAny := make(map[string]any)
 	if workflowDispatch := wf.WorkflowDispatchConfig(); workflowDispatch != nil {
 		for key, input := range workflowDispatch.Inputs {
 			val := inputGetter(key)
@@ -79,7 +81,7 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 						if len(name) == 0 {
 							name = key
 						}
-						return InputRequiredErr{Name: name}
+						return nil, nil, InputRequiredErr{Name: name}
 					}
 					continue
 				}
@@ -88,12 +90,15 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 				val = strconv.FormatBool(val == "on")
 			}
 			inputs[key] = val
+			inputsAny[key] = val
 		}
 	}
 
 	if int64(len(inputs)) > setting.Actions.LimitDispatchInputs {
-		return errors.New("to many inputs")
+		return nil, nil, errors.New("to many inputs")
 	}
+
+	jobNames := util.KeysOfMap(wf.Jobs)
 
 	payload := &structs.WorkflowDispatchPayload{
 		Inputs:     inputs,
@@ -105,7 +110,12 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 
 	p, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return nil, nil, err
+	}
+
+	notifications, err := wf.Notifications()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	run := &actions_model.ActionRun{
@@ -122,19 +132,35 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 		EventPayload:  string(p),
 		TriggerEvent:  string(webhook.HookEventWorkflowDispatch),
 		Status:        actions_model.StatusWaiting,
+		NotifyEmail:   notifications,
 	}
 
 	vars, err := actions_model.GetVariablesOfRun(ctx, run)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	jobs, err := jobparser.Parse(content, jobparser.WithVars(vars))
+	err = ConfigureActionRunConcurrency(wf, run, vars, inputsAny)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	return actions_model.InsertRun(ctx, run, jobs)
+	if run.ConcurrencyType == actions_model.CancelInProgress {
+		if err := CancelPreviousWithConcurrencyGroup(
+			ctx,
+			run.RepoID,
+			run.ConcurrencyGroup,
+		); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	jobs, err := jobParser(content, jobparser.WithVars(vars), jobparser.WithInputs(inputsAny))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return run, jobNames, actions_model.InsertRun(ctx, run, jobs)
 }
 
 func GetWorkflowFromCommit(gitRepo *git.Repository, ref, workflowID string) (*Workflow, error) {
@@ -170,4 +196,39 @@ func GetWorkflowFromCommit(gitRepo *git.Repository, ref, workflowID string) (*Wo
 		Commit:     commit,
 		GitEntry:   workflowEntry,
 	}, nil
+}
+
+// Sets the ConcurrencyGroup & ConcurrencyType on the provided ActionRun based upon the Workflow's `concurrency` data,
+// or appropriate defaults if not present.
+func ConfigureActionRunConcurrency(workflow *act_model.Workflow, run *actions_model.ActionRun, vars map[string]string, inputs map[string]any) error {
+	concurrencyGroup, cancelInProgress, err := jobparser.EvaluateWorkflowConcurrency(
+		workflow.RawConcurrency, generateGiteaContextForRun(run), vars, inputs)
+	if err != nil {
+		return fmt.Errorf("unable to evaluate workflow `concurrency` block: %w", err)
+	}
+	if concurrencyGroup != "" {
+		run.SetConcurrencyGroup(concurrencyGroup)
+	} else {
+		run.SetDefaultConcurrencyGroup()
+	}
+	if cancelInProgress == nil {
+		// Maintain compatible behavior from before concurrency groups were implemented -- if `cancel-in-progress`
+		// isn't defined in the workflow, cancel on push & PR sync events.
+		if run.Event == webhook.HookEventPush || run.Event == webhook.HookEventPullRequestSync {
+			run.ConcurrencyType = actions_model.CancelInProgress
+		} else {
+			run.ConcurrencyType = actions_model.UnlimitedConcurrency
+		}
+	} else if *cancelInProgress {
+		run.ConcurrencyType = actions_model.CancelInProgress
+	} else if concurrencyGroup == "" {
+		// A workflow has explicitly listed `cancel-in-progress: false`, but has *not* provided a concurrency group.  In
+		// this case we want to trigger a different concurrency behavior -- we won't cancel in-progress builds (we were
+		// asked not to), we won't queue behind other builds (we weren't given a concurrency group so it's reasonable to
+		// assume the user doesn't want a concurrency limit).
+		run.ConcurrencyType = actions_model.UnlimitedConcurrency
+	} else {
+		run.ConcurrencyType = actions_model.QueueBehind
+	}
+	return nil
 }

@@ -10,22 +10,23 @@ import (
 	"strings"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/cache"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/graceful"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/process"
-	"code.gitea.io/gitea/modules/queue"
-	repo_module "code.gitea.io/gitea/modules/repository"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	issue_service "code.gitea.io/gitea/services/issue"
-	notify_service "code.gitea.io/gitea/services/notify"
-	pull_service "code.gitea.io/gitea/services/pull"
+	"forgejo.org/models/db"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/cache"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/graceful"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/process"
+	"forgejo.org/modules/queue"
+	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
+	issue_service "forgejo.org/services/issue"
+	notify_service "forgejo.org/services/notify"
+	pull_service "forgejo.org/services/pull"
 )
 
 // pushQueue represents a queue to handle update pull request tests
@@ -65,7 +66,7 @@ func PushUpdates(opts []*repo_module.PushUpdateOptions) error {
 
 	for _, opt := range opts {
 		if opt.IsNewRef() && opt.IsDelRef() {
-			return fmt.Errorf("Old and new revisions are both NULL")
+			return errors.New("Old and new revisions are both NULL")
 		}
 	}
 
@@ -133,23 +134,26 @@ func pushUpdates(optsList []*repo_module.PushUpdateOptions) error {
 			} else { // is new tag
 				newCommit, err := gitRepo.GetCommit(opts.NewCommitID)
 				if err != nil {
-					return fmt.Errorf("gitRepo.GetCommit(%s) in %s/%s[%d]: %w", opts.NewCommitID, repo.OwnerName, repo.Name, repo.ID, err)
+					// in case there is dirty data, for example, the "github.com/git/git" repository has tags pointing to non-existing commits
+					if !errors.Is(err, util.ErrNotExist) {
+						log.Error("Unable to get tag commit: gitRepo.GetCommit(%s) in %s/%s[%d]: %v", opts.NewCommitID, repo.OwnerName, repo.Name, repo.ID, err)
+					}
+				} else {
+					commits := repo_module.NewPushCommits()
+					commits.HeadCommit = repo_module.CommitToPushCommit(newCommit)
+					commits.CompareURL = repo.ComposeCompareURL(objectFormat.EmptyObjectID().String(), opts.NewCommitID)
+
+					notify_service.PushCommits(
+						ctx, pusher, repo,
+						&repo_module.PushUpdateOptions{
+							RefFullName: opts.RefFullName,
+							OldCommitID: objectFormat.EmptyObjectID().String(),
+							NewCommitID: opts.NewCommitID,
+						}, commits)
+
+					addTags = append(addTags, tagName)
+					notify_service.CreateRef(ctx, pusher, repo, opts.RefFullName, opts.NewCommitID)
 				}
-
-				commits := repo_module.NewPushCommits()
-				commits.HeadCommit = repo_module.CommitToPushCommit(newCommit)
-				commits.CompareURL = repo.ComposeCompareURL(objectFormat.EmptyObjectID().String(), opts.NewCommitID)
-
-				notify_service.PushCommits(
-					ctx, pusher, repo,
-					&repo_module.PushUpdateOptions{
-						RefFullName: opts.RefFullName,
-						OldCommitID: objectFormat.EmptyObjectID().String(),
-						NewCommitID: opts.NewCommitID,
-					}, commits)
-
-				addTags = append(addTags, tagName)
-				notify_service.CreateRef(ctx, pusher, repo, opts.RefFullName, opts.NewCommitID)
 			}
 		} else if opts.RefFullName.IsBranch() {
 			if pusher == nil || pusher.ID != opts.PusherID {
@@ -183,9 +187,7 @@ func pushUpdates(optsList []*repo_module.PushUpdateOptions) error {
 						repo.IsEmpty = false
 						if repo.DefaultBranch != setting.Repository.DefaultBranch {
 							if err := gitrepo.SetDefaultBranch(ctx, repo, repo.DefaultBranch); err != nil {
-								if !git.IsErrUnsupportedVersion(err) {
-									return err
-								}
+								return err
 							}
 						}
 						// Update the is empty and default_branch columns
@@ -254,10 +256,6 @@ func pushUpdates(optsList []*repo_module.PushUpdateOptions) error {
 					commits.CompareURL = ""
 				}
 
-				if len(commits.Commits) > setting.UI.FeedMaxCommitNum {
-					commits.Commits = commits.Commits[:setting.UI.FeedMaxCommitNum]
-				}
-
 				notify_service.PushCommits(ctx, pusher, repo, opts, commits)
 
 				// Cache for big repository
@@ -309,9 +307,10 @@ func pushUpdateAddTags(ctx context.Context, repo *repo_model.Repository, gitRepo
 	}
 
 	releases, err := db.Find[repo_model.Release](ctx, repo_model.FindReleasesOptions{
-		RepoID:      repo.ID,
-		TagNames:    tags,
-		IncludeTags: true,
+		RepoID:        repo.ID,
+		TagNames:      tags,
+		IncludeDrafts: true,
+		IncludeTags:   true,
 	})
 	if err != nil {
 		return fmt.Errorf("db.Find[repo_model.Release]: %w", err)
@@ -396,13 +395,17 @@ func pushUpdateAddTags(ctx context.Context, repo *repo_model.Repository, gitRepo
 			}
 			newReleases = append(newReleases, rel)
 		} else {
-			rel.Title = parts[0]
-			rel.Note = note
 			rel.Sha1 = commit.ID.String()
 			rel.CreatedUnix = timeutil.TimeStamp(createdAt.Unix())
 			rel.NumCommits = commitsCount
-			if rel.IsTag && author != nil {
-				rel.PublisherID = author.ID
+			if rel.IsTag {
+				rel.Title = parts[0]
+				rel.Note = note
+				if author != nil {
+					rel.PublisherID = author.ID
+				}
+			} else {
+				rel.IsDraft = false
 			}
 			if err = repo_model.UpdateRelease(ctx, rel); err != nil {
 				return fmt.Errorf("Update: %w", err)

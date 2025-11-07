@@ -5,48 +5,56 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	packages_model "code.gitea.io/gitea/models/packages"
-	repo_model "code.gitea.io/gitea/models/repo"
-	unit_model "code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/graceful"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/process"
-	repo_module "code.gitea.io/gitea/modules/repository"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/storage"
-	"code.gitea.io/gitea/modules/testlogger"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/routers"
-	repo_service "code.gitea.io/gitea/services/repository"
-	files_service "code.gitea.io/gitea/services/repository/files"
-	wiki_service "code.gitea.io/gitea/services/wiki"
+	"forgejo.org/models/db"
+	packages_model "forgejo.org/models/packages"
+	repo_model "forgejo.org/models/repo"
+	unit_model "forgejo.org/models/unit"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/graceful"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/process"
+	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/storage"
+	"forgejo.org/modules/testlogger"
+	"forgejo.org/modules/util"
+	"forgejo.org/routers"
+	repo_service "forgejo.org/services/repository"
+	files_service "forgejo.org/services/repository/files"
+	wiki_service "forgejo.org/services/wiki"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"xorm.io/xorm/convert"
 )
 
 func exitf(format string, args ...any) {
 	fmt.Printf(format+"\n", args...)
 	os.Exit(1)
 }
+
+var preparedDir string
 
 func InitTest(requireGitea bool) {
 	log.RegisterEventWriter("test", testlogger.NewTestLoggerWriter)
@@ -64,9 +72,6 @@ func InitTest(requireGitea bool) {
 	setting.CustomPath = filepath.Join(setting.AppWorkPath, "custom")
 	if requireGitea {
 		giteaBinary := "gitea"
-		if setting.IsWindows {
-			giteaBinary += ".exe"
-		}
 		setting.AppPath = path.Join(giteaRoot, giteaBinary)
 		if _, err := os.Stat(setting.AppPath); err != nil {
 			exitf("Could not find gitea binary at %s", setting.AppPath)
@@ -175,6 +180,46 @@ func InitTest(requireGitea bool) {
 				log.Fatal("db.Exec: CREATE SCHEMA: %v", err)
 			}
 		}
+
+	case setting.Database.Type.IsSQLite3():
+		setting.Database.Path = ":memory:"
+	}
+
+	setting.Repository.Local.LocalCopyPath = os.TempDir()
+	dir, err := os.MkdirTemp("", "prepared-forgejo")
+	if err != nil {
+		log.Fatal("os.MkdirTemp: %v", err)
+	}
+	preparedDir = dir
+
+	setting.Repository.Local.LocalCopyPath, err = os.MkdirTemp("", "local-upload")
+	if err != nil {
+		log.Fatal("os.MkdirTemp: %v", err)
+	}
+
+	if err := unittest.CopyDir(path.Join(filepath.Dir(setting.AppPath), "tests/gitea-repositories-meta"), dir); err != nil {
+		log.Fatal("os.RemoveAll: %v", err)
+	}
+	ownerDirs, err := os.ReadDir(dir)
+	if err != nil {
+		log.Fatal("os.ReadDir: %v", err)
+	}
+
+	for _, ownerDir := range ownerDirs {
+		if !ownerDir.Type().IsDir() {
+			continue
+		}
+		repoDirs, err := os.ReadDir(filepath.Join(dir, ownerDir.Name()))
+		if err != nil {
+			log.Fatal("os.ReadDir: %v", err)
+		}
+		for _, repoDir := range repoDirs {
+			_ = os.MkdirAll(filepath.Join(dir, ownerDir.Name(), repoDir.Name(), "objects", "pack"), 0o755)
+			_ = os.MkdirAll(filepath.Join(dir, ownerDir.Name(), repoDir.Name(), "objects", "info"), 0o755)
+			_ = os.MkdirAll(filepath.Join(dir, ownerDir.Name(), repoDir.Name(), "refs", "heads"), 0o755)
+			_ = os.MkdirAll(filepath.Join(dir, ownerDir.Name(), repoDir.Name(), "refs", "tag"), 0o755)
+			_ = os.MkdirAll(filepath.Join(dir, ownerDir.Name(), repoDir.Name(), "refs", "pull"), 0o755)
+		}
 	}
 
 	routers.InitWebInstalled(graceful.GetManager().HammerContext())
@@ -224,47 +269,28 @@ func cancelProcesses(t testing.TB, delay time.Duration) {
 	t.Logf("PrepareTestEnv: all processes cancelled within %s", time.Since(start))
 }
 
-func PrepareTestEnv(t testing.TB, skip ...int) func() {
-	t.Helper()
-	ourSkip := 1
-	if len(skip) > 0 {
-		ourSkip += skip[0]
-	}
-	deferFn := PrintCurrentTest(t, ourSkip)
+func PrepareGitRepoDirectory(t testing.TB) {
+	setting.RepoRootPath = t.TempDir()
+	require.NoError(t, unittest.CopyDir(preparedDir, setting.RepoRootPath))
+}
 
-	// kill all background processes to prevent them from interfering with the fixture loading
-	// see https://codeberg.org/forgejo/forgejo/issues/2962
-	cancelProcesses(t, 30*time.Second)
-	t.Cleanup(func() { cancelProcesses(t, 0) }) // cancel remaining processes in a non-blocking way
+func PrepareArtifactsStorage(t testing.TB) {
+	// prepare actions artifacts directory and files
+	require.NoError(t, storage.Clean(storage.ActionsArtifacts))
 
-	// load database fixtures
-	require.NoError(t, unittest.LoadFixtures())
+	s, err := storage.NewStorage(setting.LocalStorageType, &setting.Storage{
+		Path: filepath.Join(filepath.Dir(setting.AppPath), "tests", "testdata", "data", "artifacts"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.IterateObjects("", func(p string, obj storage.Object) error {
+		_, err = storage.Copy(storage.ActionsArtifacts, p, s, p)
+		return err
+	}))
+}
 
-	// load git repo fixtures
-	require.NoError(t, util.RemoveAll(setting.RepoRootPath))
-	require.NoError(t, unittest.CopyDir(path.Join(filepath.Dir(setting.AppPath), "tests/gitea-repositories-meta"), setting.RepoRootPath))
-	ownerDirs, err := os.ReadDir(setting.RepoRootPath)
-	if err != nil {
-		require.NoError(t, err, "unable to read the new repo root: %v\n", err)
-	}
-	for _, ownerDir := range ownerDirs {
-		if !ownerDir.Type().IsDir() {
-			continue
-		}
-		repoDirs, err := os.ReadDir(filepath.Join(setting.RepoRootPath, ownerDir.Name()))
-		if err != nil {
-			require.NoError(t, err, "unable to read the new repo root: %v\n", err)
-		}
-		for _, repoDir := range repoDirs {
-			_ = os.MkdirAll(filepath.Join(setting.RepoRootPath, ownerDir.Name(), repoDir.Name(), "objects", "pack"), 0o755)
-			_ = os.MkdirAll(filepath.Join(setting.RepoRootPath, ownerDir.Name(), repoDir.Name(), "objects", "info"), 0o755)
-			_ = os.MkdirAll(filepath.Join(setting.RepoRootPath, ownerDir.Name(), repoDir.Name(), "refs", "heads"), 0o755)
-			_ = os.MkdirAll(filepath.Join(setting.RepoRootPath, ownerDir.Name(), repoDir.Name(), "refs", "tag"), 0o755)
-		}
-	}
-
+func PrepareLFSStorage(t testing.TB) {
 	// load LFS object fixtures
-	// (LFS storage can be on any of several backends, including remote servers, so we init it with the storage API)
+	// (LFS storage can be on any of several backends, including remote servers, so init it with the storage API)
 	lfsFixtures, err := storage.NewStorage(setting.LocalStorageType, &setting.Storage{
 		Path: filepath.Join(filepath.Dir(setting.AppPath), "tests/gitea-lfs-meta"),
 	})
@@ -274,7 +300,9 @@ func PrepareTestEnv(t testing.TB, skip ...int) func() {
 		_, err := storage.Copy(storage.LFS, path, lfsFixtures, path)
 		return err
 	}))
+}
 
+func PrepareCleanPackageData(t testing.TB) {
 	// clear all package data
 	require.NoError(t, db.TruncateBeans(db.DefaultContext,
 		&packages_model.Package{},
@@ -286,17 +314,45 @@ func PrepareTestEnv(t testing.TB, skip ...int) func() {
 		&packages_model.PackageCleanupRule{},
 	))
 	require.NoError(t, storage.Clean(storage.Packages))
+}
 
+// inTestEnv keeps track if we are current inside a test environment, this is
+// used to detect if testing code tries to prepare a test environment more than
+// once.
+var inTestEnv atomic.Bool
+
+func PrepareTestEnv(t testing.TB, skip ...int) func() {
+	t.Helper()
+
+	if !inTestEnv.CompareAndSwap(false, true) {
+		t.Fatal("Cannot prepare a test environment if you are already in a test environment. This is a bug in your testing code.")
+	}
+
+	deferPrintCurrentTest := PrintCurrentTest(t, util.OptionalArg(skip)+1)
+	deferFn := func() {
+		deferPrintCurrentTest()
+
+		if !inTestEnv.CompareAndSwap(true, false) {
+			t.Fatal("Tried to leave test environment, but we are no longer in a test environment. This should not happen.")
+		}
+	}
+
+	cancelProcesses(t, 30*time.Second)
+	t.Cleanup(func() { cancelProcesses(t, 0) }) // cancel remaining processes in a non-blocking way
+
+	// load database fixtures
+	require.NoError(t, unittest.LoadFixtures())
+
+	// do not add more Prepare* functions here, only call necessary ones in the related test functions
+	PrepareGitRepoDirectory(t)
+	PrepareLFSStorage(t)
+	PrepareCleanPackageData(t)
 	return deferFn
 }
 
 func PrintCurrentTest(t testing.TB, skip ...int) func() {
 	t.Helper()
-	actualSkip := 1
-	if len(skip) > 0 {
-		actualSkip = skip[0] + 1
-	}
-	return testlogger.PrintCurrentTest(t, actualSkip)
+	return testlogger.PrintCurrentTest(t, util.OptionalArg(skip)+1)
 }
 
 // Printf takes a format and args and prints the string to os.Stdout
@@ -304,24 +360,16 @@ func Printf(format string, args ...any) {
 	testlogger.Printf(format, args...)
 }
 
-func AddFixtures(dirs ...string) func() {
-	return unittest.OverrideFixtures(
-		unittest.FixturesOptions{
-			Dir:  filepath.Join(setting.AppWorkPath, "models/fixtures/"),
-			Base: setting.AppWorkPath,
-			Dirs: dirs,
-		},
-	)
-}
-
 type DeclarativeRepoOptions struct {
 	Name          optional.Option[string]
 	EnabledUnits  optional.Option[[]unit_model.Type]
 	DisabledUnits optional.Option[[]unit_model.Type]
+	UnitConfig    optional.Option[map[unit_model.Type]convert.Conversion]
 	Files         optional.Option[[]*files_service.ChangeRepoFile]
 	WikiBranch    optional.Option[string]
 	AutoInit      optional.Option[bool]
 	IsTemplate    optional.Option[bool]
+	ObjectFormat  optional.Option[string]
 }
 
 func CreateDeclarativeRepoWithOptions(t *testing.T, owner *user_model.User, opts DeclarativeRepoOptions) (*repo_model.Repository, string, func()) {
@@ -345,14 +393,15 @@ func CreateDeclarativeRepoWithOptions(t *testing.T, owner *user_model.User, opts
 
 	// Create the repository
 	repo, err := repo_service.CreateRepository(db.DefaultContext, owner, owner, repo_service.CreateRepoOptions{
-		Name:          repoName,
-		Description:   "Temporary Repo",
-		AutoInit:      autoInit,
-		Gitignores:    "",
-		License:       "WTFPL",
-		Readme:        "Default",
-		DefaultBranch: "main",
-		IsTemplate:    opts.IsTemplate.Value(),
+		Name:             repoName,
+		Description:      "Temporary Repo",
+		AutoInit:         autoInit,
+		Gitignores:       "",
+		License:          "WTFPL",
+		Readme:           "Default",
+		DefaultBranch:    "main",
+		IsTemplate:       opts.IsTemplate.Value(),
+		ObjectFormatName: opts.ObjectFormat.Value(),
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, repo)
@@ -364,9 +413,14 @@ func CreateDeclarativeRepoWithOptions(t *testing.T, owner *user_model.User, opts
 		enabledUnits = make([]repo_model.RepoUnit, len(units))
 
 		for i, unitType := range units {
+			var config convert.Conversion
+			if cfg, ok := opts.UnitConfig.Value()[unitType]; ok {
+				config = cfg
+			}
 			enabledUnits[i] = repo_model.RepoUnit{
 				RepoID: repo.ID,
 				Type:   unitType,
+				Config: config,
 			}
 		}
 	}
@@ -382,6 +436,9 @@ func CreateDeclarativeRepoWithOptions(t *testing.T, owner *user_model.User, opts
 	if opts.Files.Has() {
 		assert.True(t, autoInit, "Files cannot be specified if AutoInit is disabled")
 		files := opts.Files.Value()
+
+		commitID, err := gitrepo.GetBranchCommitID(git.DefaultContext, repo, "main")
+		require.NoError(t, err)
 
 		resp, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, owner, &files_service.ChangeRepoFilesOptions{
 			Files:     files,
@@ -400,6 +457,7 @@ func CreateDeclarativeRepoWithOptions(t *testing.T, owner *user_model.User, opts
 				Author:    time.Now(),
 				Committer: time.Now(),
 			},
+			LastCommitID: commitID,
 		})
 		require.NoError(t, err)
 		assert.NotEmpty(t, resp)
@@ -440,6 +498,25 @@ func CreateDeclarativeRepo(t *testing.T, owner *user_model.User, name string, en
 	}
 	if enabledUnits != nil {
 		opts.EnabledUnits = optional.Some(enabledUnits)
+
+		for _, unitType := range enabledUnits {
+			if unitType == unit_model.TypePullRequests {
+				opts.UnitConfig = optional.Some(map[unit_model.Type]convert.Conversion{
+					unit_model.TypePullRequests: &repo_model.PullRequestsConfig{
+						AllowMerge:           true,
+						AllowRebase:          true,
+						AllowRebaseMerge:     true,
+						AllowSquash:          true,
+						AllowFastForwardOnly: true,
+						AllowManualMerge:     true,
+						AllowRebaseUpdate:    true,
+						DefaultMergeStyle:    repo_model.MergeStyleMerge,
+						DefaultUpdateStyle:   repo_model.UpdateStyleMerge,
+					},
+				})
+				break
+			}
+		}
 	}
 	if disabledUnits != nil {
 		opts.DisabledUnits = optional.Some(disabledUnits)
@@ -449,4 +526,14 @@ func CreateDeclarativeRepo(t *testing.T, owner *user_model.User, name string, en
 	}
 
 	return CreateDeclarativeRepoWithOptions(t, owner, opts)
+}
+
+func WriteImageBody(t *testing.T, buff bytes.Buffer, filename string, body *bytes.Buffer) string {
+	writer := multipart.NewWriter(body)
+	defer writer.Close()
+	part, err := writer.CreateFormFile("attachment", filename)
+	require.NoError(t, err)
+	_, err = io.Copy(part, &buff)
+	require.NoError(t, err)
+	return writer.FormDataContentType()
 }

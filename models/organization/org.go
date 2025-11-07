@@ -9,27 +9,20 @@ import (
 	"fmt"
 	"strings"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	repo_model "code.gitea.io/gitea/models/repo"
-	secret_model "code.gitea.io/gitea/models/secret"
-	"code.gitea.io/gitea/models/unit"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/modules/util"
+	actions_model "forgejo.org/models/actions"
+	"forgejo.org/models/db"
+	"forgejo.org/models/perm"
+	repo_model "forgejo.org/models/repo"
+	secret_model "forgejo.org/models/secret"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/structs"
+	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
 )
-
-// ________                            .__                __  .__
-// \_____  \_______  _________    ____ |__|____________ _/  |_|__| ____   ____
-//  /   |   \_  __ \/ ___\__  \  /    \|  \___   /\__  \\   __\  |/  _ \ /    \
-// /    |    \  | \/ /_/  > __ \|   |  \  |/    /  / __ \|  | |  (  <_> )   |  \
-// \_______  /__|  \___  (____  /___|  /__/_____ \(____  /__| |__|\____/|___|  /
-//         \/     /_____/     \/     \/         \/     \/                    \/
 
 // ErrOrgNotExist represents a "OrgNotExist" kind of error.
 type ErrOrgNotExist struct {
@@ -141,8 +134,9 @@ func (org *Organization) LoadTeams(ctx context.Context) ([]*Team, error) {
 }
 
 // GetMembers returns all members of organization.
-func (org *Organization) GetMembers(ctx context.Context) (user_model.UserList, map[int64]bool, error) {
+func (org *Organization) GetMembers(ctx context.Context, doer *user_model.User) (user_model.UserList, map[int64]bool, error) {
 	return FindOrgMembers(ctx, &FindOrgMembersOpts{
+		Doer:  doer,
 		OrgID: org.ID,
 	})
 }
@@ -192,19 +186,30 @@ func (org *Organization) CanCreateRepo() bool {
 	return org.AsUser().CanCreateRepo()
 }
 
+// IsGhost returns if the organization is a ghost
+func (org *Organization) IsGhost() bool {
+	return org.AsUser().IsGhost()
+}
+
 // FindOrgMembersOpts represensts find org members conditions
 type FindOrgMembersOpts struct {
 	db.ListOptions
-	OrgID      int64
-	PublicOnly bool
+	Doer         *user_model.User
+	IsDoerMember bool
+	OrgID        int64
+}
+
+func (opts FindOrgMembersOpts) PublicOnly() bool {
+	return opts.Doer == nil || (!opts.IsDoerMember && !opts.Doer.IsAdmin)
 }
 
 // CountOrgMembers counts the organization's members
 func CountOrgMembers(ctx context.Context, opts *FindOrgMembersOpts) (int64, error) {
 	sess := db.GetEngine(ctx).Where("org_id=?", opts.OrgID)
-	if opts.PublicOnly {
+	if opts.PublicOnly() {
 		sess.And("is_public = ?", true)
 	}
+
 	return sess.Count(new(OrgUser))
 }
 
@@ -264,7 +269,7 @@ func (org *Organization) UnitPermission(ctx context.Context, doer *user_model.Us
 		}
 	}
 
-	if org.Visibility.IsPublic() {
+	if org.Visibility.IsPublic() || (org.Visibility.IsLimited() && doer != nil) {
 		return perm.AccessModeRead
 	}
 
@@ -289,12 +294,8 @@ func CreateOrganization(ctx context.Context, org *Organization, owner *user_mode
 	}
 
 	org.LowerName = strings.ToLower(org.Name)
-	if org.Rands, err = user_model.GetUserSalt(); err != nil {
-		return err
-	}
-	if org.Salt, err = user_model.GetUserSalt(); err != nil {
-		return err
-	}
+	org.Rands = user_model.GetUserSalt()
+	org.Salt = user_model.GetUserSalt()
 	org.UseCustomAvatar = true
 	org.MaxRepoCreation = -1
 	org.NumTeams = 1
@@ -439,42 +440,6 @@ func GetUsersWhoCanCreateOrgRepo(ctx context.Context, orgID int64) (map[int64]*u
 		And("team_user.org_id = ?", orgID).Find(&users)
 }
 
-// SearchOrganizationsOptions options to filter organizations
-type SearchOrganizationsOptions struct {
-	db.ListOptions
-	All bool
-}
-
-// FindOrgOptions finds orgs options
-type FindOrgOptions struct {
-	db.ListOptions
-	UserID         int64
-	IncludePrivate bool
-}
-
-func queryUserOrgIDs(userID int64, includePrivate bool) *builder.Builder {
-	cond := builder.Eq{"uid": userID}
-	if !includePrivate {
-		cond["is_public"] = true
-	}
-	return builder.Select("org_id").From("org_user").Where(cond)
-}
-
-func (opts FindOrgOptions) ToConds() builder.Cond {
-	var cond builder.Cond = builder.Eq{"`user`.`type`": user_model.UserTypeOrganization}
-	if opts.UserID > 0 {
-		cond = cond.And(builder.In("`user`.`id`", queryUserOrgIDs(opts.UserID, opts.IncludePrivate)))
-	}
-	if !opts.IncludePrivate {
-		cond = cond.And(builder.Eq{"`user`.visibility": structs.VisibleTypePublic})
-	}
-	return cond
-}
-
-func (opts FindOrgOptions) ToOrders() string {
-	return "`user`.name ASC"
-}
-
 // HasOrgOrUserVisible tells if the given user can see the given org or user
 func HasOrgOrUserVisible(ctx context.Context, orgOrUser, user *user_model.User) bool {
 	// If user is nil, it's an anonymous user/request.
@@ -507,27 +472,14 @@ func HasOrgsVisible(ctx context.Context, orgs []*Organization, user *user_model.
 	return false
 }
 
-// GetOrgsCanCreateRepoByUserID returns a list of organizations where given user ID
-// are allowed to create repos.
-func GetOrgsCanCreateRepoByUserID(ctx context.Context, userID int64) ([]*Organization, error) {
-	orgs := make([]*Organization, 0, 10)
-
-	return orgs, db.GetEngine(ctx).Where(builder.In("id", builder.Select("`user`.id").From("`user`").
-		Join("INNER", "`team_user`", "`team_user`.org_id = `user`.id").
-		Join("INNER", "`team`", "`team`.id = `team_user`.team_id").
-		Where(builder.Eq{"`team_user`.uid": userID}).
-		And(builder.Eq{"`team`.authorize": perm.AccessModeOwner}.Or(builder.Eq{"`team`.can_create_org_repo": true})))).
-		Asc("`user`.name").
-		Find(&orgs)
-}
-
 // GetOrgUsersByOrgID returns all organization-user relations by organization ID.
 func GetOrgUsersByOrgID(ctx context.Context, opts *FindOrgMembersOpts) ([]*OrgUser, error) {
 	sess := db.GetEngine(ctx).Where("org_id=?", opts.OrgID)
-	if opts.PublicOnly {
+	if opts.PublicOnly() {
 		sess.And("is_public = ?", true)
 	}
-	if opts.ListOptions.PageSize > 0 {
+
+	if opts.PageSize > 0 {
 		sess = db.SetSessionPagination(sess, opts)
 
 		ous := make([]*OrgUser, 0, opts.PageSize)

@@ -157,6 +157,23 @@
   --color-pink-dark-2: #b11d5f;
   --color-brown-dark-2: #835b42;
   --color-black-dark-2: #000000;
+  /* ansi colors used for actions console and console files */
+  --color-ansi-black: #1f2326;
+  --color-ansi-red: #cc4848;
+  --color-ansi-green: #87ab63;
+  --color-ansi-yellow: #cc9903;
+  --color-ansi-blue: #3a8ac6;
+  --color-ansi-magenta: #d22e8b;
+  --color-ansi-cyan: #00918a;
+  --color-ansi-white: var(--color-console-fg-subtle);
+  --color-ansi-bright-black: #46494d;
+  --color-ansi-bright-red: #d15a5a;
+  --color-ansi-bright-green: #93b373;
+  --color-ansi-bright-yellow: #eaaf03;
+  --color-ansi-bright-blue: #4e96cc;
+  --color-ansi-bright-magenta: #d74397;
+  --color-ansi-bright-cyan: #00b6ad;
+  --color-ansi-bright-white: var(--color-console-fg);
   /* other colors */
   --color-gold: #b1983b;
   --color-white: #ffffff;
@@ -195,11 +212,6 @@
   --color-orange-badge: #ea580c;
   --color-orange-badge-bg: #ea580c22;
   --color-orange-badge-hover-bg: #ea580c44;
-  --color-git: #f05133;
-  /* Icon colors (PR/Issue/...) */
-  --color-icon-green: var(--color-green-light);
-  --color-icon-red: var(--color-red-light);
-  --color-icon-purple: var(--color-purple-light);
   /* target-based colors */
   --color-body: #fff;
   --color-box-header: var(--zinc-100);
@@ -224,9 +236,11 @@
   --color-light-mimic-enabled: rgba(0, 0, 0, calc(6 / 255 * 222 / 255 / var(--opacity-disabled)));
   --color-light-border: #0000001d;
   --color-hover: #e4e4e4aa;
-  --color-active: #d4d4d8aa;
+  --color-active: #e2e2e5;
   --color-menu: var(--zinc-100);
   --color-card: var(--zinc-50);
+  --fancy-card-bg: var(--zinc-100);
+  --fancy-card-border: var(--zinc-200);
   --color-markup-table-row: #ffffff06;
   --color-markup-code-block: var(--zinc-150);
   --color-markup-code-inline: var(--zinc-200);
@@ -252,7 +266,7 @@
   --color-nav-text: var(--color-text);
   --color-secondary-nav-bg: var(--color-body);
   --color-label-text: var(--color-text);
-  --color-label-bg: #cacaca5b;
+  --color-label-bg: #cacaca7b;
   --color-label-hover-bg: #cacacaa0;
   --color-label-active-bg: #cacacaff;
   --color-label-bg-alt: #cacacaff;
@@ -280,11 +294,6 @@
 .ui.primary.labels .label {
   background-color: var(--color-primary-dark-1) !important;
 }
-.repository.view.issue .comment-list .code-comment + .code-comment {
-  margin: 1.25rem 0 !important;
-  padding-top: 1.25rem !important;
-  border-top-color: var(--zinc-250) !important;
-}
 .ui.labeled.icon.buttons > .button > .icon,
 .ui.labeled.icon.button > .icon {
   background-color: var(--color-shadow) !important;
@@ -297,10 +306,9 @@
 .ui.ui.ui.basic.primary.label {
   color: var(--color-text-dark) !important;
 }
-.ui.basic.yellow.label.pending-label {
+.ui.yellow.label.pending-label {
   background: var(--color-warning-bg) !important;
-  color: var(--color-warning-text) !important;
-  border-color: var(--color-yellow-light) !important;
+  color: var(--color-text-dark) !important;
 }
 ::selection {
   background: var(--steel-450) !important;

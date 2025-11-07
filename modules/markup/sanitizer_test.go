@@ -68,6 +68,17 @@ func Test_Sanitizer(t *testing.T) {
 		`<a href="javascript:alert('xss')">bad</a>`, `bad`,
 		`<a href="vbscript:no">bad</a>`, `bad`,
 		`<a href="data:1234">bad</a>`, `bad`,
+
+		// Mention
+		`<a href="/org/forgejo/teams/UI" class="mention" rel="nofollow">@forgejo/UI</a>`, `<a href="/org/forgejo/teams/UI" class="mention" rel="nofollow">@forgejo/UI</a>`,
+
+		// Emoji
+		`<span class="emoji" aria-label="thumbs up" data-alias="+1">THUMBS UP</span>`, `<span class="emoji" aria-label="thumbs up" data-alias="+1">THUMBS UP</span>`,
+		`<span class="emoji" aria-label="thumbs up" data-alias="(+!)">THUMBS UP</span>`, `<span class="emoji" aria-label="thumbs up">THUMBS UP</span>`,
+
+		// Images lazy loading
+		`<img src="/image1" alt="image1" loading="lazy">`, `<img src="/image1" alt="image1" loading="lazy">`,
+		`<img src="/image1" alt="image1" loading="eager">`, `<img src="/image1" alt="image1">`,
 	}
 
 	for i := 0; i < len(testCases); i += 2 {

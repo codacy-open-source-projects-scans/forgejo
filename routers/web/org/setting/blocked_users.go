@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	user_model "code.gitea.io/gitea/models/user"
-	shared_user "code.gitea.io/gitea/routers/web/shared/user"
-	"code.gitea.io/gitea/services/context"
-	user_service "code.gitea.io/gitea/services/user"
+	"forgejo.org/models/db"
+	user_model "forgejo.org/models/user"
+	shared_user "forgejo.org/routers/web/shared/user"
+	"forgejo.org/services/context"
+	user_service "forgejo.org/services/user"
 )
 
 const tplBlockedUsers = "org/settings/blocked_users"
@@ -50,6 +50,12 @@ func BlockedUsersBlock(ctx *context.Context) {
 
 	if u.IsOrganization() {
 		ctx.ServerError("IsOrganization", fmt.Errorf("%s is an organization not a user", u.Name))
+		return
+	}
+
+	if u.ID == ctx.Doer.ID {
+		ctx.Flash.Error(ctx.Tr("settings.user_block_yourself"))
+		ctx.Redirect(ctx.Org.OrgLink + "/settings/blocked_users")
 		return
 	}
 

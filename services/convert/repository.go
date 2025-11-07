@@ -7,14 +7,14 @@ import (
 	"context"
 	"time"
 
-	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	access_model "code.gitea.io/gitea/models/perm/access"
-	repo_model "code.gitea.io/gitea/models/repo"
-	unit_model "code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/modules/log"
-	api "code.gitea.io/gitea/modules/structs"
+	"forgejo.org/models"
+	"forgejo.org/models/db"
+	"forgejo.org/models/perm"
+	access_model "forgejo.org/models/perm/access"
+	repo_model "forgejo.org/models/repo"
+	unit_model "forgejo.org/models/unit"
+	"forgejo.org/modules/log"
+	api "forgejo.org/modules/structs"
 )
 
 // ToRepo converts a Repository to api.Repository
@@ -101,6 +101,7 @@ func innerToRepo(ctx context.Context, repo *repo_model.Repository, permissionInR
 	allowRebaseUpdate := false
 	defaultDeleteBranchAfterMerge := false
 	defaultMergeStyle := repo_model.MergeStyleMerge
+	defaultUpdateStyle := repo_model.UpdateStyleMerge
 	defaultAllowMaintainerEdit := false
 	if unit, err := repo.GetUnit(ctx, unit_model.TypePullRequests); err == nil {
 		config := unit.PullRequestsConfig()
@@ -114,6 +115,7 @@ func innerToRepo(ctx context.Context, repo *repo_model.Repository, permissionInR
 		allowRebaseUpdate = config.AllowRebaseUpdate
 		defaultDeleteBranchAfterMerge = config.DefaultDeleteBranchAfterMerge
 		defaultMergeStyle = config.GetDefaultMergeStyle()
+		defaultUpdateStyle = config.GetDefaultUpdateStyle()
 		defaultAllowMaintainerEdit = config.DefaultAllowMaintainerEdit
 	}
 	hasProjects := false
@@ -202,8 +204,8 @@ func innerToRepo(ctx context.Context, repo *repo_model.Repository, permissionInR
 		Stars:                         repo.NumStars,
 		Forks:                         repo.NumForks,
 		Watchers:                      repo.NumWatches,
-		OpenIssues:                    repo.NumOpenIssues,
-		OpenPulls:                     repo.NumOpenPulls,
+		OpenIssues:                    repo.NumOpenIssues(ctx),
+		OpenPulls:                     repo.NumOpenPulls(ctx),
 		Releases:                      int(numReleases),
 		DefaultBranch:                 repo.DefaultBranch,
 		Created:                       repo.CreatedUnix.AsTime(),
@@ -231,6 +233,7 @@ func innerToRepo(ctx context.Context, repo *repo_model.Repository, permissionInR
 		AllowRebaseUpdate:             allowRebaseUpdate,
 		DefaultDeleteBranchAfterMerge: defaultDeleteBranchAfterMerge,
 		DefaultMergeStyle:             string(defaultMergeStyle),
+		DefaultUpdateStyle:            string(defaultUpdateStyle),
 		DefaultAllowMaintainerEdit:    defaultAllowMaintainerEdit,
 		AvatarURL:                     repo.AvatarLink(ctx),
 		Internal:                      !repo.IsPrivate && repo.Owner.Visibility == api.VisibleTypePrivate,

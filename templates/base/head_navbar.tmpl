@@ -24,7 +24,7 @@
 		</div>
 
 		<!-- navbar links non-mobile -->
-		{{if and .IsSigned .MustChangePassword}}
+		{{if and .IsSigned .HideNavbarLinks}}
 			{{/* No links */}}
 		{{else if .IsSigned}}
 			{{if not .UnitIssuesGlobalDisabled}}
@@ -54,7 +54,7 @@
 
 	<!-- the full dropdown menus -->
 	<div class="navbar-right ui secondary menu">
-		{{if and .IsSigned .MustChangePassword}}
+		{{if and .IsSigned .HideNavbarLinks}}
 			<div class="ui dropdown jump item" data-tooltip-content="{{ctx.Locale.Tr "user_profile_and_more"}}">
 				<span class="text tw-flex tw-items-center">
 					{{ctx.AvatarUtils.Avatar .SignedUser 24 "tw-mr-1"}}
@@ -92,7 +92,6 @@
 						</span>
 					</a>
 					<form class="stopwatch-commit" method="post" action="{{.ActiveStopwatch.IssueLink}}/times/stopwatch/toggle">
-						{{.CsrfTokenHtml}}
 						<button
 							type="submit"
 							class="ui button mini compact basic icon"
@@ -100,7 +99,6 @@
 						>{{svg "octicon-square-fill"}}</button>
 					</form>
 					<form class="stopwatch-cancel" method="post" action="{{.ActiveStopwatch.IssueLink}}/times/stopwatch/cancel">
-						{{.CsrfTokenHtml}}
 						<button
 							type="submit"
 							class="ui button mini compact basic icon"
@@ -194,11 +192,13 @@
 		{{else}}
 			{{if .ShowRegistrationButton}}
 				<a class="item{{if .PageIsSignUp}} active{{end}}" href="{{AppSubUrl}}/user/sign_up">
-					{{svg "octicon-person"}} {{ctx.Locale.Tr "register"}}
+					{{svg "octicon-person" 16 "tw-mr-1"}}
+					<span>{{ctx.Locale.Tr "register"}}</span>
 				</a>
 			{{end}}
 			<a class="item{{if .PageIsSignIn}} active{{end}}" rel="nofollow" href="{{AppSubUrl}}/user/login{{if not .PageIsSignIn}}?redirect_to={{.CurrentURL}}{{end}}">
-				{{svg "octicon-sign-in"}} {{ctx.Locale.Tr "sign_in"}}
+				{{svg "octicon-sign-in" 16 "tw-mr-1"}}
+				<span>{{ctx.Locale.Tr "sign_in"}}</span>
 			</a>
 		{{end}}
 	</div><!-- end full right menu -->

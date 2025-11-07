@@ -5,18 +5,18 @@ package integration
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	"code.gitea.io/gitea/modules/git"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/tests"
+	auth_model "forgejo.org/models/auth"
+	git_model "forgejo.org/models/git"
+	"forgejo.org/models/unittest"
+	"forgejo.org/modules/git"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func testAPIGetBranch(t *testing.T, branchName string, exists bool) {
@@ -25,13 +25,13 @@ func testAPIGetBranch(t *testing.T, branchName string, exists bool) {
 		AddTokenAuth(token)
 	resp := MakeRequest(t, req, NoExpectedStatus)
 	if !exists {
-		assert.EqualValues(t, http.StatusNotFound, resp.Code)
+		assert.Equal(t, http.StatusNotFound, resp.Code)
 		return
 	}
-	assert.EqualValues(t, http.StatusOK, resp.Code)
+	assert.Equal(t, http.StatusOK, resp.Code)
 	var branch api.Branch
 	DecodeJSON(t, resp, &branch)
-	assert.EqualValues(t, branchName, branch.Name)
+	assert.Equal(t, branchName, branch.Name)
 	assert.True(t, branch.UserCanPush)
 	assert.True(t, branch.UserCanMerge)
 }
@@ -45,7 +45,7 @@ func testAPIGetBranchProtection(t *testing.T, branchName string, expectedHTTPSta
 	if resp.Code == http.StatusOK {
 		var branchProtection api.BranchProtection
 		DecodeJSON(t, resp, &branchProtection)
-		assert.EqualValues(t, branchName, branchProtection.RuleName)
+		assert.Equal(t, branchName, branchProtection.RuleName)
 		return &branchProtection
 	}
 	return nil
@@ -61,7 +61,7 @@ func testAPICreateBranchProtection(t *testing.T, branchName string, expectedHTTP
 	if resp.Code == http.StatusCreated {
 		var branchProtection api.BranchProtection
 		DecodeJSON(t, resp, &branchProtection)
-		assert.EqualValues(t, branchName, branchProtection.RuleName)
+		assert.Equal(t, branchName, branchProtection.RuleName)
 	}
 }
 
@@ -74,7 +74,7 @@ func testAPIEditBranchProtection(t *testing.T, branchName string, body *api.Bran
 	if resp.Code == http.StatusOK {
 		var branchProtection api.BranchProtection
 		DecodeJSON(t, resp, &branchProtection)
-		assert.EqualValues(t, branchName, branchProtection.RuleName)
+		assert.Equal(t, branchName, branchProtection.RuleName)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestAPIGetBranch(t *testing.T) {
 }
 
 func TestAPICreateBranch(t *testing.T) {
-	onGiteaRun(t, testAPICreateBranches)
+	onApplicationRun(t, testAPICreateBranches)
 }
 
 func testAPICreateBranches(t *testing.T, giteaURL *url.URL) {
@@ -116,7 +116,7 @@ func testAPICreateBranches(t *testing.T, giteaURL *url.URL) {
 		ctx := NewAPITestContext(t, "user2", "my-noo-repo-"+objectFormat.Name(), auth_model.AccessTokenScopeWriteRepository, auth_model.AccessTokenScopeWriteUser)
 		giteaURL.Path = ctx.GitPath()
 
-		t.Run("CreateRepo", doAPICreateRepository(ctx, false, objectFormat))
+		t.Run("CreateRepo", doAPICreateRepository(ctx, nil, objectFormat))
 		testCases := []struct {
 			OldBranch          string
 			NewBranch          string
@@ -182,10 +182,41 @@ func testAPICreateBranch(t testing.TB, session *TestSession, user, repo, oldBran
 	DecodeJSON(t, resp, &branch)
 
 	if resp.Result().StatusCode == http.StatusCreated {
-		assert.EqualValues(t, newBranch, branch.Name)
+		assert.Equal(t, newBranch, branch.Name)
 	}
 
 	return resp.Result().StatusCode == status
+}
+
+func TestAPIUpdateBranch(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, _ *url.URL) {
+		t.Run("UpdateBranchWithEmptyRepo", func(t *testing.T) {
+			testAPIUpdateBranch(t, "user10", "repo6", "master", "test", http.StatusNotFound)
+		})
+		t.Run("UpdateBranchWithSameBranchNames", func(t *testing.T) {
+			resp := testAPIUpdateBranch(t, "user2", "repo1", "master", "master", http.StatusUnprocessableEntity)
+			assert.Contains(t, resp.Body.String(), "Cannot rename a branch using the same name or rename to a branch that already exists.")
+		})
+		t.Run("UpdateBranchThatAlreadyExists", func(t *testing.T) {
+			resp := testAPIUpdateBranch(t, "user2", "repo1", "master", "branch2", http.StatusUnprocessableEntity)
+			assert.Contains(t, resp.Body.String(), "Cannot rename a branch using the same name or rename to a branch that already exists.")
+		})
+		t.Run("UpdateBranchWithNonExistentBranch", func(t *testing.T) {
+			resp := testAPIUpdateBranch(t, "user2", "repo1", "i-dont-exist", "new-branch-name", http.StatusNotFound)
+			assert.Contains(t, resp.Body.String(), "Branch doesn't exist.")
+		})
+		t.Run("RenameBranchNormalScenario", func(t *testing.T) {
+			testAPIUpdateBranch(t, "user2", "repo1", "branch2", "new-branch-name", http.StatusNoContent)
+		})
+	})
+}
+
+func testAPIUpdateBranch(t *testing.T, ownerName, repoName, from, to string, expectedHTTPStatus int) *httptest.ResponseRecorder {
+	token := getUserToken(t, ownerName, auth_model.AccessTokenScopeWriteRepository)
+	req := NewRequestWithJSON(t, "PATCH", "api/v1/repos/"+ownerName+"/"+repoName+"/branches/"+from, &api.UpdateBranchRepoOption{
+		Name: to,
+	}).AddTokenAuth(token)
+	return MakeRequest(t, req, expectedHTTPStatus)
 }
 
 func TestAPIBranchProtection(t *testing.T) {
@@ -234,35 +265,17 @@ func TestAPIBranchProtection(t *testing.T) {
 }
 
 func TestAPICreateBranchWithSyncBranches(t *testing.T) {
-	defer tests.PrepareTestEnv(t)()
+	onApplicationRun(t, func(t *testing.T, giteaURL *url.URL) {
+		unittest.AssertCount(t, &git_model.Branch{RepoID: 1}, 4)
 
-	branches, err := db.Find[git_model.Branch](db.DefaultContext, git_model.FindBranchOptions{
-		RepoID: 1,
-	})
-	require.NoError(t, err)
-	assert.Len(t, branches, 4)
+		// make a broke repository with no branch on database
+		unittest.AssertSuccessfulDelete(t, &git_model.Branch{RepoID: 1})
 
-	// make a broke repository with no branch on database
-	_, err = db.DeleteByBean(db.DefaultContext, git_model.Branch{RepoID: 1})
-	require.NoError(t, err)
-
-	onGiteaRun(t, func(t *testing.T, giteaURL *url.URL) {
 		ctx := NewAPITestContext(t, "user2", "repo1", auth_model.AccessTokenScopeWriteRepository, auth_model.AccessTokenScopeWriteUser)
 		giteaURL.Path = ctx.GitPath()
 
 		testAPICreateBranch(t, ctx.Session, "user2", "repo1", "", "new_branch", http.StatusCreated)
-	})
 
-	branches, err = db.Find[git_model.Branch](db.DefaultContext, git_model.FindBranchOptions{
-		RepoID: 1,
+		unittest.AssertExistsIf(t, true, &git_model.Branch{RepoID: 1, Name: "new_branch"})
 	})
-	require.NoError(t, err)
-	assert.Len(t, branches, 5)
-
-	branches, err = db.Find[git_model.Branch](db.DefaultContext, git_model.FindBranchOptions{
-		RepoID:  1,
-		Keyword: "new_branch",
-	})
-	require.NoError(t, err)
-	assert.Len(t, branches, 1)
 }

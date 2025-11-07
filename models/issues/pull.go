@@ -5,24 +5,26 @@
 package issues
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	org_model "code.gitea.io/gitea/models/organization"
-	pull_model "code.gitea.io/gitea/models/pull"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	org_model "forgejo.org/models/organization"
+	pull_model "forgejo.org/models/pull"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
 )
@@ -159,7 +161,7 @@ type PullRequest struct {
 
 	ChangedProtectedFiles []string `xorm:"TEXT JSON"`
 
-	IssueID                    int64  `xorm:"INDEX"`
+	IssueID                    int64  `xorm:"INDEX REFERENCES(issue, id)"`
 	Issue                      *Issue `xorm:"-"`
 	Index                      int64
 	RequestedReviewers         []*user_model.User `xorm:"-"`
@@ -168,7 +170,7 @@ type PullRequest struct {
 
 	HeadRepoID          int64                  `xorm:"INDEX"`
 	HeadRepo            *repo_model.Repository `xorm:"-"`
-	BaseRepoID          int64                  `xorm:"INDEX"`
+	BaseRepoID          int64                  `xorm:"INDEX REFERENCES(repository, id)"`
 	BaseRepo            *repo_model.Repository `xorm:"-"`
 	HeadBranch          string
 	HeadCommitID        string `xorm:"-"`
@@ -566,6 +568,7 @@ func NewPullRequest(ctx context.Context, repo *repo_model.Repository, issue *Iss
 	}
 
 	issue.Index = idx
+	issue.Title, _ = util.SplitStringAtByteN(issue.Title, 255)
 
 	if err = NewIssueWithIndex(ctx, issue.Poster, NewIssueOptions{
 		Repo:        repo,
@@ -574,7 +577,7 @@ func NewPullRequest(ctx context.Context, repo *repo_model.Repository, issue *Iss
 		Attachments: uuids,
 		IsPull:      true,
 	}); err != nil {
-		if repo_model.IsErrUserDoesNotHaveAccessToRepo(err) || IsErrNewIssueInsert(err) {
+		if repo_model.IsErrUserDoesNotHaveAccessToRepo(err) {
 			return err
 		}
 		return fmt.Errorf("newIssue: %w", err)
@@ -689,7 +692,7 @@ func GetPullRequestByIssueID(ctx context.Context, issueID int64) (*PullRequest, 
 	return pr, pr.LoadAttributes(ctx)
 }
 
-// GetPullRequestsByBaseHeadInfo returns the pull request by given base and head
+// GetPullRequestByBaseHeadInfo returns the pull request by given base and head
 func GetPullRequestByBaseHeadInfo(ctx context.Context, baseID, headID int64, base, head string) (*PullRequest, error) {
 	pr := &PullRequest{}
 	sess := db.GetEngine(ctx).
@@ -794,7 +797,7 @@ func (pr *PullRequest) GetWorkInProgressPrefix(ctx context.Context) string {
 // UpdateCommitDivergence update Divergence of a pull request
 func (pr *PullRequest) UpdateCommitDivergence(ctx context.Context, ahead, behind int) error {
 	if pr.ID == 0 {
-		return fmt.Errorf("pull ID is 0")
+		return errors.New("pull ID is 0")
 	}
 	pr.CommitsAhead = ahead
 	pr.CommitsBehind = behind
@@ -921,37 +924,42 @@ func MergeBlockedByOutdatedBranch(protectBranch *git_model.ProtectedBranch, pr *
 	return protectBranch.BlockOnOutdatedBranch && pr.CommitsBehind > 0
 }
 
-// GetCodeOwnersFromContent returns the code owners configuration
-// Return empty slice if files missing
+// GetCodeOwnersFromReader returns the code owners configuration
 // Return warning messages on parsing errors
 // We're trying to do the best we can when parsing a file.
 // Invalid lines are skipped. Non-existent users and teams too.
-func GetCodeOwnersFromContent(ctx context.Context, data string) ([]*CodeOwnerRule, []string) {
-	if len(data) == 0 {
-		return nil, nil
-	}
+func GetCodeOwnersFromReader(ctx context.Context, rc io.ReadCloser, truncated bool) ([]*CodeOwnerRule, []string) {
+	defer rc.Close()
+	scanner := bufio.NewScanner(rc)
 
-	rules := make([]*CodeOwnerRule, 0)
-	lines := strings.Split(data, "\n")
-	warnings := make([]string, 0)
+	var rules []*CodeOwnerRule
+	var warnings []string
+	line := 0
+	for scanner.Scan() {
+		line++
 
-	for i, line := range lines {
-		tokens := TokenizeCodeOwnersLine(line)
+		tokens := TokenizeCodeOwnersLine(scanner.Text())
 		if len(tokens) == 0 {
 			continue
 		} else if len(tokens) < 2 {
-			warnings = append(warnings, fmt.Sprintf("Line: %d: incorrect format", i+1))
+			warnings = append(warnings, fmt.Sprintf("Line: %d: incorrect format", line))
 			continue
 		}
 		rule, wr := ParseCodeOwnersLine(ctx, tokens)
 		for _, w := range wr {
-			warnings = append(warnings, fmt.Sprintf("Line: %d: %s", i+1, w))
+			warnings = append(warnings, fmt.Sprintf("Line: %d: %s", line, w))
 		}
 		if rule == nil {
 			continue
 		}
 
 		rules = append(rules, rule)
+	}
+	if err := scanner.Err(); err != nil {
+		warnings = append(warnings, err.Error())
+	}
+	if truncated {
+		warnings = append(warnings, fmt.Sprintf("File too big: truncated while on line %d", line))
 	}
 
 	return rules, warnings

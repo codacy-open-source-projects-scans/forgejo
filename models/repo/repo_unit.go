@@ -9,13 +9,13 @@ import (
 	"slices"
 	"strings"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	"code.gitea.io/gitea/models/unit"
-	"code.gitea.io/gitea/modules/json"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/models/db"
+	"forgejo.org/models/perm"
+	"forgejo.org/models/unit"
+	"forgejo.org/modules/json"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"xorm.io/xorm"
 	"xorm.io/xorm/convert"
@@ -41,27 +41,30 @@ func (err ErrUnitTypeNotExist) Unwrap() error {
 }
 
 // RepoUnitAccessMode specifies the users access mode to a repo unit
+// Only UnitAccessModeWrite is used by the wiki, to mark it as instance-writable
 type UnitAccessMode int
 
 const (
 	// UnitAccessModeUnset - no unit mode set
 	UnitAccessModeUnset UnitAccessMode = iota // 0
+
 	// UnitAccessModeNone no access
-	UnitAccessModeNone // 1
+	// UnitAccessModeNone UnitAccessMode = 1
 	// UnitAccessModeRead read access
-	UnitAccessModeRead // 2
+	// UnitAccessModeRead UnitAccessMode = 2
+
 	// UnitAccessModeWrite write access
-	UnitAccessModeWrite // 3
+	UnitAccessModeWrite UnitAccessMode = 3
 )
 
 func (mode UnitAccessMode) ToAccessMode(modeIfUnset perm.AccessMode) perm.AccessMode {
 	switch mode {
 	case UnitAccessModeUnset:
 		return modeIfUnset
-	case UnitAccessModeNone:
-		return perm.AccessModeNone
-	case UnitAccessModeRead:
-		return perm.AccessModeRead
+	// case UnitAccessModeNone:
+	//	return perm.AccessModeNone
+	// case UnitAccessModeRead:
+	//	return perm.AccessModeRead
 	case UnitAccessModeWrite:
 		return perm.AccessModeWrite
 	default:
@@ -159,6 +162,7 @@ type PullRequestsConfig struct {
 	AllowRebaseUpdate             bool
 	DefaultDeleteBranchAfterMerge bool
 	DefaultMergeStyle             MergeStyle
+	DefaultUpdateStyle            UpdateStyle
 	DefaultAllowMaintainerEdit    bool
 }
 
@@ -195,6 +199,25 @@ func (cfg *PullRequestsConfig) GetDefaultMergeStyle() MergeStyle {
 	}
 
 	return MergeStyleMerge
+}
+
+// IsUpdateStyleAllowed returns if update style is allowed
+func (cfg *PullRequestsConfig) IsUpdateStyleAllowed(updateStyle UpdateStyle) bool {
+	return updateStyle == UpdateStyleMerge ||
+		updateStyle == UpdateStyleRebase && cfg.AllowRebaseUpdate
+}
+
+// GetDefaultUpdateStyle returns the default update style for this pull request
+func (cfg *PullRequestsConfig) GetDefaultUpdateStyle() UpdateStyle {
+	if len(cfg.DefaultUpdateStyle) != 0 {
+		return cfg.DefaultUpdateStyle
+	}
+
+	if setting.Repository.PullRequest.DefaultUpdateStyle != "" {
+		return UpdateStyle(setting.Repository.PullRequest.DefaultUpdateStyle)
+	}
+
+	return UpdateStyleMerge
 }
 
 type ActionsConfig struct {
@@ -313,5 +336,8 @@ func getUnitsByRepoID(ctx context.Context, repoID int64) (units []*RepoUnit, err
 // UpdateRepoUnit updates the provided repo unit
 func UpdateRepoUnit(ctx context.Context, unit *RepoUnit) error {
 	_, err := db.GetEngine(ctx).ID(unit.ID).Update(unit)
-	return err
+	if err != nil {
+		return fmt.Errorf("UpdateRepoUnit: %v", err)
+	}
+	return nil
 }

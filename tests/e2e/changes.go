@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"code.gitea.io/gitea/modules/log"
+	"forgejo.org/modules/log"
 
 	"github.com/gobwas/glob"
 )
@@ -16,10 +16,15 @@ import (
 var (
 	changesetFiles     []string
 	changesetAvailable bool
-	globalFullRun      bool
+	globalFullRun      = false
 )
 
 func initChangedFiles() {
+	_, globalFullRun = os.LookupEnv("RUN_ALL")
+	if globalFullRun {
+		log.Info("Full run of all tests requested via RUN_ALL environment.")
+		return
+	}
 	var changes string
 	changes, changesetAvailable = os.LookupEnv("CHANGED_FILES")
 	// the output of the Action seems to actually contain \n and not a newline literal
@@ -29,21 +34,22 @@ func initChangedFiles() {
 	globalPatterns := []string{
 		// meta and config
 		"Makefile",
-		"playwright.config.js",
+		"playwright.config.ts",
 		".forgejo/workflows/testing.yml",
 		"tests/e2e/*.go",
 		"tests/e2e/shared/*",
 		// frontend files
-		"frontend/*.js",
-		"frontend/{base,index}.css",
-		// templates
+		"web_src/js/{index,utils}.*",
+		"web_src/css/{base,index}.css",
+		// templates and helpers
 		"templates/base/**",
+		"modules/templates/**",
 	}
 	fullRunPatterns := []glob.Glob{}
 	for _, expr := range globalPatterns {
 		fullRunPatterns = append(fullRunPatterns, glob.MustCompile(expr, '.', '/'))
 	}
-	globalFullRun = false
+
 	for _, changedFile := range changesetFiles {
 		for _, pattern := range fullRunPatterns {
 			if pattern.Match(changedFile) {

@@ -6,10 +6,10 @@ package forms
 import (
 	"net/http"
 
-	"code.gitea.io/gitea/modules/web/middleware"
-	"code.gitea.io/gitea/services/context"
+	"forgejo.org/modules/web/middleware"
+	"forgejo.org/services/context"
 
-	"gitea.com/go-chi/binding"
+	"code.forgejo.org/go-chi/binding"
 )
 
 // ProtectTagForm form for changing protected tag settings

@@ -6,9 +6,9 @@ package oauth2
 import (
 	"html/template"
 
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/svg"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/svg"
 
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/providers/openidConnect"
@@ -49,6 +49,10 @@ func (o *OpenIDProvider) CreateGothProvider(providerName, callbackURL string, so
 // CustomURLSettings returns the custom url settings for this provider
 func (o *OpenIDProvider) CustomURLSettings() *CustomURLSettings {
 	return nil
+}
+
+func (o *OpenIDProvider) CanProvideSSHKeys() bool {
+	return true
 }
 
 var _ GothProvider = &OpenIDProvider{}

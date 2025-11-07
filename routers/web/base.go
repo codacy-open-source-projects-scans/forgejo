@@ -11,12 +11,12 @@ import (
 	"path"
 	"strings"
 
-	"code.gitea.io/gitea/modules/httpcache"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/storage"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/modules/web/routing"
+	"forgejo.org/modules/httpcache"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/storage"
+	"forgejo.org/modules/util"
+	"forgejo.org/modules/web/routing"
 )
 
 func storageHandler(storageSetting *setting.Storage, prefix string, objStore storage.ObjectStorage) http.HandlerFunc {
@@ -39,7 +39,7 @@ func storageHandler(storageSetting *setting.Storage, prefix string, objStore sto
 			rPath := strings.TrimPrefix(req.URL.Path, "/"+prefix+"/")
 			rPath = util.PathJoinRelX(rPath)
 
-			u, err := objStore.URL(rPath, path.Base(rPath))
+			u, err := objStore.URL(rPath, path.Base(rPath), nil)
 			if err != nil {
 				if os.IsNotExist(err) || errors.Is(err, os.ErrNotExist) {
 					log.Warn("Unable to find %s %s", prefix, rPath)

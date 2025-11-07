@@ -5,11 +5,10 @@ package project
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/unittest"
+	"forgejo.org/models/db"
+	"forgejo.org/models/unittest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,9 +98,9 @@ func Test_MoveColumnsOnProject(t *testing.T) {
 	columnsAfter, err := project1.GetColumns(db.DefaultContext)
 	require.NoError(t, err)
 	assert.Len(t, columnsAfter, 3)
-	assert.EqualValues(t, columns[1].ID, columnsAfter[0].ID)
-	assert.EqualValues(t, columns[2].ID, columnsAfter[1].ID)
-	assert.EqualValues(t, columns[0].ID, columnsAfter[2].ID)
+	assert.Equal(t, columns[1].ID, columnsAfter[0].ID)
+	assert.Equal(t, columns[2].ID, columnsAfter[1].ID)
+	assert.Equal(t, columns[0].ID, columnsAfter[2].ID)
 }
 
 func Test_NewColumn(t *testing.T) {
@@ -124,5 +123,5 @@ func Test_NewColumn(t *testing.T) {
 		ProjectID: project1.ID,
 	})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "maximum number of columns reached"))
+	assert.Contains(t, err.Error(), "maximum number of columns reached")
 }

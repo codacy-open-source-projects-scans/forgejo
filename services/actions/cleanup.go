@@ -5,15 +5,17 @@ package actions
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	actions_module "code.gitea.io/gitea/modules/actions"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/storage"
-	"code.gitea.io/gitea/modules/timeutil"
+	actions_model "forgejo.org/models/actions"
+	actions_module "forgejo.org/modules/actions"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/storage"
+	"forgejo.org/modules/timeutil"
 )
 
 // Cleanup removes expired actions logs, data and artifacts
@@ -101,7 +103,7 @@ func CleanupLogs(ctx context.Context) error {
 			return fmt.Errorf("find old tasks: %w", err)
 		}
 		for _, task := range tasks {
-			if err := actions_module.RemoveLogs(ctx, task.LogInStorage, task.LogFilename); err != nil {
+			if err := actions_module.RemoveLogs(ctx, task.LogInStorage, task.LogFilename); err != nil && !errors.Is(err, os.ErrNotExist) {
 				log.Error("Failed to remove log %s (in storage %v) of task %v: %v", task.LogFilename, task.LogInStorage, task.ID, err)
 				// do not return error here, continue to next task
 				continue
@@ -123,4 +125,10 @@ func CleanupLogs(ctx context.Context) error {
 
 	log.Info("Removed %d logs", count)
 	return nil
+}
+
+// CleanupOfflineRunners removes offline runners
+func CleanupOfflineRunners(ctx context.Context, duration time.Duration, globalOnly bool) error {
+	olderThan := timeutil.TimeStampNow().AddDuration(-duration)
+	return actions_model.DeleteOfflineRunners(ctx, olderThan, globalOnly)
 }

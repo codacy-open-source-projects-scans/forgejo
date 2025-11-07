@@ -8,20 +8,20 @@ import (
 	"fmt"
 	"net/http"
 
-	"code.gitea.io/gitea/models/auth"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/auth/password"
-	"code.gitea.io/gitea/modules/base"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/optional"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/web"
-	"code.gitea.io/gitea/modules/web/middleware"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/forms"
-	"code.gitea.io/gitea/services/mailer"
-	user_service "code.gitea.io/gitea/services/user"
+	"forgejo.org/models/auth"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/auth/password"
+	"forgejo.org/modules/base"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/optional"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/web"
+	"forgejo.org/modules/web/middleware"
+	"forgejo.org/services/context"
+	"forgejo.org/services/forms"
+	"forgejo.org/services/mailer"
+	user_service "forgejo.org/services/user"
 )
 
 var (
@@ -61,7 +61,7 @@ func ForgotPasswdPost(ctx *context.Context) {
 	email := ctx.FormString("email")
 	ctx.Data["Email"] = email
 
-	u, err := user_model.GetUserByEmail(ctx, email)
+	u, err := user_model.GetUserByEmailSimple(ctx, email)
 	if err != nil {
 		if user_model.IsErrUserNotExist(err) {
 			ctx.Data["ResetPwdCodeLives"] = timeutil.MinutesToFriendly(setting.Service.ResetPwdCodeLives, ctx.Locale)
@@ -74,7 +74,7 @@ func ForgotPasswdPost(ctx *context.Context) {
 		return
 	}
 
-	if !u.IsLocal() && !u.IsOAuth2() {
+	if !u.IsLocal() && !(u.IsOAuth2() && u.IsPasswordSet()) {
 		ctx.Data["Err_Email"] = true
 		ctx.RenderWithErr(ctx.Tr("auth.non_local_account"), tplForgotPassword, nil)
 		return
@@ -86,7 +86,10 @@ func ForgotPasswdPost(ctx *context.Context) {
 		return
 	}
 
-	mailer.SendResetPasswordMail(u)
+	if err := mailer.SendResetPasswordMail(ctx, u); err != nil {
+		ctx.ServerError("SendResetPasswordMail", err)
+		return
+	}
 
 	if err = ctx.Cache.Put("MailResendLimit_"+u.LowerName, u.LowerName, 180); err != nil {
 		log.Error("Set cache(MailResendLimit) fail: %v", err)
@@ -97,7 +100,7 @@ func ForgotPasswdPost(ctx *context.Context) {
 	ctx.HTML(http.StatusOK, tplForgotPassword)
 }
 
-func commonResetPassword(ctx *context.Context) (*user_model.User, *auth.TwoFactor) {
+func commonResetPassword(ctx *context.Context, shouldDeleteToken bool) (*user_model.User, *auth.TwoFactor) {
 	code := ctx.FormString("code")
 
 	ctx.Data["Title"] = ctx.Tr("auth.reset_password")
@@ -113,9 +116,26 @@ func commonResetPassword(ctx *context.Context) (*user_model.User, *auth.TwoFacto
 	}
 
 	// Fail early, don't frustrate the user
-	u := user_model.VerifyUserActiveCode(ctx, code)
+	u, deleteToken, err := user_model.VerifyUserAuthorizationToken(ctx, code, auth.PasswordReset)
+	if err != nil {
+		ctx.ServerError("VerifyUserAuthorizationToken", err)
+		return nil, nil
+	}
+
 	if u == nil {
 		ctx.Flash.Error(ctx.Tr("auth.invalid_code_forgot_password", fmt.Sprintf("%s/user/forgot_password", setting.AppSubURL)), true)
+		return nil, nil
+	}
+
+	if shouldDeleteToken {
+		if err := deleteToken(); err != nil {
+			ctx.ServerError("deleteToken", err)
+			return nil, nil
+		}
+	}
+
+	if !u.IsLocal() && !(u.IsOAuth2() && u.IsPasswordSet()) {
+		ctx.Flash.Error(ctx.Tr("auth.non_local_account"), true)
 		return nil, nil
 	}
 
@@ -145,7 +165,7 @@ func commonResetPassword(ctx *context.Context) (*user_model.User, *auth.TwoFacto
 func ResetPasswd(ctx *context.Context) {
 	ctx.Data["IsResetForm"] = true
 
-	commonResetPassword(ctx)
+	commonResetPassword(ctx, false)
 	if ctx.Written() {
 		return
 	}
@@ -155,7 +175,7 @@ func ResetPasswd(ctx *context.Context) {
 
 // ResetPasswdPost response from account recovery request
 func ResetPasswdPost(ctx *context.Context) {
-	u, twofa := commonResetPassword(ctx)
+	u, twofa := commonResetPassword(ctx, true)
 	if ctx.Written() {
 		return
 	}
@@ -227,12 +247,8 @@ func ResetPasswdPost(ctx *context.Context) {
 
 	if regenerateScratchToken {
 		// Invalidate the scratch token.
-		_, err := twofa.GenerateScratchToken()
-		if err != nil {
-			ctx.ServerError("UserSignIn", err)
-			return
-		}
-		if err = auth.UpdateTwoFactor(ctx, twofa); err != nil {
+		twofa.GenerateScratchToken()
+		if err := auth.UpdateTwoFactor(ctx, twofa); err != nil {
 			ctx.ServerError("UserSignIn", err)
 			return
 		}
@@ -253,7 +269,7 @@ func ResetPasswdPost(ctx *context.Context) {
 func MustChangePassword(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.must_change_password")
 	ctx.Data["ChangePasscodeLink"] = setting.AppSubURL + "/user/settings/change_password"
-	ctx.Data["MustChangePassword"] = true
+	ctx.Data["HideNavbarLinks"] = true
 	ctx.HTML(http.StatusOK, tplMustChangePassword)
 }
 

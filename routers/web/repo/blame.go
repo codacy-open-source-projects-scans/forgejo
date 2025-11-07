@@ -10,17 +10,16 @@ import (
 	"net/url"
 	"strings"
 
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/charset"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/highlight"
-	"code.gitea.io/gitea/modules/log"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/templates"
-	"code.gitea.io/gitea/modules/timeutil"
-	"code.gitea.io/gitea/modules/util"
-	"code.gitea.io/gitea/services/context"
-	files_service "code.gitea.io/gitea/services/repository/files"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/charset"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/highlight"
+	"forgejo.org/modules/log"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/templates"
+	"forgejo.org/modules/util"
+	"forgejo.org/services/context"
+	files_service "forgejo.org/services/repository/files"
 )
 
 type blameRow struct {
@@ -57,6 +56,11 @@ func RefBlame(ctx *context.Context) {
 		HandleGitError(ctx, "Repo.Commit.GetTreeEntryByPath", err)
 		return
 	}
+	if entry.IsDir() {
+		ctx.NotFound("Cannot blame directory", nil)
+		return
+	}
+
 	blob := entry.Blob()
 
 	ctx.Data["PageIsViewCode"] = true
@@ -78,18 +82,18 @@ func RefBlame(ctx *context.Context) {
 		return
 	}
 
-	ctx.Data["NumLinesSet"] = true
-	ctx.Data["NumLines"], err = blob.GetBlobLineCount()
-	if err != nil {
-		ctx.ServerError("GetBlobLineCount", err)
-		return
-	}
-
 	result, err := performBlame(ctx, ctx.Repo.Commit, ctx.Repo.TreePath, ctx.FormBool("bypass-blame-ignore"))
 	if err != nil {
 		ctx.ServerError("performBlame", err)
 		return
 	}
+
+	ctx.Data["NumLinesSet"] = true
+	numLines := 0
+	for _, p := range result.Parts {
+		numLines += len(p.Lines)
+	}
+	ctx.Data["NumLines"] = numLines
 
 	ctx.Data["UsesIgnoreRevs"] = result.UsesIgnoreRevs
 	ctx.Data["FaultyIgnoreRevsFile"] = result.FaultyIgnoreRevsFile
@@ -254,7 +258,7 @@ func renderBlame(ctx *context.Context, blameParts []*git.BlamePart, commitNames 
 				commitCnt++
 
 				// User avatar image
-				commitSince := timeutil.TimeSinceUnix(timeutil.TimeStamp(commit.Author.When.Unix()), ctx.Locale)
+				commitSince := templates.TimeSince(commit.Author.When)
 
 				var avatar string
 				if commit.User != nil {

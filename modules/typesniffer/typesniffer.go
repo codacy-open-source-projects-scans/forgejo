@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/modules/util"
 )
 
 // Use at most this many bytes to determine Content Type.
@@ -20,8 +20,20 @@ const sniffLen = 1024
 const (
 	// SvgMimeType MIME type of SVG images.
 	SvgMimeType = "image/svg+xml"
+	// AvifMimeType MIME type of AVIF images
+	AvifMimeType = "image/avif"
 	// ApplicationOctetStream MIME type of binary files.
 	ApplicationOctetStream = "application/octet-stream"
+	// GLTFMimeType MIME type of GLTF files.
+	GLTFMimeType = "model/gltf+json"
+	// GLBMimeType MIME type of GLB files.
+	GLBMimeType = "model/gltf-binary"
+	// OBJMimeType MIME type of OBJ files.
+	OBJMimeType = "model/obj"
+	// STLMimeType MIME type of STL files.
+	STLMimeType = "model/stl"
+	// 3MFMimeType MIME type of 3MF files.
+	ThreeMFMimeType = "model/3mf"
 )
 
 var (
@@ -65,6 +77,36 @@ func (ct SniffedType) IsAudio() bool {
 	return strings.Contains(ct.contentType, "audio/")
 }
 
+// Is3DModel detects if data is a 3D format
+func (ct SniffedType) Is3DModel() bool {
+	return strings.Contains(ct.contentType, "model/")
+}
+
+// IsGLTFFile detects if data is an SVG image format
+func (ct SniffedType) IsGLTF() bool {
+	return strings.Contains(ct.contentType, GLTFMimeType)
+}
+
+// IsGLBFile detects if data is an GLB image format
+func (ct SniffedType) IsGLB() bool {
+	return strings.Contains(ct.contentType, GLBMimeType)
+}
+
+// IsOBJFile detects if data is an OBJ image format
+func (ct SniffedType) IsOBJ() bool {
+	return strings.Contains(ct.contentType, OBJMimeType)
+}
+
+// IsSTLTextFile detects if data is an STL text format
+func (ct SniffedType) IsSTL() bool {
+	return strings.Contains(ct.contentType, STLMimeType)
+}
+
+// Is3MFFile detects if data is an 3MF image format
+func (ct SniffedType) Is3MF() bool {
+	return strings.Contains(ct.contentType, ThreeMFMimeType)
+}
+
 // IsRepresentableAsText returns true if file content can be represented as
 // plain text or is empty.
 func (ct SniffedType) IsRepresentableAsText() bool {
@@ -73,7 +115,7 @@ func (ct SniffedType) IsRepresentableAsText() bool {
 
 // IsBrowsableBinaryType returns whether a non-text type can be displayed in a browser
 func (ct SniffedType) IsBrowsableBinaryType() bool {
-	return ct.IsImage() || ct.IsSvgImage() || ct.IsPDF() || ct.IsVideo() || ct.IsAudio()
+	return ct.IsImage() || ct.IsSvgImage() || ct.IsPDF() || ct.IsVideo() || ct.IsAudio() || ct.Is3DModel()
 }
 
 // GetMimeType returns the mime type
@@ -82,7 +124,7 @@ func (ct SniffedType) GetMimeType() string {
 }
 
 // DetectContentType extends http.DetectContentType with more content types. Defaults to text/unknown if input is empty.
-func DetectContentType(data []byte) SniffedType {
+func DetectContentType(data []byte, filename string) SniffedType {
 	if len(data) == 0 {
 		return SniffedType{"text/unknown"}
 	}
@@ -106,6 +148,12 @@ func DetectContentType(data []byte) SniffedType {
 		}
 	}
 
+	// AVIF is unsupported by http.DetectContentType
+	// Signature taken from https://stackoverflow.com/a/68322450
+	if bytes.Index(data, []byte("ftypavif")) == 4 {
+		ct = AvifMimeType
+	}
+
 	if strings.HasPrefix(ct, "audio/") && bytes.HasPrefix(data, []byte("ID3")) {
 		// The MP3 detection is quite inaccurate, any content with "ID3" prefix will result in "audio/mpeg".
 		// So remove the "ID3" prefix and detect again, if result is text, then it must be text content.
@@ -127,11 +175,25 @@ func DetectContentType(data []byte) SniffedType {
 			ct = "audio/ogg" // for most cases, it is used as an audio container
 		}
 	}
+
+	if ct == "application/octet-stream" &&
+		filename != "" &&
+		!strings.HasSuffix(strings.ToUpper(filename), ".LCOM") &&
+		bytes.Contains(data, []byte("(DEFINE-FILE-INFO ")) {
+		ct = "text/vnd.interlisp"
+	}
+
+	// GLTF is unsupported by http.DetectContentType
+	// hexdump -n 4 -C glTF.glb
+	if bytes.HasPrefix(data, []byte("glTF")) {
+		ct = GLBMimeType
+	}
+
 	return SniffedType{ct}
 }
 
 // DetectContentTypeFromReader guesses the content type contained in the reader.
-func DetectContentTypeFromReader(r io.Reader) (SniffedType, error) {
+func DetectContentTypeFromReader(r io.Reader, filename string) (SniffedType, error) {
 	buf := make([]byte, sniffLen)
 	n, err := util.ReadAtMost(r, buf)
 	if err != nil {
@@ -139,5 +201,5 @@ func DetectContentTypeFromReader(r io.Reader) (SniffedType, error) {
 	}
 	buf = buf[:n]
 
-	return DetectContentType(buf), nil
+	return DetectContentType(buf, filename), nil
 }

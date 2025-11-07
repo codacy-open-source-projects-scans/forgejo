@@ -105,6 +105,7 @@ type Repository struct {
 	DefaultDeleteBranchAfterMerge bool             `json:"default_delete_branch_after_merge"`
 	DefaultMergeStyle             string           `json:"default_merge_style"`
 	DefaultAllowMaintainerEdit    bool             `json:"default_allow_maintainer_edit"`
+	DefaultUpdateStyle            string           `json:"default_update_style"`
 	AvatarURL                     string           `json:"avatar_url"`
 	Internal                      bool             `json:"internal"`
 	MirrorInterval                string           `json:"mirror_interval"`
@@ -223,8 +224,10 @@ type EditRepoOption struct {
 	AllowRebaseUpdate *bool `json:"allow_rebase_update,omitempty"`
 	// set to `true` to delete pr branch after merge by default
 	DefaultDeleteBranchAfterMerge *bool `json:"default_delete_branch_after_merge,omitempty"`
-	// set to a merge style to be used by this repository: "merge", "rebase", "rebase-merge", "squash", or "fast-forward-only".
-	DefaultMergeStyle *string `json:"default_merge_style,omitempty"`
+	// set to a merge style to be used by this repository: "merge", "rebase", "rebase-merge", "squash", "fast-forward-only", "manually-merged", or "rebase-update-only".
+	DefaultMergeStyle *string `json:"default_merge_style,omitempty" binding:"In(merge,rebase,rebase-merge,squash,fast-forward-only,manually-merged,rebase-update-only)"`
+	// set to a update style to be used by this repository: "rebase" or "merge"
+	DefaultUpdateStyle *string `json:"default_update_style,omitempty" binding:"In(merge,rebase)"`
 	// set to `true` to allow edits from maintainers by default
 	DefaultAllowMaintainerEdit *bool `json:"default_allow_maintainer_edit,omitempty"`
 	// set to `true` to archive this repository.
@@ -290,6 +293,16 @@ type CreateBranchRepoOption struct {
 	OldRefName string `json:"old_ref_name" binding:"GitRefName;MaxSize(100)"`
 }
 
+// UpdateBranchRepoOption options when updating a branch in a repository
+// swagger:model
+type UpdateBranchRepoOption struct {
+	// New branch name
+	//
+	// required: true
+	// unique: true
+	Name string `json:"name" binding:"Required;GitRefName;MaxSize(100)"`
+}
+
 // TransferRepoOption options when transfer a repository's ownership
 // swagger:model
 type TransferRepoOption struct {
@@ -314,6 +327,7 @@ const (
 	GitBucketService                       // 7 gitbucket service
 	CodebaseService                        // 8 codebase service
 	ForgejoService                         // 9 forgejo service
+	PagureService                          // 10 pagure service
 )
 
 // Name represents the service type's name
@@ -341,6 +355,8 @@ func (gt GitServiceType) Title() string {
 		return "Codebase"
 	case ForgejoService:
 		return "Forgejo"
+	case PagureService:
+		return "Pagure"
 	case PlainGitService:
 		return "Git"
 	}
@@ -399,6 +415,7 @@ var SupportedFullGitService = []GitServiceType{
 	OneDevService,
 	GitBucketService,
 	CodebaseService,
+	PagureService,
 }
 
 // RepoTransfer represents a pending repo transfer

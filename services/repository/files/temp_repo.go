@@ -6,6 +6,7 @@ package files
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,15 +14,15 @@ import (
 	"strings"
 	"time"
 
-	"code.gitea.io/gitea/models"
-	repo_model "code.gitea.io/gitea/models/repo"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/log"
-	repo_module "code.gitea.io/gitea/modules/repository"
-	"code.gitea.io/gitea/modules/setting"
-	asymkey_service "code.gitea.io/gitea/services/asymkey"
-	"code.gitea.io/gitea/services/gitdiff"
+	"forgejo.org/models"
+	repo_model "forgejo.org/models/repo"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/log"
+	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/setting"
+	asymkey_service "forgejo.org/services/asymkey"
+	"forgejo.org/services/gitdiff"
 )
 
 // TemporaryUploadRepository is a type to wrap our upload repositories as a shallow clone
@@ -212,24 +213,6 @@ func (t *TemporaryUploadRepository) WriteTree() (string, error) {
 	return strings.TrimSpace(stdout), nil
 }
 
-// GetLastCommit gets the last commit ID SHA of the repo
-func (t *TemporaryUploadRepository) GetLastCommit() (string, error) {
-	return t.GetLastCommitByRef("HEAD")
-}
-
-// GetLastCommitByRef gets the last commit ID SHA of the repo by ref
-func (t *TemporaryUploadRepository) GetLastCommitByRef(ref string) (string, error) {
-	if ref == "" {
-		ref = "HEAD"
-	}
-	stdout, _, err := git.NewCommand(t.ctx, "rev-parse").AddDynamicArguments(ref).RunStdString(&git.RunOpts{Dir: t.basePath})
-	if err != nil {
-		log.Error("Unable to get last ref for %s in temporary repo: %s(%s): Error: %v", ref, t.repo.FullName(), t.basePath, err)
-		return "", fmt.Errorf("Unable to rev-parse %s in temporary repo for: %s Error: %w", ref, t.repo.FullName(), err)
-	}
-	return strings.TrimSpace(stdout), nil
-}
-
 // CommitTree creates a commit from a given tree for the user with provided message
 func (t *TemporaryUploadRepository) CommitTree(parent string, author, committer *user_model.User, treeHash, message string, signoff bool) (string, error) {
 	return t.CommitTreeWithDate(parent, author, committer, treeHash, message, signoff, time.Now(), time.Now())
@@ -343,8 +326,7 @@ func (t *TemporaryUploadRepository) Push(doer *user_model.User, commitHash, bran
 func (t *TemporaryUploadRepository) DiffIndex() (*gitdiff.Diff, error) {
 	stdoutReader, stdoutWriter, err := os.Pipe()
 	if err != nil {
-		log.Error("Unable to open stdout pipe: %v", err)
-		return nil, fmt.Errorf("Unable to open stdout pipe: %w", err)
+		return nil, fmt.Errorf("unable to open stdout pipe: %w", err)
 	}
 	defer func() {
 		_ = stdoutReader.Close()
@@ -352,9 +334,7 @@ func (t *TemporaryUploadRepository) DiffIndex() (*gitdiff.Diff, error) {
 	}()
 	stderr := new(bytes.Buffer)
 	var diff *gitdiff.Diff
-	var finalErr error
-
-	if err := git.NewCommand(t.ctx, "diff-index", "--src-prefix=\\a/", "--dst-prefix=\\b/", "--cached", "-p", "HEAD").
+	err = git.NewCommand(t.ctx, "diff-index", "--src-prefix=\\a/", "--dst-prefix=\\b/", "--cached", "-p", "HEAD").
 		Run(&git.RunOpts{
 			Timeout: 30 * time.Second,
 			Dir:     t.basePath,
@@ -362,26 +342,23 @@ func (t *TemporaryUploadRepository) DiffIndex() (*gitdiff.Diff, error) {
 			Stderr:  stderr,
 			PipelineFunc: func(ctx context.Context, cancel context.CancelFunc) error {
 				_ = stdoutWriter.Close()
-				diff, finalErr = gitdiff.ParsePatch(t.ctx, setting.Git.MaxGitDiffLines, setting.Git.MaxGitDiffLineCharacters, setting.Git.MaxGitDiffFiles, stdoutReader, "")
-				if finalErr != nil {
-					log.Error("ParsePatch: %v", finalErr)
-					cancel()
-				}
+				defer cancel()
+				var diffErr error
+				diff, diffErr = gitdiff.ParsePatch(t.ctx, setting.Git.MaxGitDiffLines, setting.Git.MaxGitDiffLineCharacters, setting.Git.MaxGitDiffFiles, stdoutReader, "")
 				_ = stdoutReader.Close()
-				return finalErr
+				if diffErr != nil {
+					// if the diffErr is not nil, it will be returned as the error of "Run()"
+					return fmt.Errorf("ParsePatch: %w", diffErr)
+				}
+				return nil
 			},
-		}); err != nil {
-		if finalErr != nil {
-			log.Error("Unable to ParsePatch in temporary repo %s (%s). Error: %v", t.repo.FullName(), t.basePath, finalErr)
-			return nil, finalErr
-		}
-		log.Error("Unable to run diff-index pipeline in temporary repo %s (%s). Error: %v\nStderr: %s",
-			t.repo.FullName(), t.basePath, err, stderr)
-		return nil, fmt.Errorf("Unable to run diff-index pipeline in temporary repo %s. Error: %w\nStderr: %s",
-			t.repo.FullName(), err, stderr)
+		})
+	if err != nil && !git.IsErrCanceledOrKilled(err) {
+		log.Error("Unable to diff-index in temporary repo %s (%s). Error: %v\nStderr: %s", t.repo.FullName(), t.basePath, err, stderr)
+		return nil, fmt.Errorf("unable to run diff-index pipeline in temporary repo: %w", err)
 	}
 
-	diff.NumFiles, diff.TotalAddition, diff.TotalDeletion, err = git.GetDiffShortStat(t.ctx, t.basePath, git.TrustedCmdArgs{"--cached"}, "HEAD")
+	diff.NumFiles, diff.TotalAddition, diff.TotalDeletion, err = git.GetIndexShortStat(t.ctx, t.basePath, "HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +369,7 @@ func (t *TemporaryUploadRepository) DiffIndex() (*gitdiff.Diff, error) {
 // GetBranchCommit Gets the commit object of the given branch
 func (t *TemporaryUploadRepository) GetBranchCommit(branch string) (*git.Commit, error) {
 	if t.gitRepo == nil {
-		return nil, fmt.Errorf("repository has not been cloned")
+		return nil, errors.New("repository has not been cloned")
 	}
 	return t.gitRepo.GetBranchCommit(branch)
 }
@@ -400,7 +377,7 @@ func (t *TemporaryUploadRepository) GetBranchCommit(branch string) (*git.Commit,
 // GetCommit Gets the commit object of the given commit ID
 func (t *TemporaryUploadRepository) GetCommit(commitID string) (*git.Commit, error) {
 	if t.gitRepo == nil {
-		return nil, fmt.Errorf("repository has not been cloned")
+		return nil, errors.New("repository has not been cloned")
 	}
 	return t.gitRepo.GetCommit(commitID)
 }

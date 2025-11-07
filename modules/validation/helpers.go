@@ -9,9 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"code.gitea.io/gitea/modules/setting"
-
-	"github.com/gobwas/glob"
+	"forgejo.org/modules/setting"
 )
 
 var externalTrackerRegex = regexp.MustCompile(`({?)(?:user|repo|index)+?(}?)`)
@@ -50,29 +48,6 @@ func IsValidSiteURL(uri string) bool {
 	return false
 }
 
-// IsEmailDomainListed checks whether the domain of an email address
-// matches a list of domains
-func IsEmailDomainListed(globs []glob.Glob, email string) bool {
-	if len(globs) == 0 {
-		return false
-	}
-
-	n := strings.LastIndex(email, "@")
-	if n <= 0 {
-		return false
-	}
-
-	domain := strings.ToLower(email[n+1:])
-
-	for _, g := range globs {
-		if g.Match(domain) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // IsAPIURL checks if URL is current Gitea instance API URL
 func IsAPIURL(uri string) bool {
 	return strings.HasPrefix(strings.ToLower(uri), strings.ToLower(setting.AppURL+"api"))
@@ -98,6 +73,11 @@ func IsValidExternalURL(uri string) bool {
 	//       only if allowed by special setting
 
 	return true
+}
+
+// IsValidReleaseAssetURL checks if the URL is valid for external release assets
+func IsValidReleaseAssetURL(uri string) bool {
+	return IsValidURL(uri)
 }
 
 // IsValidExternalTrackerURLFormat checks if URL matches required syntax for external trackers

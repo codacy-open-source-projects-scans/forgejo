@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"testing"
 
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/optional"
+	"forgejo.org/models/db"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/optional"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,63 +130,6 @@ func TestListEmails(t *testing.T) {
 	assert.Greater(t, count, int64(len(emails)))
 }
 
-func TestEmailAddressValidate(t *testing.T) {
-	kases := map[string]error{
-		"abc@gmail.com":                  nil,
-		"132@hotmail.com":                nil,
-		"1-3-2@test.org":                 nil,
-		"1.3.2@test.org":                 nil,
-		"a_123@test.org.cn":              nil,
-		`first.last@iana.org`:            nil,
-		`first!last@iana.org`:            nil,
-		`first#last@iana.org`:            nil,
-		`first$last@iana.org`:            nil,
-		`first%last@iana.org`:            nil,
-		`first&last@iana.org`:            nil,
-		`first'last@iana.org`:            nil,
-		`first*last@iana.org`:            nil,
-		`first+last@iana.org`:            nil,
-		`first/last@iana.org`:            nil,
-		`first=last@iana.org`:            nil,
-		`first?last@iana.org`:            nil,
-		`first^last@iana.org`:            nil,
-		"first`last@iana.org":            nil,
-		`first{last@iana.org`:            nil,
-		`first|last@iana.org`:            nil,
-		`first}last@iana.org`:            nil,
-		`first~last@iana.org`:            nil,
-		`first;last@iana.org`:            user_model.ErrEmailCharIsNotSupported{`first;last@iana.org`},
-		".233@qq.com":                    user_model.ErrEmailInvalid{".233@qq.com"},
-		"!233@qq.com":                    nil,
-		"#233@qq.com":                    nil,
-		"$233@qq.com":                    nil,
-		"%233@qq.com":                    nil,
-		"&233@qq.com":                    nil,
-		"'233@qq.com":                    nil,
-		"*233@qq.com":                    nil,
-		"+233@qq.com":                    nil,
-		"-233@qq.com":                    user_model.ErrEmailInvalid{"-233@qq.com"},
-		"/233@qq.com":                    nil,
-		"=233@qq.com":                    nil,
-		"?233@qq.com":                    nil,
-		"^233@qq.com":                    nil,
-		"_233@qq.com":                    nil,
-		"`233@qq.com":                    nil,
-		"{233@qq.com":                    nil,
-		"|233@qq.com":                    nil,
-		"}233@qq.com":                    nil,
-		"~233@qq.com":                    nil,
-		";233@qq.com":                    user_model.ErrEmailCharIsNotSupported{";233@qq.com"},
-		"Foo <foo@bar.com>":              user_model.ErrEmailCharIsNotSupported{"Foo <foo@bar.com>"},
-		string([]byte{0xE2, 0x84, 0xAA}): user_model.ErrEmailCharIsNotSupported{string([]byte{0xE2, 0x84, 0xAA})},
-	}
-	for kase, err := range kases {
-		t.Run(kase, func(t *testing.T) {
-			assert.EqualValues(t, err, user_model.ValidateEmail(kase))
-		})
-	}
-}
-
 func TestGetActivatedEmailAddresses(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 
@@ -219,4 +162,39 @@ func TestGetActivatedEmailAddresses(t *testing.T) {
 			assert.Equal(t, testCase.expected, emails)
 		})
 	}
+}
+
+func TestDeletePrimaryEmailAddressOfUser(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	user, err := user_model.GetUserByName(db.DefaultContext, "org3")
+	require.NoError(t, err)
+	assert.Equal(t, "org3@example.com", user.Email)
+
+	require.NoError(t, user_model.DeletePrimaryEmailAddressOfUser(db.DefaultContext, user.ID))
+
+	user, err = user_model.GetUserByName(db.DefaultContext, "org3")
+	require.NoError(t, err)
+	assert.Empty(t, user.Email)
+
+	email, err := user_model.GetPrimaryEmailAddressOfUser(db.DefaultContext, user.ID)
+	assert.True(t, user_model.IsErrEmailAddressNotExist(err))
+	assert.Nil(t, email)
+}
+
+func TestActivateUserEmail(t *testing.T) {
+	defer unittest.OverrideFixtures("models/fixtures/TestActivateUserEmail")()
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	t.Run("Activate email", func(t *testing.T) {
+		require.NoError(t, user_model.ActivateUserEmail(t.Context(), 1001, "AnotherTestUserWithUpperCaseEmail@otto.splvs.net", true))
+
+		unittest.AssertExistsAndLoadBean(t, &user_model.EmailAddress{UID: 1001}, "is_activated = true")
+	})
+
+	t.Run("Deactivate email", func(t *testing.T) {
+		require.NoError(t, user_model.ActivateUserEmail(t.Context(), 1001, "AnotherTestUserWithUpperCaseEmail@otto.splvs.net", false))
+
+		unittest.AssertExistsAndLoadBean(t, &user_model.EmailAddress{UID: 1001}, "is_activated = false")
+	})
 }

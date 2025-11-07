@@ -10,11 +10,11 @@ import (
 	"regexp"
 	"strconv"
 
-	"code.gitea.io/gitea/modules/csv"
-	"code.gitea.io/gitea/modules/markup"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/translation"
-	"code.gitea.io/gitea/modules/util"
+	"forgejo.org/modules/csv"
+	"forgejo.org/modules/markup"
+	"forgejo.org/modules/setting"
+	"forgejo.org/modules/translation"
+	"forgejo.org/modules/util"
 )
 
 func init() {
@@ -37,9 +37,9 @@ func (Renderer) Extensions() []string {
 // SanitizerRules implements markup.Renderer
 func (Renderer) SanitizerRules() []setting.MarkupSanitizerRule {
 	return []setting.MarkupSanitizerRule{
-		{Element: "table", AllowAttr: "class", Regexp: regexp.MustCompile(`data-table`)},
-		{Element: "th", AllowAttr: "class", Regexp: regexp.MustCompile(`line-num`)},
-		{Element: "td", AllowAttr: "class", Regexp: regexp.MustCompile(`line-num`)},
+		{Element: "table", AllowAttr: "class", Regexp: regexp.MustCompile(`^data-table$`)},
+		{Element: "th", AllowAttr: "class", Regexp: regexp.MustCompile(`^line-num$`)},
+		{Element: "td", AllowAttr: "class", Regexp: regexp.MustCompile(`^line-num$`)},
 	}
 }
 

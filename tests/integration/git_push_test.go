@@ -9,16 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"code.gitea.io/gitea/models/db"
-	git_model "code.gitea.io/gitea/models/git"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/log"
-	repo_module "code.gitea.io/gitea/modules/repository"
-	"code.gitea.io/gitea/modules/test"
-	repo_service "code.gitea.io/gitea/services/repository"
+	"forgejo.org/models/db"
+	git_model "forgejo.org/models/git"
+	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
+	"forgejo.org/modules/log"
+	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/test"
+	repo_service "forgejo.org/services/repository"
+	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,10 @@ import (
 
 func forEachObjectFormat(t *testing.T, f func(t *testing.T, objectFormat git.ObjectFormat)) {
 	for _, objectFormat := range []git.ObjectFormat{git.Sha256ObjectFormat, git.Sha1ObjectFormat} {
+		if !git.SupportHashSha256 && objectFormat == git.Sha256ObjectFormat {
+			continue
+		}
+
 		t.Run(objectFormat.Name(), func(t *testing.T) {
 			f(t, objectFormat)
 		})
@@ -33,14 +38,14 @@ func forEachObjectFormat(t *testing.T, f func(t *testing.T, objectFormat git.Obj
 }
 
 func TestGitPush(t *testing.T) {
-	onGiteaRun(t, testGitPush)
+	onApplicationRun(t, testGitPush)
 }
 
 func testGitPush(t *testing.T, u *url.URL) {
 	forEachObjectFormat(t, func(t *testing.T, objectFormat git.ObjectFormat) {
 		t.Run("Push branches at once", func(t *testing.T) {
 			runTestGitPush(t, u, objectFormat, func(t *testing.T, gitPath string) (pushed, deleted []string) {
-				for i := 0; i < 100; i++ {
+				for i := 0; i < 10; i++ {
 					branchName := fmt.Sprintf("branch-%d", i)
 					pushed = append(pushed, branchName)
 					doGitCreateBranch(gitPath, branchName)(t)
@@ -88,7 +93,7 @@ func testGitPush(t *testing.T, u *url.URL) {
 
 		t.Run("Push branches one by one", func(t *testing.T) {
 			runTestGitPush(t, u, objectFormat, func(t *testing.T, gitPath string) (pushed, deleted []string) {
-				for i := 0; i < 100; i++ {
+				for i := 0; i < 10; i++ {
 					branchName := fmt.Sprintf("branch-%d", i)
 					doGitCreateBranch(gitPath, branchName)(t)
 					doGitPushTestRepository(gitPath, "origin", branchName)(t)
@@ -103,7 +108,7 @@ func testGitPush(t *testing.T, u *url.URL) {
 				doGitPushTestRepository(gitPath, "origin", "master")(t) // make sure master is the default branch instead of a branch we are going to delete
 				pushed = append(pushed, "master")
 
-				for i := 0; i < 100; i++ {
+				for i := 0; i < 10; i++ {
 					branchName := fmt.Sprintf("branch-%d", i)
 					pushed = append(pushed, branchName)
 					doGitCreateBranch(gitPath, branchName)(t)
@@ -139,6 +144,7 @@ func testGitPush(t *testing.T, u *url.URL) {
 }
 
 func runTestGitPush(t *testing.T, u *url.URL, objectFormat git.ObjectFormat, gitOperation func(t *testing.T, gitPath string) (pushed, deleted []string)) {
+	defer tests.PrintCurrentTest(t, 1)()
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 	repo, err := repo_service.CreateRepository(db.DefaultContext, user, user, repo_service.CreateRepoOptions{
 		Name:             "repo-to-push",
@@ -174,7 +180,7 @@ func runTestGitPush(t *testing.T, u *url.URL, objectFormat git.ObjectFormat, git
 
 	dbBranches := make([]*git_model.Branch, 0)
 	require.NoError(t, db.GetEngine(db.DefaultContext).Where("repo_id=?", repo.ID).Find(&dbBranches))
-	assert.Equalf(t, len(pushedBranches), len(dbBranches), "mismatched number of branches in db")
+	assert.Lenf(t, dbBranches, len(pushedBranches), "mismatched number of branches in db")
 	dbBranchesMap := make(map[string]*git_model.Branch, len(dbBranches))
 	for _, branch := range dbBranches {
 		dbBranchesMap[branch.Name] = branch
@@ -199,7 +205,7 @@ func runTestGitPush(t *testing.T, u *url.URL, objectFormat git.ObjectFormat, git
 }
 
 func TestOptionsGitPush(t *testing.T) {
-	onGiteaRun(t, testOptionsGitPush)
+	onApplicationRun(t, testOptionsGitPush)
 }
 
 func testOptionsGitPush(t *testing.T, u *url.URL) {
@@ -269,7 +275,10 @@ func testOptionsGitPush(t *testing.T, u *url.URL) {
 
 		t.Run("Collaborator with write access fails to change private & template via push options", func(t *testing.T) {
 			logChecker, cleanup := test.NewLogChecker(log.DEFAULT, log.TRACE)
-			logChecker.Filter("permission denied for changing repo settings").StopMark("Git push options validation")
+			logChecker.StopMark("Git push options validation")
+			defer cleanup()
+			sshLogChecker, cleanup := test.NewLogChecker("ssh", log.ERROR)
+			sshLogChecker.Filter("permission denied for changing repo settings")
 			defer cleanup()
 			branchName := "branch4"
 			doGitCreateBranch(gitPath, branchName)(t)
@@ -278,7 +287,8 @@ func testOptionsGitPush(t *testing.T, u *url.URL) {
 			require.NoError(t, err)
 			require.False(t, repo.IsPrivate)
 			require.False(t, repo.IsTemplate)
-			logFiltered, logStopped := logChecker.Check(5 * time.Second)
+			_, logStopped := logChecker.Check(5 * time.Second)
+			logFiltered, _ := sshLogChecker.Check(5 * time.Second)
 			assert.True(t, logStopped)
 			assert.True(t, logFiltered[0])
 		})

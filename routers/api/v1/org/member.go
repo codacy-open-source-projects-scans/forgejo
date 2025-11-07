@@ -7,22 +7,23 @@ import (
 	"net/http"
 	"net/url"
 
-	"code.gitea.io/gitea/models"
-	"code.gitea.io/gitea/models/organization"
-	"code.gitea.io/gitea/modules/setting"
-	api "code.gitea.io/gitea/modules/structs"
-	"code.gitea.io/gitea/routers/api/v1/user"
-	"code.gitea.io/gitea/routers/api/v1/utils"
-	"code.gitea.io/gitea/services/context"
-	"code.gitea.io/gitea/services/convert"
+	"forgejo.org/models"
+	"forgejo.org/models/organization"
+	"forgejo.org/modules/setting"
+	api "forgejo.org/modules/structs"
+	"forgejo.org/routers/api/v1/user"
+	"forgejo.org/routers/api/v1/utils"
+	"forgejo.org/services/context"
+	"forgejo.org/services/convert"
 )
 
 // listMembers list an organization's members
-func listMembers(ctx *context.APIContext, publicOnly bool) {
+func listMembers(ctx *context.APIContext, isMember bool) {
 	opts := &organization.FindOrgMembersOpts{
-		OrgID:       ctx.Org.Organization.ID,
-		PublicOnly:  publicOnly,
-		ListOptions: utils.GetListOptions(ctx),
+		Doer:         ctx.Doer,
+		IsDoerMember: isMember,
+		OrgID:        ctx.Org.Organization.ID,
+		ListOptions:  utils.GetListOptions(ctx),
 	}
 
 	count, err := organization.CountOrgMembers(ctx, opts)
@@ -73,16 +74,19 @@ func ListMembers(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	publicOnly := true
+	var (
+		isMember bool
+		err      error
+	)
+
 	if ctx.Doer != nil {
-		isMember, err := ctx.Org.Organization.IsOrgMember(ctx, ctx.Doer.ID)
+		isMember, err = ctx.Org.Organization.IsOrgMember(ctx, ctx.Doer.ID)
 		if err != nil {
 			ctx.Error(http.StatusInternalServerError, "IsOrgMember", err)
 			return
 		}
-		publicOnly = !isMember && !ctx.Doer.IsAdmin
 	}
-	listMembers(ctx, publicOnly)
+	listMembers(ctx, isMember)
 }
 
 // ListPublicMembers list an organization's public members
@@ -112,7 +116,7 @@ func ListPublicMembers(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	listMembers(ctx, true)
+	listMembers(ctx, false)
 }
 
 // IsMember check if a user is a member of an organization

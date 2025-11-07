@@ -42,6 +42,7 @@ import octiconIssueClosed from '../../public/assets/img/svg/octicon-issue-closed
 import octiconIssueOpened from '../../public/assets/img/svg/octicon-issue-opened.svg';
 import octiconItalic from '../../public/assets/img/svg/octicon-italic.svg';
 import octiconKebabHorizontal from '../../public/assets/img/svg/octicon-kebab-horizontal.svg';
+import octiconLightBulb from '../../public/assets/img/svg/octicon-light-bulb.svg';
 import octiconLink from '../../public/assets/img/svg/octicon-link.svg';
 import octiconListOrdered from '../../public/assets/img/svg/octicon-list-ordered.svg';
 import octiconListUnordered from '../../public/assets/img/svg/octicon-list-unordered.svg';
@@ -64,6 +65,7 @@ import octiconSidebarCollapse from '../../public/assets/img/svg/octicon-sidebar-
 import octiconSidebarExpand from '../../public/assets/img/svg/octicon-sidebar-expand.svg';
 import octiconSkip from '../../public/assets/img/svg/octicon-skip.svg';
 import octiconStar from '../../public/assets/img/svg/octicon-star.svg';
+import octiconStop from '../../public/assets/img/svg/octicon-stop.svg';
 import octiconStrikethrough from '../../public/assets/img/svg/octicon-strikethrough.svg';
 import octiconSync from '../../public/assets/img/svg/octicon-sync.svg';
 import octiconTable from '../../public/assets/img/svg/octicon-table.svg';
@@ -116,6 +118,7 @@ const svgs = {
   'octicon-issue-opened': octiconIssueOpened,
   'octicon-italic': octiconItalic,
   'octicon-kebab-horizontal': octiconKebabHorizontal,
+  'octicon-light-bulb': octiconLightBulb,
   'octicon-link': octiconLink,
   'octicon-list-ordered': octiconListOrdered,
   'octicon-list-unordered': octiconListUnordered,
@@ -138,6 +141,7 @@ const svgs = {
   'octicon-sidebar-expand': octiconSidebarExpand,
   'octicon-skip': octiconSkip,
   'octicon-star': octiconStar,
+  'octicon-stop': octiconStop,
   'octicon-strikethrough': octiconStrikethrough,
   'octicon-sync': octiconSync,
   'octicon-table': octiconTable,
@@ -190,7 +194,6 @@ export const SvgIcon = {
   props: {
     name: {type: String, required: true},
     size: {type: Number, default: 16},
-    className: {type: String, default: ''},
     symbolId: {type: String},
   },
   render() {
@@ -205,15 +208,7 @@ export const SvgIcon = {
     attrs[`^width`] = this.size;
     attrs[`^height`] = this.size;
 
-    // make the <SvgIcon class="foo" class-name="bar"> classes work together
-    const classes = [];
-    for (const cls of svgOuter.classList) {
-      classes.push(cls);
-    }
-    // TODO: drop the `className/class-name` prop in the future, only use "class" prop
-    if (this.className) {
-      classes.push(...this.className.split(/\s+/).filter(Boolean));
-    }
+    const classes = Array.from(svgOuter.classList);
     if (this.symbolId) {
       classes.push('tw-hidden', 'svg-symbol-container');
       svgInnerHtml = `<symbol id="${this.symbolId}" viewBox="${attrs['^viewBox']}">${svgInnerHtml}</symbol>`;

@@ -5,9 +5,11 @@ package repo
 
 import (
 	"context"
+	"fmt"
 
-	"code.gitea.io/gitea/models/db"
-	user_model "code.gitea.io/gitea/models/user"
+	"forgejo.org/models/db"
+	"forgejo.org/models/unit"
+	user_model "forgejo.org/models/user"
 
 	"xorm.io/builder"
 )
@@ -41,6 +43,22 @@ func HasForkedRepo(ctx context.Context, ownerID, repoID int64) bool {
 	return has
 }
 
+// HasForkedRepoLax checks if given user has already forked a repository with given ID,
+// or if it the target repository is itself a fork, whether the user has a fork of its base
+// (as that can also be used to make a PR).
+func HasForkedRepoLax(ctx context.Context, ownerID int64, baseRepo *Repository) bool {
+	query := db.GetEngine(ctx).
+		Table("repository").
+		Where("owner_id=?", ownerID)
+	if baseRepo.IsFork {
+		query = query.And("fork_id=? OR fork_id=?", baseRepo.ID, baseRepo.ForkID)
+	} else {
+		query = query.And("fork_id=?", baseRepo.ID)
+	}
+	has, _ := query.Exist()
+	return has
+}
+
 // GetUserFork return user forked repository from this repository, if not forked return nil
 func GetUserFork(ctx context.Context, repoID, userID int64) (*Repository, error) {
 	var forkedRepo Repository
@@ -54,9 +72,34 @@ func GetUserFork(ctx context.Context, repoID, userID int64) (*Repository, error)
 	return &forkedRepo, nil
 }
 
-// GetForks returns all the forks of the repository
-func GetForks(ctx context.Context, repo *Repository, listOptions db.ListOptions) ([]*Repository, error) {
-	sess := db.GetEngine(ctx)
+// GetUserForkLax returns the user forked repository from this repository.
+// If the passed repository is itself a fork and we have a fork of its base, it will be used as
+// a fall-back. Otherwise return nil.
+func GetUserForkLax(ctx context.Context, baseRepo *Repository, userID int64) (*Repository, error) {
+	var forkedRepo Repository
+	query := db.GetEngine(ctx).Where("owner_id = ?", userID)
+	if baseRepo.IsFork {
+		query = query.And("fork_id = ? OR fork_id = ?", baseRepo.ID, baseRepo.ForkID)
+		// prefer any repository that is marked as an exact fork of the target
+		// (ordering by a boolean means returning the rows where the condition is false first,
+		// hence the counter-intuitive condition)
+		query.OrderBy(fmt.Sprintf("fork_id != %d", baseRepo.ID))
+	} else {
+		query = query.And("fork_id = ?", baseRepo.ID)
+	}
+	has, err := query.Get(&forkedRepo)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return nil, nil
+	}
+	return &forkedRepo, nil
+}
+
+// GetForks returns all the forks of the repository that are visible to the user.
+func GetForks(ctx context.Context, repo *Repository, user *user_model.User, listOptions db.ListOptions) ([]*Repository, int64, error) {
+	sess := db.GetEngine(ctx).Where(AccessibleRepositoryCondition(user, unit.TypeInvalid))
 
 	var forks []*Repository
 	if listOptions.Page == 0 {
@@ -66,7 +109,8 @@ func GetForks(ctx context.Context, repo *Repository, listOptions db.ListOptions)
 		sess = db.SetSessionPagination(sess, &listOptions)
 	}
 
-	return forks, sess.Find(&forks, &Repository{ForkID: repo.ID})
+	count, err := sess.FindAndCount(&forks, &Repository{ForkID: repo.ID})
+	return forks, count, err
 }
 
 // IncrementRepoForkNum increment repository fork number

@@ -167,12 +167,14 @@ func verifyAuthWithOptions(options *common.VerifyOptions) func(ctx *context.Cont
 					return
 				}
 			} else if ctx.Req.URL.Path == "/user/settings/change_password" {
+				if ctx.Doer.MustHaveTwoFactor() {
+					ctx.Redirect(setting.AppSubURL + "/user/settings/security")
+					return
+				}
 				// make sure that the form cannot be accessed by users who don't need this
 				ctx.Redirect(setting.AppSubURL + "/")
 				return
-			}
-
-			if ctx.Doer.MustHaveTwoFactor() && !strings.HasPrefix(ctx.Req.URL.Path, "/user/settings/security") {
+			} else if ctx.Doer.MustHaveTwoFactor() && !strings.HasPrefix(ctx.Req.URL.Path, "/user/settings/security") {
 				hasTwoFactor, err := auth_model.HasTwoFactorByUID(ctx, ctx.Doer.ID)
 				if err != nil {
 					log.Error("Error getting 2fa: %s", err)
@@ -846,6 +848,7 @@ func registerRoutes(m *web.Route) {
 	reqRepoProjectsWriter := context.RequireRepoWriter(unit.TypeProjects)
 	reqRepoActionsReader := context.RequireRepoReader(unit.TypeActions)
 	reqRepoActionsWriter := context.RequireRepoWriter(unit.TypeActions)
+	reqRepoDelegateActionTrust := context.RequireRepoDelegateActionTrust()
 
 	reqPackageAccess := func(accessMode perm.AccessMode) func(ctx *context.Context) {
 		return func(ctx *context.Context) {
@@ -1215,6 +1218,7 @@ func registerRoutes(m *web.Route) {
 		m.Group("/{type:issues|pulls}", func() {
 			m.Group("/{index}", func() {
 				m.Post("/title", repo.UpdateIssueTitle)
+				m.Post("/action-user-trust", reqRepoActionsReader, actions.MustEnableActions, reqRepoDelegateActionTrust, repo.UpdateTrustWithPullRequestActions)
 				m.Post("/content", repo.UpdateIssueContent)
 				m.Post("/deadline", web.Bind(structs.EditDeadlineOption{}), repo.UpdateIssueDeadline)
 				m.Post("/watch", repo.IssueWatch)
@@ -1458,7 +1462,6 @@ func registerRoutes(m *web.Route) {
 							Post(web.Bind(actions.ViewRequest{}), actions.ViewPost)
 					})
 					m.Post("/cancel", reqRepoActionsWriter, actions.Cancel)
-					m.Post("/approve", reqRepoActionsWriter, actions.Approve)
 					m.Get("/artifacts", actions.ArtifactsView)
 					m.Get("/artifacts/{artifact_name_or_id}", actions.ArtifactsDownloadView)
 					m.Delete("/artifacts/{artifact_name}", reqRepoActionsWriter, actions.ArtifactsDeleteView)

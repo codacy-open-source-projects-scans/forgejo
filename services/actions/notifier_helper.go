@@ -26,7 +26,6 @@ import (
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
-	"forgejo.org/modules/translation"
 	"forgejo.org/modules/util"
 	webhook_module "forgejo.org/modules/webhook"
 	"forgejo.org/services/convert"
@@ -404,19 +403,27 @@ func handleWorkflows(
 		}
 
 		var jobs []*jobparser.SingleWorkflow
+		var errorCode actions_model.PreExecutionError
+		var errorDetails []any
 		if dwf.EventDetectionError != nil { // don't even bother trying to parse jobs due to event detection error
-			tr := translation.NewLocale(input.Doer.Language)
-			run.PreExecutionError = tr.TrString("actions.workflow.event_detection_error", dwf.EventDetectionError)
+			errorCode = actions_model.ErrorCodeEventDetectionError
+			errorDetails = []any{dwf.EventDetectionError.Error()}
 			run.Status = actions_model.StatusFailure
 			jobs = []*jobparser.SingleWorkflow{{
 				Name: dwf.EntryName,
 			}}
 		} else {
-			jobs, err = actions_module.JobParser(dwf.Content, jobparser.WithVars(vars))
+			jobs, err = actions_module.JobParser(dwf.Content,
+				jobparser.WithVars(vars),
+				// We don't have any job outputs yet, but `WithJobOutputs(...)` triggers JobParser to supporting its
+				// `IncompleteMatrix` tagging for any jobs that require the inputs of other jobs.
+				jobparser.WithJobOutputs(map[string]map[string]string{}),
+				jobparser.SupportIncompleteRunsOn(),
+			)
 			if err != nil {
 				log.Info("jobparser.Parse: invalid workflow, setting job status to failed: %v", err)
-				tr := translation.NewLocale(input.Doer.Language)
-				run.PreExecutionError = tr.TrString("actions.workflow.job_parsing_error", err)
+				errorCode = actions_model.ErrorCodeJobParsingError
+				errorDetails = []any{err.Error()}
 				run.Status = actions_model.StatusFailure
 				jobs = []*jobparser.SingleWorkflow{{
 					Name: dwf.EntryName,
@@ -434,7 +441,18 @@ func handleWorkflows(
 			}
 		}
 
-		if err := actions_model.InsertRun(ctx, run, jobs); err != nil {
+		err = db.WithTx(ctx, func(ctx context.Context) error {
+			// Transaction avoids any chance of a run being picked up in a Waiting state when we're about to put it into
+			// a PreExecutionError a millisecond later.
+			if err := actions_model.InsertRun(ctx, run, jobs); err != nil {
+				return err
+			}
+			if errorCode != 0 {
+				return FailRunPreExecutionError(ctx, run, errorCode, errorDetails)
+			}
+			return nil
+		})
+		if err != nil {
 			log.Error("InsertRun: %v", err)
 			continue
 		}
@@ -445,6 +463,11 @@ func handleWorkflows(
 			continue
 		}
 		CreateCommitStatus(ctx, alljobs...)
+
+		if err := consistencyCheckRun(ctx, run); err != nil {
+			log.Error("SanityCheckRun: %v", err)
+			continue
+		}
 	}
 	return nil
 }

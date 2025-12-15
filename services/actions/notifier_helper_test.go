@@ -216,7 +216,9 @@ func TestActionsNotifier_PreExecutionErrorInvalidJobs(t *testing.T) {
 	createdRun := runs[0]
 
 	assert.Equal(t, actions_model.StatusFailure, createdRun.Status)
-	assert.Contains(t, createdRun.PreExecutionError, "actions.workflow.job_parsing_error%!(EXTRA *fmt.wrapError=")
+	assert.Empty(t, createdRun.PreExecutionError)
+	assert.Equal(t, actions_model.ErrorCodeJobParsingError, createdRun.PreExecutionErrorCode)
+	assert.Equal(t, []any{"model.ReadWorkflow: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `hello, ...` into map[string]*model.Job"}, createdRun.PreExecutionErrorDetails)
 }
 
 func TestActionsNotifier_PreExecutionEventDetectionError(t *testing.T) {
@@ -239,7 +241,9 @@ func TestActionsNotifier_PreExecutionEventDetectionError(t *testing.T) {
 	createdRun := runs[0]
 
 	assert.Equal(t, actions_model.StatusFailure, createdRun.Status)
-	assert.Equal(t, "actions.workflow.event_detection_error%!(EXTRA *errors.errorString=nothing is not a valid event)", createdRun.PreExecutionError)
+	assert.Empty(t, createdRun.PreExecutionError)
+	assert.Equal(t, actions_model.ErrorCodeEventDetectionError, createdRun.PreExecutionErrorCode)
+	assert.Equal(t, []any{"nothing is not a valid event"}, createdRun.PreExecutionErrorDetails)
 }
 
 func TestActionsNotifier_handleWorkflows_setRunTrustForPullRequest(t *testing.T) {
@@ -251,6 +255,7 @@ func TestActionsNotifier_handleWorkflows_setRunTrustForPullRequest(t *testing.T)
 
 	testActionsNotifierPullRequest(t, repo, pr, &actions_module.DetectedWorkflow{
 		NeedApproval: true,
+		Content:      []byte("on: pull_request\njobs: { job_a: {} }"),
 	}, webhook_module.HookEventPullRequest)
 
 	runs, err := db.Find[actions_model.ActionRun](db.DefaultContext, actions_model.FindRunOptions{
@@ -264,4 +269,60 @@ func TestActionsNotifier_handleWorkflows_setRunTrustForPullRequest(t *testing.T)
 	assert.Equal(t, pr.Issue.PosterID, run.PullRequestPosterID)
 	assert.Equal(t, pr.ID, run.PullRequestID)
 	assert.True(t, run.NeedApproval)
+}
+
+func TestActionsNotifier_DynamicMatrix(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 10})
+	pr := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{ID: 3})
+
+	dw := &actions_module.DetectedWorkflow{
+		Content: []byte("{ on: pull_request, jobs: { j1: { strategy: { matrix: { dim1: \"${{ fromJSON(needs.other-job.outputs.some-output) }}\" } } } } }"),
+	}
+	testActionsNotifierPullRequest(t, repo, pr, dw, webhook_module.HookEventPullRequestSync)
+
+	runs, err := db.Find[actions_model.ActionRun](db.DefaultContext, actions_model.FindRunOptions{
+		RepoID: repo.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	run := runs[0]
+
+	jobs, err := db.Find[actions_model.ActionRunJob](t.Context(), actions_model.FindRunJobOptions{RunID: run.ID})
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	job := jobs[0]
+
+	// With a matrix that contains ${{ needs ... }} references, the only requirement to work is that when the job is
+	// first inserted it is tagged w/ incomplete_matrix
+	assert.Contains(t, string(job.WorkflowPayload), "incomplete_matrix: true")
+}
+
+func TestActionsNotifier_RunsOnNeeds(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 10})
+	pr := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{ID: 3})
+
+	dw := &actions_module.DetectedWorkflow{
+		Content: []byte("{ on: pull_request, jobs: { j1: { runs-on: \"${{ needs.other-job.outputs.some-output }}\" } } }"),
+	}
+	testActionsNotifierPullRequest(t, repo, pr, dw, webhook_module.HookEventPullRequestSync)
+
+	runs, err := db.Find[actions_model.ActionRun](db.DefaultContext, actions_model.FindRunOptions{
+		RepoID: repo.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	run := runs[0]
+
+	jobs, err := db.Find[actions_model.ActionRunJob](t.Context(), actions_model.FindRunJobOptions{RunID: run.ID})
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	job := jobs[0]
+
+	// With a runs-on that contains ${{ needs ... }} references, the only requirement to work is that when the job is
+	// first inserted it is tagged w/ incomplete_runs_on.
+	assert.Contains(t, string(job.WorkflowPayload), "incomplete_runs_on: true")
 }

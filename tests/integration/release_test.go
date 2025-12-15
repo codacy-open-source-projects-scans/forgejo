@@ -34,9 +34,18 @@ func createNewRelease(t *testing.T, session *TestSession, repoURL, tag, title st
 func createNewReleaseTarget(t *testing.T, session *TestSession, repoURL, tag, title, target string, preRelease, draft bool) {
 	req := NewRequest(t, "GET", repoURL+"/releases/new")
 	resp := session.MakeRequest(t, req, http.StatusOK)
-	htmlDoc := NewHTMLParser(t, resp.Body)
+	page := NewHTMLParser(t, resp.Body)
 
-	link, exists := htmlDoc.doc.Find("form.ui.form").Attr("action")
+	// Buttons that should be present
+	page.AssertElement(t, `form button[name="tag_only"]`, true) // Create tag
+	page.AssertElement(t, `form button[name="draft"]`, true)    // Save draft
+	assert.Contains(t, page.Find(`form .primary.button`).Text(), "Publish release")
+
+	// Buttons that should not be present
+	page.AssertElement(t, `form a.danger.button[data-modal-id="delete-release"]`, false)
+	page.AssertElement(t, `form a.button[href$="/releases"]`, false) // Cancel
+
+	link, exists := page.Find("form.ui.form").Attr("action")
 	assert.True(t, exists, "The template has changed")
 
 	postData := map[string]string{
@@ -179,6 +188,38 @@ func TestCreateReleaseDraft(t *testing.T) {
 	checkLatestReleaseAndCount(t, session, "/user2/repo1", "v0.0.1", translation.NewLocale("en-US").TrString("repo.release.draft"), 4)
 }
 
+func TestEditRelease(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user2")
+	page := NewHTMLParser(t, session.MakeRequest(t, NewRequest(t, "GET", "/user2/repo1/releases/edit/v1.0"), http.StatusOK).Body)
+
+	// Buttons that should be present
+	page.AssertElement(t, `form .danger.button[data-modal-id="delete-release"]`, true)
+	page.AssertElement(t, `form a.button[href$="/releases"]`, true) // Cancel
+	assert.Contains(t, page.Find(`form .primary.button`).Text(), "Update release")
+
+	// Buttons that should not be present
+	page.AssertElement(t, `form button[name="draft"]`, false)    // Save draft
+	page.AssertElement(t, `form button[name="tag_only"]`, false) // Create tag
+}
+
+func TestEditReleaseDraft(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user2")
+	page := NewHTMLParser(t, session.MakeRequest(t, NewRequest(t, "GET", "/user2/repo1/releases/edit/draft-release"), http.StatusOK).Body)
+
+	// Buttons that should be present
+	page.AssertElement(t, `form a.danger.button[data-modal-id="delete-release"]`, true)
+	page.AssertElement(t, `form a.button[href$="/releases"]`, true) // Cancel
+	page.AssertElement(t, `form .button[name="draft"]`, true)       // Save draft
+	assert.Contains(t, page.Find(`form .primary.button`).Text(), "Publish release")
+
+	// Buttons that should not be present
+	page.AssertElement(t, `form button[name="tag_only"]`, false) // Create tag
+}
+
 func TestCreateReleasePaging(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 
@@ -316,6 +357,24 @@ func TestViewReleaseListKeyword(t *testing.T) {
 	assert.Equal(t, []string{
 		"/user2/repo1/releases/tag/v1.1",
 	}, links)
+}
+
+func TestViewReleaseListKeywordNoPagination(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	link := repo.Link() + "/releases?q=testing&limit=1"
+
+	session := loginUser(t, "user1")
+	req := NewRequest(t, "GET", link)
+	rsp := session.MakeRequest(t, req, http.StatusOK)
+
+	htmlDoc := NewHTMLParser(t, rsp.Body)
+	releases := htmlDoc.Find("#release-list li.ui.grid")
+	assert.Equal(t, 1, releases.Length())
+
+	pagination := htmlDoc.Find("div.pagination")
+	assert.Zero(t, pagination.Length())
 }
 
 func TestReleaseOnCommit(t *testing.T) {

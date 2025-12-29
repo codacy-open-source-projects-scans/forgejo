@@ -113,7 +113,7 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 	}
 
 	if int64(len(inputs)) > setting.Actions.LimitDispatchInputs {
-		return nil, nil, errors.New("to many inputs")
+		return nil, nil, errors.New("too many inputs")
 	}
 
 	jobNames := util.KeysOfMap(wf.Jobs)
@@ -181,6 +181,8 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 		// `IncompleteMatrix` tagging for any jobs that require the inputs of other jobs.
 		jobparser.WithJobOutputs(map[string]map[string]string{}),
 		jobparser.SupportIncompleteRunsOn(),
+		jobparser.ExpandLocalReusableWorkflows(expandLocalReusableWorkflows(entry.Commit)),
+		jobparser.ExpandInstanceReusableWorkflows(expandInstanceReusableWorkflows(ctx)),
 	)
 	if err != nil {
 		return nil, nil, err

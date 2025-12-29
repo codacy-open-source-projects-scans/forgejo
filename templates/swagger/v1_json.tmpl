@@ -321,6 +321,20 @@
         ],
         "summary": "Get all runners, no matter whether they are global runners or scoped to an organization, user, or repository",
         "operationId": "getAdminRunners",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "page number of results to return (1-based)",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "page size of results",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/responses/ActionRunnerList"
@@ -330,6 +344,51 @@
           },
           "404": {
             "$ref": "#/responses/notFound"
+          }
+        }
+      }
+    },
+    "/admin/actions/runners/jobs": {
+      "get": {
+        "produces": [
+          "application/json"
+        ],
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get action run jobs",
+        "operationId": "adminGetActionRunJobs",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "a comma separated list of labels to search for",
+            "name": "labels",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/RunJobList"
+          },
+          "403": {
+            "$ref": "#/responses/forbidden"
+          }
+        }
+      }
+    },
+    "/admin/actions/runners/registration-token": {
+      "get": {
+        "produces": [
+          "application/json"
+        ],
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get a runner registration token for registering global runners",
+        "operationId": "adminGetRunnerRegistrationToken",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/RegistrationToken"
           }
         }
       }
@@ -1222,6 +1281,7 @@
     },
     "/admin/runners/jobs": {
       "get": {
+        "description": "This operation has been deprecated in Forgejo 15. Use [`/admin/actions/runners/jobs`](#/admin/adminGetActionRunJobs) instead.\n",
         "produces": [
           "application/json"
         ],
@@ -1230,6 +1290,7 @@
         ],
         "summary": "Search action jobs according to filter conditions",
         "operationId": "adminSearchRunJobs",
+        "deprecated": true,
         "parameters": [
           {
             "type": "string",
@@ -1250,6 +1311,7 @@
     },
     "/admin/runners/registration-token": {
       "get": {
+        "description": "This operation has been deprecated in Forgejo 15. Use [`/admin/actions/runners/registration-token`](#/admin/adminGetRunnerRegistrationToken) instead.\n",
         "produces": [
           "application/json"
         ],
@@ -1257,7 +1319,8 @@
           "admin"
         ],
         "summary": "Get a runner registration token for registering global runners",
-        "operationId": "adminGetRunnerRegistrationToken",
+        "operationId": "adminGetRegistrationToken",
+        "deprecated": true,
         "responses": {
           "200": {
             "$ref": "#/responses/RegistrationToken"
@@ -2627,6 +2690,18 @@
             "name": "org",
             "in": "path",
             "required": true
+          },
+          {
+            "type": "integer",
+            "description": "page number of results to return (1-based)",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "page size of results",
+            "name": "limit",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5308,6 +5383,18 @@
             "name": "repo",
             "in": "path",
             "required": true
+          },
+          {
+            "type": "integer",
+            "description": "page number of results to return (1-based)",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "page size of results",
+            "name": "limit",
+            "in": "query"
           }
         ],
         "responses": {
@@ -18737,6 +18824,20 @@
         ],
         "summary": "Get the user's runners",
         "operationId": "getUserRunners",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "page number of results to return (1-based)",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "page size of results",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/responses/ActionRunnerList"
@@ -29848,6 +29949,17 @@
         "type": "array",
         "items": {
           "$ref": "#/definitions/ActionRunner"
+        }
+      },
+      "headers": {
+        "Link": {
+          "type": "string",
+          "description": "Links to other pages, if any"
+        },
+        "X-Total-Count": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Total number of runners matching the search criteria (excluding page and limit)"
         }
       }
     },

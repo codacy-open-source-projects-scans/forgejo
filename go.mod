@@ -11,7 +11,7 @@ require (
 	code.forgejo.org/forgejo/go-rpmutils v1.0.0
 	code.forgejo.org/forgejo/levelqueue v1.0.0
 	code.forgejo.org/forgejo/reply v1.0.2
-	code.forgejo.org/forgejo/runner/v12 v12.3.1
+	code.forgejo.org/forgejo/runner/v12 v12.4.0
 	code.forgejo.org/go-chi/binding v1.0.1
 	code.forgejo.org/go-chi/cache v1.0.1
 	code.forgejo.org/go-chi/captcha v1.0.2
@@ -75,7 +75,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.11
 	github.com/markbates/goth v1.80.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/meilisearch/meilisearch-go v0.34.0
 	github.com/mholt/archives v0.1.5
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -97,7 +97,7 @@ require (
 	github.com/urfave/cli/v3 v3.5.0
 	github.com/valyala/fastjson v1.6.7
 	github.com/yohcop/openid-go v1.0.1
-	github.com/yuin/goldmark v1.7.13
+	github.com/yuin/goldmark v1.7.14
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	gitlab.com/gitlab-org/api/client-go v0.143.2
 	go.uber.org/mock v0.6.0

@@ -15,7 +15,7 @@ require (
 	code.forgejo.org/go-chi/binding v1.0.1
 	code.forgejo.org/go-chi/cache v1.0.1
 	code.forgejo.org/go-chi/captcha v1.0.2
-	code.forgejo.org/go-chi/session v1.0.2
+	code.forgejo.org/go-chi/session v1.0.3
 	code.gitea.io/sdk/gitea v0.21.0
 	code.superseriousbusiness.org/exif-terminator v0.11.1
 	code.superseriousbusiness.org/go-jpeg-image-structure/v2 v2.3.0
@@ -97,7 +97,7 @@ require (
 	github.com/urfave/cli/v3 v3.7.0
 	github.com/valyala/fastjson v1.6.10
 	github.com/yohcop/openid-go v1.0.1
-	github.com/yuin/goldmark v1.7.16
+	github.com/yuin/goldmark v1.7.17
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	gitlab.com/gitlab-org/api/client-go v0.143.2
 	go.uber.org/mock v0.6.0

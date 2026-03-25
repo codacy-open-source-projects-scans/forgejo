@@ -7,11 +7,11 @@ toolchain go1.26.1
 require (
 	code.forgejo.org/f3/gof3/v3 v3.11.15
 	code.forgejo.org/forgejo-contrib/go-libravatar v0.0.0-20260301104140-add494e31dab
-	code.forgejo.org/forgejo/actions-proto v0.6.0
+	code.forgejo.org/forgejo/actions-proto v0.7.0
 	code.forgejo.org/forgejo/go-rpmutils v1.0.0
 	code.forgejo.org/forgejo/levelqueue v1.0.0
 	code.forgejo.org/forgejo/reply v1.0.2
-	code.forgejo.org/forgejo/runner/v12 v12.7.2
+	code.forgejo.org/forgejo/runner/v12 v12.7.3
 	code.forgejo.org/go-chi/binding v1.0.1
 	code.forgejo.org/go-chi/cache v1.0.1
 	code.forgejo.org/go-chi/captcha v1.0.2

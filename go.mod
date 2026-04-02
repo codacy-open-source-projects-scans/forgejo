@@ -25,7 +25,7 @@ require (
 	github.com/42wim/sshsig v0.0.0-20250502153856-5100632e8920
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358
 	github.com/ProtonMail/go-crypto v1.4.1
-	github.com/PuerkitoBio/goquery v1.11.0
+	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.8.0
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb
@@ -66,7 +66,7 @@ require (
 	github.com/hashicorp/go-version v1.8.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/huandu/xstrings v1.5.0
-	github.com/inbucket/html2text v0.9.0
+	github.com/inbucket/html2text v1.0.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/jhillyerd/enmime/v2 v2.2.0
 	github.com/json-iterator/go v1.1.12
@@ -97,7 +97,7 @@ require (
 	github.com/urfave/cli/v3 v3.8.0
 	github.com/valyala/fastjson v1.6.10
 	github.com/yohcop/openid-go v1.0.1
-	github.com/yuin/goldmark v1.7.17
+	github.com/yuin/goldmark v1.8.2
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	gitlab.com/gitlab-org/api/client-go v0.143.2
 	go.uber.org/mock v0.6.0

@@ -1,4 +1,20 @@
 {
+	"counters.n_commits": {
+		"one": "%s commit",
+		"many": "%s commity"
+	},
+	"counters.n_branches": {
+		"one": "%s gałąź",
+		"many": "%s gałęzie"
+	},
+	"counters.n_tags": {
+		"one": "%s tag",
+		"many": "%s tagi"
+	},
+	"counters.n_releases": {
+		"one": "%s wydanie",
+		"many": "%s wydań"
+	},
 	"gpg.default_key": "Podpisano domyślnym kluczem",
 	"gpg.error.extract_sign": "Nie udało się wyłuskać podpisu",
 	"gpg.error.generate_hash": "Nie udało się wygenerować skrótu dla commitu",
@@ -19,7 +35,7 @@
 	"notification.mark_all_as_read": "Oznacz wszystkie jako przeczytane",
 	"notification.subscriptions": "Subskrypcje",
 	"notification.watching": "Obserwowane",
-	"notification.no_subscriptions": "Brak subskrypcji",
+	"notification.no_subscriptions": "Nie masz żadnych subskrypcji.",
 	"dropzone.default_message": "Upuść pliki tutaj lub kliknij, aby przesłać.",
 	"dropzone.invalid_input_type": "Nie można przesłać plików tego typu.",
 	"dropzone.file_too_big": "Rozmiar pliku ({{filesize}} MB) przekracza maksymalny rozmiar ({{maxFilesize}} MB).",
@@ -195,7 +211,7 @@
 	"release.n_downloads": {
 		"one": "%s pobranie",
 		"few": "%s pobrania",
-		"many": ""
+		"many": "%s pobrań"
 	},
 	"repo.pulls.merged_title_desc": {
 		"one": "scala %[1]d commit z <code>%[2]s</code> do <code>%[3]s</code> %[4]s",
@@ -236,6 +252,23 @@
 	"migrate.gitbucket.description": "Migruj dane z instancji GitBucket.",
 	"migrate.codebase.description": "Migracja danych z codebasehq.com.",
 	"migrate.forgejo.description": "Migruj dane z codeberg.org lub innych instancji Forgejo.",
+	"migrate.items.label": "Elementy migracji",
+	"migrate.items.wiki": "Wiki",
+	"migrate.items.milestones": "Kamienie milowe",
+	"migrate.items.labels": "Etykiety",
+	"migrate.items.issues": "Zgłoszenia",
+	"migrate.items.pull_requests": "Pull requesty",
+	"migrate.items.merge_requests": "Requesty scalające",
+	"migrate.items.releases": "Wydania",
+	"migrate.in_progress.git": "Migracja danych Git",
+	"migrate.in_progress.topics": "Migracja tematów",
+	"migrate.in_progress.milestones": "Migracja kamieni milowych",
+	"migrate.in_progress.labels": "Migracja etykiet",
+	"migrate.in_progress.releases": "Migracja wydań",
+	"migrate.in_progress.issues": "Migracja zgłoszeń",
+	"migrate.in_progress.pulls": "Migracja pull requestów",
+	"migrate.cancel.title": "Anuluj migrację",
+	"migrate.cancel.confirmation": "Czy chcesz anulować tę migrację?",
 	"relativetime.hours": {
 		"one": "godzinę temu",
 		"few": "%d godziny temu",
@@ -327,9 +360,9 @@
 	"repo.issues.filter_modified.hint": "Filtruj według daty ostatniej modyfikacji",
 	"issues.updated": "ostatnia aktualizacja: %s",
 	"repo.pulls.poster_manage_approval": "Zarządzaj zatwierdzeniami",
-	"repo.pulls.poster_requires_approval": "Kilka workflowów <a href=\"%[1]s\">oczekuje na sprawdzenie.</a>",
+	"repo.pulls.poster_requires_approval": "Kilka workflowów <a href=\"%[1]s\">oczekuje na sprawdzenie</a>.",
 	"repo.pulls.poster_requires_approval.tooltip": "Autor tego pull requesta nie jest zaufany do uruchamiania workflowów wyzwalanych przez pull requesty utworzone z forkowanego repozytorium lub z AGit. Workflowy wyzwalane przez zdarzenie `pull_request` nie zostaną uruchomione, dopóki nie zostaną zatwierdzone.",
-	"repo.pulls.poster_is_trusted": "Autor tego pull requesta jest <a href=\"%[1]s\">zawsze zaufany do uruchamiania workflowów.</a>",
+	"repo.pulls.poster_is_trusted": "Autor tego pull requesta jest <a href=\"%[1]s\">zawsze zaufany do uruchamiania workflowów</a>.",
 	"repo.pulls.poster_is_trusted.tooltip": "Autor tego pull requesta jest jawnie zaufany do uruchamiania workflowów wyzwalanych przez zdarzenia `pull_request`.",
 	"repo.pulls.poster_trust_deny.tooltip": "Workflowy oczekujące na zatwierdzenie zostaną anulowane.",
 	"repo.pulls.poster_trust_once.tooltip": "Workflowy wyzwalane przez zdarzenie `pull_request` zostaną uruchomione dla tego commita, ale będą wymagały zatwierdzenia dla wszystkich przyszłych commitów pushowanych do tego pull requesta.",
@@ -401,7 +434,7 @@
 	"repo.commit.load_tags_failed": "Wczytywanie tagów nie powiodło się z powodu wewnętrznego błędu serwera",
 	"teams.remove_all_repos.modal.header": "Usuń wszystkie repozytoria",
 	"teams.add_all_repos.modal.header": "Dodaj wszystkie repozytoria",
-	"search.fuzzy": "fFzzy",
+	"search.fuzzy": "fuzzy",
 	"moderation.comment.deletion_success": "Komentarz został usunięty.",
 	"moderation.issue.deletion_success": "Zgłoszenie zostało usunięte.",
 	"moderation.users.cannot_delete_admins": "Użytkownik z uprawnieniami administratora nie może zostać usunięty.",
@@ -462,5 +495,14 @@
 	"actions.runs.status_no_select": "Wszystkie stany",
 	"actions.runs.no_results": "Brak pasujących wyników.",
 	"actions.runs.no_workflows": "Nie ma jeszcze żadnych procesów pracy.",
-	"meta.last_line": " "
+	"meta.last_line": " ",
+	"repo.issues.filter_sort.hint_with_placeholder": "Sortuj wg: %s",
+	"issues.filters.labels.exclude": "Wyklucz etykietę",
+	"issues.filters.labels.unexclude": "Usuń wykluczenie",
+	"repo.pulls.auto_merge.no_permission": "Nie masz uprawnień aby anulować auto merge tego pull requesta.",
+	"settings.access_token.selected_repositories": {
+		"one": "Wybrane (%d) repozytorium",
+		"few": "Wybrane (%d) repozytoria",
+		"many": "Wybrane (%d) repozytoriów"
+	}
 }

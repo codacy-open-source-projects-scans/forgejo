@@ -1,4 +1,20 @@
 {
+	"counters.n_commits": {
+		"one": "%s提交",
+		"other": "%s提交"
+	},
+	"counters.n_branches": {
+		"one": "%s分支",
+		"other": "%s分支"
+	},
+	"counters.n_tags": {
+		"one": "%s标签",
+		"other": "%s标签"
+	},
+	"counters.n_releases": {
+		"one": "%s版本发布",
+		"other": "%s版本发布"
+	},
 	"gpg.default_key": "使用默认密钥签名",
 	"gpg.error.extract_sign": "无法提取签名",
 	"gpg.error.generate_hash": "无法生成提交散列",
@@ -284,6 +300,23 @@
 	"migrate.gitbucket.description": "从GitBucket实例迁移数据。",
 	"migrate.codebase.description": "从codebasehq.com迁移数据。",
 	"migrate.forgejo.description": "从codeberg.org或其他Forgejo实例迁移数据。",
+	"migrate.items.label": "迁移项目",
+	"migrate.items.wiki": "百科",
+	"migrate.items.milestones": "里程碑",
+	"migrate.items.labels": "标签",
+	"migrate.items.issues": "议题",
+	"migrate.items.pull_requests": "合并请求",
+	"migrate.items.merge_requests": "合并请求",
+	"migrate.items.releases": "版本发布",
+	"migrate.in_progress.git": "迁移Git数据",
+	"migrate.in_progress.topics": "正在迁移主题",
+	"migrate.in_progress.milestones": "正在迁移里程碑",
+	"migrate.in_progress.labels": "正在迁移标签",
+	"migrate.in_progress.releases": "正在迁移发布",
+	"migrate.in_progress.issues": "正在迁移议题",
+	"migrate.in_progress.pulls": "正在迁移合并请求",
+	"migrate.cancel.title": "取消迁移",
+	"migrate.cancel.confirmation": "您想要取消此次迁移吗？",
 	"warning.repository.out_of_sync": "此仓库的数据库表示已脱同步。如果在向此仓库推送提交后仍出现此警告，请联系管理员。",
 	"admin.config.security": "安全设置",
 	"settings.twofa_unroll_unavailable": "你的账户必须启用双因子认证，无法禁用。",
@@ -515,5 +548,28 @@
 	"actions.runners.task_list_admin": "最近在此运行器上的任务",
 	"actions.runners.task_list_user": "最近在此运行器上的此用户的任务",
 	"graphs.recent_commits.title": "过去一年的提交总数",
-	"graphs.code_frequency.title": "{0}的历史提交频率"
+	"graphs.code_frequency.title": "{0}的历史提交频率",
+	"settings.permissions_access_specific_repositories": "仅限部分仓库",
+	"settings.access_token.selected_repositories": "选中的仓库（%d）",
+	"settings.access_token.available_repositories": "可用的仓库",
+	"settings.access_token.no_repositories_selected": "未选中任何仓库。",
+	"settings.access_token.no_repositories_found": "没有找到任何仓库。",
+	"settings.access_token.remove": "移除“%s”",
+	"settings.access_token.resource_all_help": "允许访问所有资源。",
+	"settings.access_token.resource_public_only_help": "仅允许访问公开的仓库和组织。",
+	"settings.access_token.resource_specific_repo_help": "仅允许访问特定的一组仓库，允许对所有公开仓库的只读访问，仅能启用对仓库和工单的访问权限。",
+	"settings.access_token.admin_disabled": "禁用管理权限。",
+	"actions.runs.scheduled_description": "计划运行，提交<a href=\"%[1]s\">%[2]s</a>",
+	"actions.runs.workflow_dispatch_description": "运行提交<a href=\"%[1]s\">%[2]s</a>，由<a href=\"%[3]s\">%[4]s</a>触发",
+	"actions.runs.on_push_description": "提交<a href=\"%[1]s\">%[2]s</a>，由<a href=\"%[3]s\">%[4]s</a>推送",
+	"actions.secrets.edit_button": "编辑机密“%s”",
+	"actions.secrets.mutation.header": "编辑机密“%s”",
+	"actions.secrets.mutation.success_message": "机密“%s”已更新。",
+	"actions.secrets.mutation.failure_message": "无法更新机密“%s”。",
+	"actions.secrets.mutation.name_description": "机密的名字只能包含字母、数字和下划线，不能以FORGEJO_、GITEA_、GITHUB_或数字开头，会自动转换为大写格式。",
+	"actions.secrets.mutation.value_description": "现有值不会显示，留空以保留现有值。特殊字符会被保留，CRLF（Windows式换行符）会被转换为LF；要保留换行符，请使用Base64编码。",
+	"members.add_member": "添加成员",
+	"members.user": "用户",
+	"members.user_already_member": "该用户已经是当前组织的成员。",
+	"members.no_team_selected": "组织成员至少属于一个团队。"
 }

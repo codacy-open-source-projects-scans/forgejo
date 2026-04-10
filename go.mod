@@ -74,8 +74,8 @@ require (
 	github.com/klauspost/compress v1.18.5
 	github.com/klauspost/cpuid/v2 v2.2.11
 	github.com/markbates/goth v1.82.0
-	github.com/mattn/go-isatty v0.0.20
-	github.com/mattn/go-sqlite3 v1.14.40
+	github.com/mattn/go-isatty v0.0.21
+	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/meilisearch/meilisearch-go v0.36.0
 	github.com/mholt/archives v0.1.5
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -107,7 +107,7 @@ require (
 	golang.org/x/net v0.52.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.42.0
+	golang.org/x/sys v0.43.0
 	golang.org/x/text v0.35.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df

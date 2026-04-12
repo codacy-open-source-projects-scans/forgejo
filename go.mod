@@ -17,7 +17,7 @@ require (
 	code.forgejo.org/go-chi/captcha v1.0.2
 	code.forgejo.org/go-chi/session v1.0.4
 	code.gitea.io/sdk/gitea v0.21.0
-	code.superseriousbusiness.org/exif-terminator v0.11.1
+	code.superseriousbusiness.org/exif-terminator v0.11.2
 	code.superseriousbusiness.org/go-jpeg-image-structure/v2 v2.3.0
 	codeberg.org/gusted/mcaptcha v0.0.0-20220723083913-4f3072e1d570
 	connectrpc.com/connect v1.19.1
@@ -52,7 +52,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/go-openapi/spec v0.22.3
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/go-webauthn/webauthn v0.16.1
+	github.com/go-webauthn/webauthn v0.16.4
 	github.com/gobwas/glob v0.2.3
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f
 	github.com/gogs/go-gogs-client v0.0.0-20210131175652-1d7215cd8d85
@@ -102,13 +102,13 @@ require (
 	gitlab.com/gitlab-org/api/client-go v0.143.2
 	go.uber.org/mock v0.6.0
 	go.yaml.in/yaml/v3 v3.0.4
-	golang.org/x/crypto v0.49.0
-	golang.org/x/image v0.38.0
-	golang.org/x/net v0.52.0
+	golang.org/x/crypto v0.50.0
+	golang.org/x/image v0.39.0
+	golang.org/x/net v0.53.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.43.0
-	golang.org/x/text v0.35.0
+	golang.org/x/text v0.36.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 	gopkg.in/ini.v1 v1.67.0
@@ -167,7 +167,7 @@ require (
 	github.com/dsoprea/go-utility/v2 v2.0.0-20221003172846-a3e1774ef349 // indirect
 	github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43 // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-ap/errors v0.0.0-20260208110149-e1b309365966 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
@@ -187,7 +187,7 @@ require (
 	github.com/go-openapi/swag/typeutils v0.25.4 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/go-webauthn/x v0.2.2 // indirect
+	github.com/go-webauthn/x v0.2.3 // indirect
 	github.com/go-xmlfmt/xmlfmt v0.0.0-20191208150333-d5b6f63a941b // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
@@ -245,7 +245,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/tinylib/msgp v1.6.1 // indirect
+	github.com/tinylib/msgp v1.6.3 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/assert v1.3.0 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
@@ -256,9 +256,9 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.3 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
-	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
+	golang.org/x/tools v0.43.0 // indirect
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

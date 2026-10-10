@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	auth_model "forgejo.org/models/auth"
 	"forgejo.org/models/db"
@@ -19,7 +20,9 @@ import (
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/packages/npm"
 	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,6 +93,8 @@ func TestPackageNpm(t *testing.T) {
 
 	t.Run("Upload", func(t *testing.T) {
 		defer tests.PrintCurrentTest(t)()
+		timeutil.MockSet(time.Unix(47176870, 0))
+		defer timeutil.MockUnset()
 
 		req := NewRequestWithBody(t, "PUT", root, strings.NewReader(buildUpload(packageVersion))).
 			AddTokenAuth(token)
@@ -124,8 +129,8 @@ func TestPackageNpm(t *testing.T) {
 		defer tests.PrintCurrentTest(t)()
 
 		// create a repository
-		repo, _, f := tests.CreateDeclarativeRepo(t, user, "", []unit_model.Type{unit_model.TypeCode}, nil, nil)
-		defer f()
+		repo := forgery.CreateRepository(t, user, nil)
+		forgery.EnableRepoUnit(t, repo, unit_model.TypeCode, nil)
 
 		// link to public repository
 		req := NewRequest(t, "POST", fmt.Sprintf("/api/v1/packages/%s/npm/%s/-/link/%s", user.Name, url.QueryEscape(packageName), repo.Name)).AddTokenAuth(tokenWritePackage)
@@ -186,6 +191,9 @@ func TestPackageNpm(t *testing.T) {
 		assert.Contains(t, result.DistTags, packageTag)
 		assert.Equal(t, packageVersion, result.DistTags[packageTag])
 		assert.Equal(t, packageAuthor, result.Author.Name)
+		if assert.Len(t, result.Time, 1) {
+			assert.WithinDuration(t, time.Now(), result.Time[packageVersion], time.Minute)
+		}
 		assert.Contains(t, result.Versions, packageVersion)
 		pmv := result.Versions[packageVersion]
 		assert.Equal(t, fmt.Sprintf("%s@%s", packageName, packageVersion), pmv.ID)

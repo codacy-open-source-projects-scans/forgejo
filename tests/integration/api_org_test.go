@@ -49,6 +49,7 @@ func TestAPIOrgCreate(t *testing.T) {
 	assert.Equal(t, org.Website, apiOrg.Website)
 	assert.Equal(t, org.Location, apiOrg.Location)
 	assert.Equal(t, org.Visibility, apiOrg.Visibility)
+	assert.False(t, apiOrg.Created.IsZero())
 
 	unittest.AssertExistsAndLoadBean(t, &user_model.User{
 		Name:      org.UserName,
@@ -99,6 +100,67 @@ func TestAPIOrgCreate(t *testing.T) {
 	assert.Equal(t, "user1", users[0].UserName)
 }
 
+func TestAPIOrgCreateWithWebsite(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	token := getUserToken(t, "user1", auth_model.AccessTokenScopeWriteOrganization)
+
+	t.Run("an HTTPS website under default schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		// setting website should work
+		org := api.CreateOrgOption{
+			UserName: "user1_org",
+			FullName: "User1's organization",
+			Website:  "https://codeberg.org",
+		}
+		req := NewRequestWithJSON(t, "POST", "/api/v1/orgs", &org).AddTokenAuth(token)
+		resp := MakeRequest(t, req, http.StatusCreated)
+
+		var apiOrg api.Organization
+		DecodeJSON(t, resp, &apiOrg)
+
+		assert.Equal(t, org.Website, apiOrg.Website)
+	})
+
+	t.Run("an H3 website under default schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		// setting website should not work
+		org := api.CreateOrgOption{
+			UserName: "user1_org_2",
+			FullName: "User1's second organization",
+			Website:  "h3://codeberg.org",
+		}
+		req := NewRequestWithJSON(t, "POST", "/api/v1/orgs", &org).AddTokenAuth(token)
+		resp := MakeRequest(t, req, http.StatusUnprocessableEntity)
+
+		var apiErr api.APIError
+		DecodeJSON(t, resp, &apiErr)
+
+		assert.Equal(t, "[Website]: Url", apiErr.Message)
+	})
+
+	t.Run("an H3 website under custom schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+		defer test.MockProtect(&setting.Service.ValidSiteURLSchemes)()
+		setting.Service.ValidSiteURLSchemes = append(setting.Service.ValidSiteURLSchemes, "h3")
+
+		// setting website should work
+		org := api.CreateOrgOption{
+			UserName: "user1_org_2",
+			FullName: "User1's second organization",
+			Website:  "h3://codeberg.org",
+		}
+		req := NewRequestWithJSON(t, "POST", "/api/v1/orgs", &org).AddTokenAuth(token)
+		resp := MakeRequest(t, req, http.StatusCreated)
+
+		var apiOrg api.Organization
+		DecodeJSON(t, resp, &apiOrg)
+
+		assert.Equal(t, org.Website, apiOrg.Website)
+	})
+}
+
 func TestAPIOrgRename(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	token := getUserToken(t, "user1", auth_model.AccessTokenScopeWriteOrganization)
@@ -127,12 +189,17 @@ func TestAPIOrgEdit(t *testing.T) {
 	session := loginUser(t, "user1")
 
 	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteOrganization)
+	fullName := "Org3 organization new full name"
+	description := "A new description"
+	website := "https://try.gitea.io/new"
+	location := "Beijing"
+	private := "private"
 	org := api.EditOrgOption{
-		FullName:    "Org3 organization new full name",
-		Description: "A new description",
-		Website:     "https://try.gitea.io/new",
-		Location:    "Beijing",
-		Visibility:  "private",
+		FullName:    &fullName,
+		Description: &description,
+		Website:     &website,
+		Location:    &location,
+		Visibility:  &private,
 	}
 	req := NewRequestWithJSON(t, "PATCH", "/api/v1/orgs/org3", &org).
 		AddTokenAuth(token)
@@ -142,11 +209,91 @@ func TestAPIOrgEdit(t *testing.T) {
 	DecodeJSON(t, resp, &apiOrg)
 
 	assert.Equal(t, "org3", apiOrg.Name)
-	assert.Equal(t, org.FullName, apiOrg.FullName)
-	assert.Equal(t, org.Description, apiOrg.Description)
-	assert.Equal(t, org.Website, apiOrg.Website)
-	assert.Equal(t, org.Location, apiOrg.Location)
-	assert.Equal(t, org.Visibility, apiOrg.Visibility)
+	assert.Equal(t, fullName, apiOrg.FullName)
+	assert.Equal(t, description, apiOrg.Description)
+	assert.Equal(t, website, apiOrg.Website)
+	assert.Equal(t, location, apiOrg.Location)
+	assert.Equal(t, private, apiOrg.Visibility)
+
+	// reverting back to public should work and not alter any other attribute
+	public := "public"
+	org2 := api.EditOrgOption{
+		Visibility: &public,
+	}
+	req2 := NewRequestWithJSON(t, "PATCH", "/api/v1/orgs/org3", &org2).
+		AddTokenAuth(token)
+	resp2 := MakeRequest(t, req2, http.StatusOK)
+
+	var apiOrg2 api.Organization
+	DecodeJSON(t, resp2, &apiOrg2)
+
+	assert.Equal(t, "org3", apiOrg.Name)
+	assert.Equal(t, fullName, apiOrg2.FullName)
+	assert.Equal(t, description, apiOrg2.Description)
+	assert.Equal(t, website, apiOrg2.Website)
+	assert.Equal(t, location, apiOrg2.Location)
+	assert.Equal(t, public, apiOrg2.Visibility)
+}
+
+func TestAPIOrgEditWebsite(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	const orgName = "org3"
+	urlStr := fmt.Sprintf("/api/v1/orgs/%s", orgName)
+	session := loginUser(t, "user1")
+	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteOrganization)
+
+	t.Run("an HTTPS website under default schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		// changing website should work
+		website := "https://codeberg.org"
+		org := api.EditOrgOption{
+			Website: &website,
+		}
+		req := NewRequestWithJSON(t, "PATCH", urlStr, &org).AddTokenAuth(token)
+		resp := MakeRequest(t, req, http.StatusOK)
+
+		var apiOrg api.Organization
+		DecodeJSON(t, resp, &apiOrg)
+
+		assert.Equal(t, website, apiOrg.Website)
+	})
+
+	t.Run("an H3 website under default schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		// changing website should not work
+		website := "h3://codeberg.org"
+		org := api.EditOrgOption{
+			Website: &website,
+		}
+		req := NewRequestWithJSON(t, "PATCH", urlStr, &org).AddTokenAuth(token)
+		resp := MakeRequest(t, req, http.StatusUnprocessableEntity)
+
+		var apiErr api.APIError
+		DecodeJSON(t, resp, &apiErr)
+
+		assert.Equal(t, "[Website]: Url", apiErr.Message)
+	})
+
+	t.Run("an H3 website under custom schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+		defer test.MockProtect(&setting.Service.ValidSiteURLSchemes)()
+		setting.Service.ValidSiteURLSchemes = append(setting.Service.ValidSiteURLSchemes, "h3")
+
+		// changing website should work
+		website := "h3://codeberg.org"
+		org := api.EditOrgOption{
+			Website: &website,
+		}
+		req := NewRequestWithJSON(t, "PATCH", urlStr, &org).AddTokenAuth(token)
+		resp := MakeRequest(t, req, http.StatusOK)
+
+		var apiOrg api.Organization
+		DecodeJSON(t, resp, &apiOrg)
+
+		assert.Equal(t, website, apiOrg.Website)
+	})
 }
 
 func TestAPIOrgEditBadVisibility(t *testing.T) {
@@ -154,12 +301,17 @@ func TestAPIOrgEditBadVisibility(t *testing.T) {
 	session := loginUser(t, "user1")
 
 	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteOrganization)
+	fullName := "Org3 organization new full name"
+	description := "A new description"
+	website := "https://try.gitea.io/new"
+	location := "Beijing"
+	visibility := "badvisibility"
 	org := api.EditOrgOption{
-		FullName:    "Org3 organization new full name",
-		Description: "A new description",
-		Website:     "https://try.gitea.io/new",
-		Location:    "Beijing",
-		Visibility:  "badvisibility",
+		FullName:    &fullName,
+		Description: &description,
+		Website:     &website,
+		Location:    &location,
+		Visibility:  &visibility,
 	}
 	req := NewRequestWithJSON(t, "PATCH", "/api/v1/orgs/org3", &org).
 		AddTokenAuth(token)
@@ -172,13 +324,13 @@ func TestAPIOrgDeny(t *testing.T) {
 
 	orgName := "user1_org"
 	req := NewRequestf(t, "GET", "/api/v1/orgs/%s", orgName)
-	MakeRequest(t, req, http.StatusNotFound)
+	MakeRequest(t, req, http.StatusForbidden)
 
 	req = NewRequestf(t, "GET", "/api/v1/orgs/%s/repos", orgName)
-	MakeRequest(t, req, http.StatusNotFound)
+	MakeRequest(t, req, http.StatusForbidden)
 
 	req = NewRequestf(t, "GET", "/api/v1/orgs/%s/members", orgName)
-	MakeRequest(t, req, http.StatusNotFound)
+	MakeRequest(t, req, http.StatusForbidden)
 }
 
 func TestAPIGetAll(t *testing.T) {

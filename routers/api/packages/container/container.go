@@ -158,8 +158,9 @@ func Authenticate(ctx *context.Context) {
 
 	// If there's an API scope, ensure it propagates.
 	scope := ctx.Authentication.Scope().ValueOrZeroValue()
+	exp := ctx.Authentication.ExpiresAt()
 
-	token, err := packages_service.CreateAuthorizationToken(u, scope)
+	token, err := packages_service.CreateAuthorizationToken(u, scope, exp)
 	if err != nil {
 		apiError(ctx, http.StatusInternalServerError, err)
 		return
@@ -541,8 +542,7 @@ func UploadManifest(ctx *context.Context) {
 
 	digest, err := container_service.ProcessManifest(ctx, *mci, buf)
 	if err != nil {
-		var namedError *container_service.NamedError
-		if errors.As(err, &namedError) {
+		if namedError, ok := errors.AsType[*container_service.NamedError](err); ok {
 			apiErrorDefined(ctx, namedError)
 		} else if errors.Is(err, container_model.ErrContainerBlobNotExist) {
 			apiErrorDefined(ctx, container_service.ErrBlobUnknown)

@@ -7,7 +7,7 @@ import {
   initRepoIssueAssignMe, reloadConfirmDraftComment,
 } from './repo-issue.js';
 import {initUnicodeEscapeButton} from './repo-unicode-escape.js';
-import {svg} from '../svg.js';
+import {svg} from '../svg.ts';
 import {htmlEscape} from 'escape-goat';
 import {initRepoBranchTagSelector} from './repo-branch-tag-selector.js';
 import {
@@ -15,6 +15,7 @@ import {
 } from './repo-common.js';
 import {initCompLabelEdit} from './comp/LabelEdit.js';
 import {initRepoDiffConversationNav} from './repo-diff.js';
+import {syncSuggestionBatchUI} from './repo-suggestion.js';
 import {showErrorToast} from '../modules/toast.js';
 import {initCommentContent, initMarkupContent} from '../markup/content.js';
 import {initCompReactionSelector} from './comp/ReactionSelector.js';
@@ -24,10 +25,10 @@ import {initRepoPullRequestCommitStatus} from './repo-issue-pr-status.js';
 import {hideElem, showElem} from '../utils/dom.js';
 import {getComboMarkdownEditor, initComboMarkdownEditor} from './comp/ComboMarkdownEditor.js';
 import {attachRefIssueContextPopup} from './contextpopup.js';
-import {POST} from '../modules/fetch.js';
+import {POST} from '../modules/fetch.ts';
 import {MarkdownQuote} from '@github/quote-selection';
-import {toAbsoluteUrl} from '../utils.js';
-import {initDropzone, initGlobalShowModal, initDisabledInputs} from './common-global.js';
+import {toAbsoluteUrl} from '../utils.ts';
+import {initDropzone, initDisabledInputs} from './common-global.js';
 
 export function initRepoCommentForm() {
   const $commentForm = $('.comment.form');
@@ -331,6 +332,9 @@ async function onEditContent(event) {
         context: editContentZone.getAttribute('data-context'),
         content_version: editContentZone.getAttribute('data-content-version'),
       });
+      // tells the server which batch button to render with the refreshed suggestion (Files tab vs Conversation)
+      const batchMode = editContentZone.getAttribute('data-batch-mode');
+      if (batchMode) params.append('batch_mode', batchMode);
       const files = dropzone?.element?.querySelectorAll('.files [name=files]') ?? [];
       for (const fileInput of files) {
         params.append('files[]', fileInput.value);
@@ -351,6 +355,12 @@ async function onEditContent(event) {
         rawContent.textContent = comboMarkdownEditor.value();
         const refIssues = renderContent.querySelectorAll('p .ref-issue');
         attachRefIssueContextPopup(refIssues);
+      }
+      // refresh the server-rendered suggestion diff(s) so an added/changed suggestion shows without a reload
+      for (const old of segment.querySelectorAll('.suggestion-diff')) old.remove();
+      if (data.suggestions) {
+        renderContent.insertAdjacentHTML('afterend', data.suggestions);
+        syncSuggestionBatchUI(); // re-apply batch state to the freshly injected buttons
       }
       const content = segment;
       if (!content.querySelector('.dropzone-attachments')) {
@@ -373,11 +383,15 @@ async function onEditContent(event) {
   comboMarkdownEditor = getComboMarkdownEditor(editContentZone.querySelector('.combo-markdown-editor'));
   if (!comboMarkdownEditor) {
     editContentZone.innerHTML = document.getElementById('issue-comment-editor-template').innerHTML;
+    // the suggestion toolbar button only makes sense for a proposed-side code comment; hide it otherwise
+    if (!editContentZone.hasAttribute('data-suggestion-line')) {
+      editContentZone.querySelector('button[data-md-action="suggestion"]')?.classList.add('tw-hidden');
+    }
     initDisabledInputs(editContentZone);
     const dropzone = editContentZone.querySelector('.dropzone');
-    if (!dropzone.dropzone) await initDropzone(dropzone, editContentZone);
+    if (dropzone && !dropzone.dropzone) await initDropzone(dropzone, editContentZone);
     comboMarkdownEditor = await initComboMarkdownEditor(editContentZone.querySelector('.combo-markdown-editor'));
-    dropzone.dropzone.emit('reload');
+    dropzone?.dropzone?.emit('reload');
     editContentZone.addEventListener('ce-quick-submit', saveAndRefresh);
     editContentZone.querySelector('button[data-button-name="cancel-edit"]').addEventListener('click', cancelAndReset);
     editContentZone.querySelector('button[data-button-name="save-edit"]').addEventListener('click', saveAndRefresh);
@@ -385,8 +399,6 @@ async function onEditContent(event) {
     const tabEditor = editContentZone.querySelector('.combo-markdown-editor').querySelector('.switch > [data-tab-for=markdown-writer]');
     tabEditor?.click();
   }
-
-  initGlobalShowModal();
 
   // Show write/preview tab and copy raw content as needed
   showElem(editContentZone);

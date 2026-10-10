@@ -4,6 +4,7 @@
 package setting
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,13 +16,13 @@ import (
 	"forgejo.org/modules/jwtx"
 	"forgejo.org/modules/keying"
 	"forgejo.org/modules/log"
+	"forgejo.org/modules/util"
 )
 
 var (
 	// Security settings
 	InstallLock                        bool
 	SecretKey                          string
-	InternalToken                      string // internal access token
 	LogInRememberDays                  int
 	GlobalTwoFactorRequirement         TwoFactorRequirementType
 	CookieRememberName                 string
@@ -121,10 +122,10 @@ func loadSecretFromURI(uri string) (string, error) {
 	}
 }
 
-// createSymmeticSigningKey creates a new symmetric signing key and saves it to
+// createSymmetricSigningKey creates a new symmetric signing key and saves it to
 // the setting named cfgSecret (usually [PFX_]SECRET) in section cfgSection
-func createSymmeticSigningKeyCfg(rootCfg ConfigProvider, cfgSection, cfgSecret string) (*[]byte, error) {
-	jwtSecretBytes, jwtSecretBase64 := generate.NewJwtSecret()
+func createSymmetricSigningKeyCfg(rootCfg ConfigProvider, cfgSection, cfgSecret string, secretBytes []byte) error {
+	jwtSecretBase64 := base64.RawURLEncoding.EncodeToString(secretBytes)
 	saveCfg, err := rootCfg.PrepareSaving()
 	if err == nil {
 		rootCfg.Section(cfgSection).Key(cfgSecret).SetValue(jwtSecretBase64)
@@ -132,16 +133,16 @@ func createSymmeticSigningKeyCfg(rootCfg ConfigProvider, cfgSection, cfgSecret s
 		err = saveCfg.Save()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("save %s.%s failed: %v", cfgSection, cfgSecret, err)
+		return fmt.Errorf("save %s.%s failed: %v", cfgSection, cfgSecret, err)
 	}
-	return &jwtSecretBytes, nil
+	return nil
 }
 
-// loadSymmeticSigningKey loads a signing key and creates it unless present
+// loadSymmetricSigningKey loads a signing key and creates it unless present
 // loads from [pfx]SECRET_URI
 // loads from or saves to [pfx]SECRET
 // in section sec
-func loadSymmeticSigningKeyCfg(rootCfg ConfigProvider, sec ConfigSection, pfx string) (*[]byte, error) {
+func loadSymmetricSigningKeyCfg(rootCfg ConfigProvider, sec ConfigSection, pfx string) (*[]byte, error) {
 	cfgSecretURI := pfx + "SECRET_URI"
 	cfgSecret := pfx + "SECRET"
 
@@ -152,12 +153,17 @@ func loadSymmeticSigningKeyCfg(rootCfg ConfigProvider, sec ConfigSection, pfx st
 	}
 
 	log.Info("[%s] %s or %s failed loading: %v - creating new key", sec.Name(), cfgSecret, cfgSecretURI, err)
-	return createSymmeticSigningKeyCfg(rootCfg, sec.Name(), cfgSecret)
+	secret = util.CryptoRandomBytes(32)
+	err = createSymmetricSigningKeyCfg(rootCfg, sec.Name(), cfgSecret, secret)
+	if err == nil {
+		return &secret, nil
+	}
+	return nil, err
 }
 
-// loadAsymmeticSigningKey loads a signing key from [pfx]SIGNING_PRIVATE_KEY_FILE
+// loadAsymmetricSigningKey loads a signing key from [pfx]SIGNING_PRIVATE_KEY_FILE
 // or creates it if it does not exist
-func loadAsymmeticSigningKeyPath(sec ConfigSection, pfx, defaultFile string) *string {
+func loadAsymmetricSigningKeyPath(sec ConfigSection, pfx, defaultFile string) *string {
 	cfgFile := pfx + "SIGNING_PRIVATE_KEY_FILE"
 	keyPath := sec.Key(cfgFile).MustString(defaultFile)
 	if !filepath.IsAbs(keyPath) {
@@ -166,33 +172,133 @@ func loadAsymmeticSigningKeyPath(sec ConfigSection, pfx, defaultFile string) *st
 	return &keyPath
 }
 
-type checkKeyCfg func(rootCfg ConfigProvider, cfgSection, pfx string) error
+type (
+	checkFunc func(rootCfg ConfigProvider, cfgSection, pfx string) error
+	checkSpec struct {
+		algCheck      func(algorithm string) bool
+		validAlgs     *[]string
+		forbiddenCfgs []string
+	}
+	checkKeyCfg struct {
+		signing      checkFunc
+		verification checkFunc
+	}
+)
+
+func checkSigningSpec(rootCfg ConfigProvider, cfgSection, pfx string, cspec checkSpec) error {
+	sec := rootCfg.Section(cfgSection)
+	cfgAlg := pfx + "SIGNING_ALGORITHM"
+
+	if sec.HasKey(cfgAlg) {
+		alg := sec.Key(cfgAlg).String()
+		if !cspec.algCheck(alg) {
+			return fmt.Errorf("Unexpected algorithm: %s = %s, needs to be one of %v",
+				cfgAlg, alg, *cspec.validAlgs)
+		}
+	}
+
+	for _, cfg := range cspec.forbiddenCfgs {
+		cfg = pfx + cfg
+		if sec.HasKey(cfg) {
+			return fmt.Errorf("Invalid config key: %s - must be removed", cfg)
+		}
+	}
+
+	return nil
+}
+
+func checkValidationSpec(rootCfg ConfigProvider, cfgSection, pfx string, cspec checkSpec) error {
+	sec := rootCfg.Section(cfgSection)
+	cfg := pfx + "KEYS_ACCEPTED"
+
+	if !sec.HasKey(cfg) {
+		return nil
+	}
+
+	for _, spec := range sec.Key(cfg).Strings(" ") {
+		algo, _, found := strings.Cut(spec, ":")
+		if !found {
+			// error to be handled by loadVerificationKeyCfg
+			continue
+		}
+
+		if !cspec.algCheck(algo) {
+			return fmt.Errorf("Unexpected algorithm: %s = %s, needs to be one of %v",
+				cfg, algo, *cspec.validAlgs)
+		}
+	}
+	return nil
+}
+
+////////////////
+// onlyAsymmetric(): Allow only asymmetric algorithms and their config
+
+var specAsymmetric = checkSpec{
+	jwtx.IsValidAsymmetricAlgorithm,
+	&jwtx.ValidAsymmetricAlgorithms,
+	[]string{"SECRET_URI", "SECRET"},
+}
+
+func checkSigningOnlyAsymmetric(rootCfg ConfigProvider, cfgSection, pfx string) error {
+	return checkSigningSpec(rootCfg, cfgSection, pfx, specAsymmetric)
+}
+
+func checkValidationOnlyAsymmetric(rootCfg ConfigProvider, cfgSection, pfx string) error {
+	return checkValidationSpec(rootCfg, cfgSection, pfx, specAsymmetric)
+}
 
 func onlyAsymmetric() checkKeyCfg {
-	return func(rootCfg ConfigProvider, cfgSection, pfx string) error {
-		sec := rootCfg.Section(cfgSection)
-		cfgAlg := pfx + "SIGNING_ALGORITHM"
+	return checkKeyCfg{
+		signing:      checkSigningOnlyAsymmetric,
+		verification: checkValidationOnlyAsymmetric,
+	}
+}
 
-		if sec.HasKey(cfgAlg) {
-			alg := sec.Key(cfgAlg).String()
-			if !jwtx.IsValidAsymmetricAlgorithm(alg) {
-				return fmt.Errorf("Unexpected algorithm: %s = %s, needs to be one of %v",
-					cfgAlg, alg, jwtx.ValidAsymmetricAlgorithms)
-			}
-		}
+////////////////
+// onlySymmetric(): Allow only symmetric algorithms and their config
 
-		noCfg := []string{
-			pfx + "SECRET_URI",
-			pfx + "SECRET",
-		}
+var specSymmetric = checkSpec{
+	jwtx.IsValidSymmetricAlgorithm,
+	&jwtx.ValidSymmetricAlgorighms,
+	[]string{"SIGNING_PRIVATE_KEY_FILE"},
+}
 
-		for _, cfg := range noCfg {
-			if sec.HasKey(cfg) {
-				return fmt.Errorf("Invalid config key: %s - must be removed", cfg)
-			}
-		}
+func checkSigningOnlySymmetric(rootCfg ConfigProvider, cfgSection, pfx string) error {
+	return checkSigningSpec(rootCfg, cfgSection, pfx, specSymmetric)
+}
 
-		return nil
+func checkValidationOnlySymmetric(rootCfg ConfigProvider, cfgSection, pfx string) error {
+	return checkValidationSpec(rootCfg, cfgSection, pfx, specSymmetric)
+}
+
+func onlySymmetric() checkKeyCfg {
+	return checkKeyCfg{
+		signing:      checkSigningOnlySymmetric,
+		verification: checkValidationOnlySymmetric,
+	}
+}
+
+////////////////
+// onlyHS256(): Allow only HS256
+
+var specHS256 = checkSpec{
+	func(alg string) bool { return (alg == "HS256") },
+	&[]string{"HS256"},
+	[]string{"SIGNING_PRIVATE_KEY_FILE"},
+}
+
+func checkSigningOnlyHS256(rootCfg ConfigProvider, cfgSection, pfx string) error {
+	return checkSigningSpec(rootCfg, cfgSection, pfx, specHS256)
+}
+
+func checkValidationOnlyHS256(rootCfg ConfigProvider, cfgSection, pfx string) error {
+	return checkValidationSpec(rootCfg, cfgSection, pfx, specHS256)
+}
+
+func onlyHS256() checkKeyCfg {
+	return checkKeyCfg{
+		signing:      checkSigningOnlyHS256,
+		verification: checkValidationOnlyHS256,
 	}
 }
 
@@ -206,7 +312,10 @@ func onlyAsymmetric() checkKeyCfg {
 
 func loadSigningKeyCfg(rootCfg ConfigProvider, cfgSection, pfx, defaultAlg, defaultPrivateKeyFile string, checks ...checkKeyCfg) (*jwtx.SigningKeyCfg, error) {
 	for _, check := range checks {
-		err := check(rootCfg, cfgSection, pfx)
+		if check.signing == nil {
+			continue
+		}
+		err := check.signing(rootCfg, cfgSection, pfx)
 		if err != nil {
 			return nil, err
 		}
@@ -221,9 +330,9 @@ func loadSigningKeyCfg(rootCfg ConfigProvider, cfgSection, pfx, defaultAlg, defa
 	var err error
 
 	if jwtx.IsValidSymmetricAlgorithm(algorithm) {
-		cfg.SecretBytes, err = loadSymmeticSigningKeyCfg(rootCfg, sec, pfx)
+		cfg.SecretBytes, err = loadSymmetricSigningKeyCfg(rootCfg, sec, pfx)
 	} else if jwtx.IsValidAsymmetricAlgorithm(algorithm) {
-		cfg.PrivateKeyPath = loadAsymmeticSigningKeyPath(sec, pfx, defaultPrivateKeyFile)
+		cfg.PrivateKeyPath = loadAsymmetricSigningKeyPath(sec, pfx, defaultPrivateKeyFile)
 	} else {
 		err = fmt.Errorf("invalid algorithm: %s = %s", cfgAlg, algorithm)
 	}
@@ -231,32 +340,140 @@ func loadSigningKeyCfg(rootCfg ConfigProvider, cfgSection, pfx, defaultAlg, defa
 	return &cfg, err
 }
 
-func loadKeyCfg(rootCfg ConfigProvider, cfgSection, pfx, defaultAlg, defaultPrivateKeyFile string, checks ...checkKeyCfg) (*jwtx.KeyCfg, error) {
-	signing, err := loadSigningKeyCfg(rootCfg, cfgSection, pfx, defaultAlg, defaultPrivateKeyFile, checks...)
+// expand file URLs with wildcards (see filepath.Glob())
+//
+// NB: via url.Parse() / .RequestURI() we already support a non-standard file:<name>
+// URL scheme (no authority), this is another extension
+func expandFileURItoPaths(uri string) ([]string, error) {
+	var parsedURI *url.URL
+
+	parsedURI, err := url.Parse(uri)
 	if err != nil {
-		err = fmt.Errorf("[%s] %v", cfgSection, err)
 		return nil, err
 	}
-	return &jwtx.KeyCfg{Signing: signing}, nil
+	if parsedURI.Scheme != "file" {
+		return nil, fmt.Errorf("Unsupported URI-Scheme %q in %q", parsedURI.Scheme, uri)
+	}
+
+	file := parsedURI.RequestURI()
+	if !filepath.IsAbs(file) {
+		file = filepath.Join(AppDataPath, file)
+	}
+
+	files, err := filepath.Glob(file)
+	// for no matches/malformed patterh, return the input, ENOFILE will be hit later
+	if files == nil || err != nil {
+		return []string{file}, nil
+	}
+	return files, nil
 }
 
-// generateSaveInternalToken generates and saves the internal token to app.ini
-func generateSaveInternalToken(rootCfg ConfigProvider) {
-	token, err := generate.NewInternalToken()
-	if err != nil {
-		log.Fatal("Error generate internal token: %v", err)
+// for passing expandFileURItoPaths to loadSecretFromURI, which we use to retain
+// compatibility
+func prependFile(in []string) (out []string) {
+	for _, f := range in {
+		out = append(out, "file:"+f)
+	}
+	return out
+}
+
+// loadVerificationKeyCfg() loads additional keys to accept for verification
+//
+// [pfx]KEYS_ACCEPTED = <alg>:[<base64>|<uri>] <alg>:[<base64>|<uri>] ...
+func loadVerificationKeyCfg(rootCfg ConfigProvider, cfgSection, pfx string, checks ...checkKeyCfg) ([]*jwtx.VerificationKeyCfg, error) {
+	for _, check := range checks {
+		if check.verification == nil {
+			continue
+		}
+		err := check.verification(rootCfg, cfgSection, pfx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	InternalToken = token
-	saveCfg, err := rootCfg.PrepareSaving()
-	if err != nil {
-		log.Fatal("Error saving internal token: %v", err)
+	sec := rootCfg.Section(cfgSection)
+	cfg := pfx + "KEYS_ACCEPTED"
+
+	if !sec.HasKey(cfg) {
+		return nil, nil
 	}
-	rootCfg.Section("security").Key("INTERNAL_TOKEN").SetValue(token)
-	saveCfg.Section("security").Key("INTERNAL_TOKEN").SetValue(token)
-	if err = saveCfg.Save(); err != nil {
-		log.Fatal("Error saving internal token: %v", err)
+	var vcfgs []*jwtx.VerificationKeyCfg
+	for _, spec := range sec.Key(cfg).Strings(" ") {
+		algo, uri, found := strings.Cut(spec, ":")
+		if !found {
+			return nil, fmt.Errorf("Seperator : not found in %s spec %s", cfg, spec)
+		}
+
+		err := func() error {
+			if jwtx.IsValidSymmetricAlgorithm(algo) {
+				var b64s []string
+
+				if strings.ContainsRune(uri, ':') {
+					paths, err := expandFileURItoPaths(uri)
+					// ignore error here, let loadSecretFromURI generate it
+					if err == nil {
+						paths = prependFile(paths)
+					} else {
+						paths = []string{uri}
+					}
+					for _, path := range paths {
+						b64, err := loadSecretFromURI(path)
+						if err != nil {
+							return err
+						}
+						b64s = append(b64s, b64)
+					}
+				} else {
+					b64s = []string{uri}
+				}
+				for _, b64 := range b64s {
+					secret, err := generate.DecodeJwtSecret(b64)
+					if err != nil {
+						return err
+					}
+					vcfgs = append(vcfgs, &jwtx.VerificationKeyCfg{
+						Algorithm:   algo,
+						SecretBytes: &secret,
+					})
+				}
+			} else if jwtx.IsValidAsymmetricAlgorithm(algo) {
+				paths, err := expandFileURItoPaths(uri)
+				if err != nil {
+					return err
+				}
+				for _, path := range paths {
+					vcfgs = append(vcfgs, &jwtx.VerificationKeyCfg{
+						Algorithm:     algo,
+						PublicKeyPath: &path,
+					})
+				}
+			} else {
+				return fmt.Errorf("Invalid algorithm %s in %s", algo, cfg)
+			}
+			return nil
+		}()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", cfg, err)
+		}
 	}
+	return vcfgs, nil
+}
+
+func loadKeyCfg(rootCfg ConfigProvider, cfgSection, pfx, defaultAlg, defaultPrivateKeyFile string, checks ...checkKeyCfg) (*jwtx.KeyCfg, error) {
+	var err error
+	kCfg := &jwtx.KeyCfg{}
+
+	kCfg.Signing, err = loadSigningKeyCfg(rootCfg, cfgSection, pfx, defaultAlg, defaultPrivateKeyFile, checks...)
+
+	if err == nil {
+		kCfg.Verification, err = loadVerificationKeyCfg(rootCfg, cfgSection, pfx, checks...)
+	}
+
+	if err == nil {
+		return kCfg, nil
+	}
+	err = fmt.Errorf("[%s] %v", cfgSection, err)
+	return nil, err
 }
 
 func loadSecurityFrom(rootCfg ConfigProvider) {
@@ -301,13 +518,6 @@ func loadSecurityFrom(rootCfg ConfigProvider) {
 	PasswordCheckPwn = sec.Key("PASSWORD_CHECK_PWN").MustBool(false)
 	SuccessfulTokensCacheSize = sec.Key("SUCCESSFUL_TOKENS_CACHE_SIZE").MustInt(20)
 
-	InternalToken = loadSecret(sec, "INTERNAL_TOKEN_URI", "INTERNAL_TOKEN")
-	if InstallLock && InternalToken == "" {
-		// if Gitea has been installed but the InternalToken hasn't been generated (upgrade from an old release), we should generate
-		// some users do cluster deployment, they still depend on this auto-generating behavior.
-		generateSaveInternalToken(rootCfg)
-	}
-
 	cfgdata := sec.Key("PASSWORD_COMPLEXITY").Strings(",")
 	if len(cfgdata) == 0 {
 		cfgdata = []string{"off"}
@@ -328,6 +538,10 @@ func loadSecurityFrom(rootCfg ConfigProvider) {
 	// warn if the setting is set to false explicitly
 	if sectionHasDisableQueryAuthToken && !DisableQueryAuthToken {
 		log.Warn("Enabling Query API Auth tokens is not recommended. DISABLE_QUERY_AUTH_TOKEN will be removed in Forgejo v13.0.0.")
+	}
+
+	if sec.HasKey("INTERNAL_TOKEN") || sec.HasKey("INTERNAL_TOKEN_URI") {
+		log.Error("INTERNAL_TOKEN and INTERNAL_TOKEN_URI have been deprecated. Internal communication now happens over a UNIX socket, see the [server].INTERNAL_LISTENER_PATH setting.")
 	}
 }
 

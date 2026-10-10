@@ -119,6 +119,8 @@ type swaggerParameterBodies struct {
 	CreateTeamOption api.CreateTeamOption
 	// in:body
 	EditTeamOption api.EditTeamOption
+	// in:body
+	AcceptTeamInviteOptions api.AcceptTeamInviteOptions
 
 	// in:body
 	AddTimeOption api.AddTimeOption
@@ -242,6 +244,9 @@ type swaggerParameterBodies struct {
 
 	// in:body
 	NoteOptions api.NoteOptions
+
+	// in:body
+	IssueLockOption api.IssueLockOption
 
 	// in:body
 	RegisterRunnerOptions api.RegisterRunnerOptions

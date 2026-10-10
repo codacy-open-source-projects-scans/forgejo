@@ -74,7 +74,7 @@ test.describe('Workflow Authenticated user2', () => {
   test('Disable/enable workflow', async ({page}) => {
     await page.goto('/user2/test_workflows/actions?workflow=test-dispatch.yml');
 
-    const menuOpener = page.locator('.filter.menu details.dropdown > summary');
+    const menuOpener = page.locator('.filter.menu .dialog-dropdown .opener');
     const disableButton = page.locator('a[data-url^="/user2/test_workflows/actions/disable"]');
     const enableButton = page.locator('a[data-url^="/user2/test_workflows/actions/enable"]');
     const disabledLabel = page.locator('.vertical.menu .item.active .ui.label').getByText('Disabled');
@@ -84,6 +84,7 @@ test.describe('Workflow Authenticated user2', () => {
     await expect(disableButton).toBeHidden();
     await expect(enableButton).toBeHidden();
 
+    await expect(menuOpener).toHaveAttribute('aria-label', 'More actions');
     await menuOpener.click();
 
     // The current "Enabled" state is what previous tests left, but this test is built to not care
@@ -267,5 +268,19 @@ test.describe('workflow list dynamic refresh', () => {
     await simulatePollingInterval(page);
     await expect(page.getByText('All Actors')).toBeVisible();
     await expect(page.locator('[aria-expanded="true"]')).toHaveCount(1);
+  });
+});
+
+test('check that options dropdown doesn\'t overflow', async ({page}) => {
+  await page.setViewportSize({
+    width: 500,
+    height: 1440,
+  });
+  await page.goto('/user2/test_workflows/actions');
+
+  await page.locator('.run-list-item-right + .dialog-dropdown').first().click();
+
+  await expect(page.locator('.run-list-item-right + .dialog-dropdown > dialog').first()).toBeInViewport({
+    ratio: 1,
   });
 });

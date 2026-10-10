@@ -6,6 +6,7 @@ package webhook
 import (
 	"testing"
 
+	actions_model "forgejo.org/models/actions"
 	webhook_model "forgejo.org/models/webhook"
 	"forgejo.org/modules/json"
 	api "forgejo.org/modules/structs"
@@ -148,19 +149,19 @@ good job`, pl.Message)
 		pl, err := tc.Wiki(p)
 		require.NoError(t, err)
 
-		assert.Equal(t, `[test/repo] New wiki page &#39;<a href="http://localhost:3000/test/repo/wiki/index" rel="nofollow">index</a>&#39; (Wiki change comment) by user1`, pl.Message)
+		assert.Equal(t, `[test/repo] New wiki page &#34;<a href="http://localhost:3000/test/repo/wiki/index" rel="nofollow">index</a>&#34; (Wiki change comment) by user1`, pl.Message)
 
 		p.Action = api.HookWikiEdited
 		pl, err = tc.Wiki(p)
 		require.NoError(t, err)
 
-		assert.Equal(t, `[test/repo] Wiki page &#39;<a href="http://localhost:3000/test/repo/wiki/index" rel="nofollow">index</a>&#39; edited (Wiki change comment) by user1`, pl.Message)
+		assert.Equal(t, `[test/repo] Wiki page &#34;<a href="http://localhost:3000/test/repo/wiki/index" rel="nofollow">index</a>&#34; edited (Wiki change comment) by user1`, pl.Message)
 
 		p.Action = api.HookWikiDeleted
 		pl, err = tc.Wiki(p)
 		require.NoError(t, err)
 
-		assert.Equal(t, `[test/repo] Wiki page &#39;<a href="http://localhost:3000/test/repo/wiki/index" rel="nofollow">index</a>&#39; deleted by user1`, pl.Message)
+		assert.Equal(t, `[test/repo] Wiki page &#34;<a href="http://localhost:3000/test/repo/wiki/index" rel="nofollow">index</a>&#34; deleted by user1`, pl.Message)
 	})
 
 	t.Run("Release", func(t *testing.T) {
@@ -170,6 +171,208 @@ good job`, pl.Message)
 		require.NoError(t, err)
 
 		assert.Equal(t, `[test/repo] Release created: <a href="http://localhost:3000/test/repo/releases/tag/v1.0" rel="nofollow">v1.0</a> by user1`, pl.Message)
+	})
+
+	t.Run("WorkflowRun", func(t *testing.T) {
+		testCases := []struct {
+			runStatus    actions_model.Status
+			expectedText string
+		}{
+			{
+				runStatus: actions_model.StatusBlocked,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; is blocked
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+			{
+				runStatus: actions_model.StatusCancelled,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; was cancelled
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+			{
+				runStatus: actions_model.StatusFailure,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; has failed
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+			{
+				runStatus: actions_model.StatusRunning,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; has started running
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+			{
+				runStatus: actions_model.StatusSkipped,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; was skipped
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+			{
+				runStatus: actions_model.StatusSuccess,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; has completed successfully
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+			{
+				runStatus: actions_model.StatusWaiting,
+				expectedText: `[acme/test] Workflow run &#34;Update README.md&#34; is waiting
+
+Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.`,
+			},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.runStatus.String(), func(t *testing.T) {
+				inputPayload := &api.WorkflowRunPayload{
+					Action: api.HookNewWorkflowRunAttempt,
+					Run: &api.ActionRun{
+						Title:   "Update README.md",
+						Status:  testCase.runStatus.String(),
+						HTMLURL: "https://example.com/acme/test/actions/runs/197719",
+						Repo: &api.Repository{
+							FullName: "acme/test",
+						},
+						TriggerUser: &api.User{
+							UserName:  "jane",
+							AvatarURL: "https://example.com/avatars/7dc9cf?size=64",
+						},
+					},
+				}
+
+				payload, err := tc.WorkflowRun(inputPayload)
+				require.NoError(t, err)
+
+				assert.Equal(t, testCase.expectedText, payload.Message)
+			})
+		}
+	})
+
+	t.Run("WorkflowJob", func(t *testing.T) {
+		testCases := []struct {
+			jobStatus    actions_model.Status
+			expectedText string
+		}{
+			{
+				jobStatus: actions_model.StatusBlocked,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; is blocked
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+			{
+				jobStatus: actions_model.StatusCancelled,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; was cancelled
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+			{
+				jobStatus: actions_model.StatusFailure,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; has failed
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+			{
+				jobStatus: actions_model.StatusRunning,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; has started running
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+			{
+				jobStatus: actions_model.StatusSkipped,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; was skipped
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+			{
+				jobStatus: actions_model.StatusSuccess,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; has completed successfully
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+			{
+				jobStatus: actions_model.StatusWaiting,
+				expectedText: `[acme/test] Workflow job &#34;build-and-test&#34; is waiting
+
+Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.`,
+			},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.jobStatus.String(), func(t *testing.T) {
+				inputPayload := &api.WorkflowJobPayload{
+					Action: api.HookNewWorkflowJobAttempt,
+					Job: &api.ActionRunJob{
+						Name:    "build-and-test",
+						HTMLURL: "https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1",
+						Status:  testCase.jobStatus.String(),
+					},
+					Run: &api.ActionRun{
+						Title: "Update README.md",
+						Repo: &api.Repository{
+							FullName: "acme/test",
+						},
+						TriggerUser: &api.User{
+							UserName:  "jane",
+							AvatarURL: "https://example.com/avatars/7dc9cf?size=64",
+						},
+					},
+				}
+
+				payload, err := tc.WorkflowJob(inputPayload)
+				require.NoError(t, err)
+
+				assert.Equal(t, testCase.expectedText, payload.Message)
+			})
+		}
 	})
 }
 

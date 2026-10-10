@@ -16,6 +16,7 @@ import (
 	"forgejo.org/models/db"
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/modules/git"
+	giturl "forgejo.org/modules/git/url"
 	"forgejo.org/modules/gitrepo"
 	"forgejo.org/modules/lfs"
 	"forgejo.org/modules/log"
@@ -24,6 +25,7 @@ import (
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/timeutil"
 	"forgejo.org/modules/util"
+	migrations_allowlist "forgejo.org/services/migrations/allowlist"
 )
 
 var stripExitStatus = regexp.MustCompile(`exit status \d+ - `)
@@ -35,7 +37,7 @@ func addPushMirrorRemote(ctx context.Context, m *repo_model.PushMirror, addr str
 	addRemoteAndConfig := func(addr, path string) error {
 		var cmd *git.Command
 		if m.BranchFilter == "" {
-			cmd = git.NewCommand(ctx, "remote", "add", "--mirror").AddDynamicArguments(m.RemoteName, addr)
+			cmd = git.NewCommand(ctx, "remote", "add", "--mirror=push").AddDynamicArguments(m.RemoteName, addr)
 		} else {
 			cmd = git.NewCommand(ctx, "remote", "add").AddDynamicArguments(m.RemoteName, addr)
 		}
@@ -118,7 +120,7 @@ func RemovePushMirrorRemote(ctx context.Context, m *repo_model.PushMirror) error
 	cmd := git.NewCommand(ctx, "remote", "rm").AddDynamicArguments(m.RemoteName)
 	_ = m.GetRepository(ctx)
 
-	if _, _, err := cmd.RunStdString(&git.RunOpts{Dir: m.Repo.RepoPath()}); err != nil {
+	if _, _, err := cmd.RunStdString(&git.RunOpts{Dir: m.Repo.RepoPath()}); err != nil && !git.IsErrorExitCode(err, 2) {
 		return err
 	}
 
@@ -178,6 +180,13 @@ func SyncPushMirror(ctx context.Context, mirrorID int64) bool {
 	return err == nil
 }
 
+func recheckPushPermitted(ctx context.Context, m *repo_model.PushMirror, remoteURL *giturl.GitURL) error {
+	if err := m.Repo.LoadOwner(ctx); err != nil {
+		return err
+	}
+	return migrations_allowlist.IsPushMirrorURLAllowed(remoteURL.String(), m.Repo.Owner)
+}
+
 func runPushSync(ctx context.Context, m *repo_model.PushMirror) error {
 	timeout := time.Duration(setting.Git.Timeout.Mirror) * time.Second
 
@@ -186,6 +195,15 @@ func runPushSync(ctx context.Context, m *repo_model.PushMirror) error {
 		if isWiki {
 			path = repo.WikiPath()
 		}
+		// We used to erronously configure repos with `--mirror`, which would set both push and fetch refspecs into the
+		// git config.  We need to remove any `fetch` configurations that were leftover from that error, as they caused
+		// source repository references to rollback: https://codeberg.org/forgejo/forgejo/issues/14273 Exit code 5 is
+		// ignored; that occurs when `git config --unset-all` finds nothing to remove.
+		if _, _, err := git.NewCommand(ctx, "config", "--unset-all").
+			AddDynamicArguments("remote." + m.RemoteName + ".fetch").
+			RunStdString(&git.RunOpts{Dir: path}); err != nil && !git.IsErrorExitCode(err, 5) {
+			return err
+		}
 		remoteURL, err := git.GetRemoteURL(ctx, path, m.RemoteName)
 		if err != nil {
 			log.Error("GetRemoteAddress(%s) Error %v", path, err)
@@ -193,6 +211,14 @@ func runPushSync(ctx context.Context, m *repo_model.PushMirror) error {
 		}
 
 		useSSHAuthentication := len(m.PublicKey) != 0
+
+		// Recheck that the remote address is still permitted before pushing. The address passed IsPushMirrorURLAllowed
+		// at creation time, but the allow/block lists may have changed since, or DNS for the remote host may now
+		// resolve to an internal address (DNS rebinding).
+		if err := recheckPushPermitted(ctx, m, remoteURL); err != nil {
+			log.Error("SyncPushMirror [repo: %-v]: push mirror failed to meet migration URL requirements: %v", m.Repo, err)
+			return util.SanitizeErrorCredentialURLs(err)
+		}
 
 		if setting.LFS.StartServer && !useSSHAuthentication {
 			log.Trace("SyncMirrors [repo: %-v]: syncing LFS objects...", m.Repo)
@@ -210,7 +236,7 @@ func runPushSync(ctx context.Context, m *repo_model.PushMirror) error {
 			defer gitRepo.Close()
 
 			endpoint := lfs.DetermineEndpoint(remoteURL.String(), "")
-			lfsClient := lfs.NewClient(endpoint, nil)
+			lfsClient := lfs.NewClient(endpoint, migrations_allowlist.NewMigrationHTTPTransport())
 			if err := pushAllLFSObjects(ctx, gitRepo, lfsClient); err != nil {
 				return util.SanitizeErrorCredentialURLs(err)
 			}
@@ -255,6 +281,9 @@ func runPushSync(ctx context.Context, m *repo_model.PushMirror) error {
 			Mirror:         true,
 			Timeout:        timeout,
 			PrivateKeyPath: privateKeyPath,
+			// The remote URL passed IsPushMirrorURLAllowed, but any redirection URL may not. Prohibit redirects in
+			// order to protect against SSRF risks.
+			ProhibitHTTPRedirect: true,
 		}); err != nil {
 			log.Error("Error pushing %s mirror[%d] remote %s: %v", path, m.ID, m.RemoteName, err)
 

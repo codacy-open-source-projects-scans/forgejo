@@ -15,7 +15,7 @@
 					{{ctx.AvatarUtils.Avatar nil 40}}
 				</span>
 				{{else}}
-				<a class="timeline-avatar" {{if gt .Issue.Poster.ID 0}}href="{{.Issue.Poster.HomeLink}}"{{end}}>
+				<a class="timeline-avatar" {{if gt .Issue.Poster.ID 0}}href="{{.Issue.Poster.HomeLink}}"{{end}} role="presentation" aria-hidden="true" tabindex="-1">
 					{{ctx.AvatarUtils.Avatar .Issue.Poster 40}}
 				</a>
 				{{end}}
@@ -110,14 +110,14 @@
 												</span>
 											</button>
 										{{else}}
-											{{$closeTranslationKey := "repo.issues.close"}}
+											{{$closeTranslation := ctx.Locale.Tr "repo.issues.close"}}
 											{{if .Issue.IsPull}}
-												{{$closeTranslationKey = "repo.pulls.close"}}
+												{{$closeTranslation = ctx.Locale.Tr "repo.pulls.close"}}
 											{{end}}
-											<button id="status-button" class="secondary button" data-status="{{ctx.Locale.Tr $closeTranslationKey}}" data-status-and-comment="{{ctx.Locale.Tr "repo.issues.close_comment_issue"}}" name="status" value="close">
+											<button id="status-button" class="secondary button" data-status="{{$closeTranslation}}" data-status-and-comment="{{ctx.Locale.Tr "repo.issues.close_comment_issue"}}" name="status" value="close">
 												{{svg "octicon-issue-closed"}}
 												<span>
-													{{ctx.Locale.Tr $closeTranslationKey}}
+													{{$closeTranslation}}
 												</span>
 											</button>
 										{{end}}
@@ -149,6 +149,7 @@
 				"MarkdownPreviewContext" .RepoLink
 				"TextareaName" "content"
 				"DropzoneParentContainer" ".ui.form"
+				"SuggestionButton" true
 			)}}
 		</div>
 
@@ -168,6 +169,8 @@
 </template>
 
 {{template "repo/issue/view_content/reference_issue_dialog" .}}
+
+{{if .HeadBranchIsEditable}}{{template "repo/diff/suggestion_apply_modal" .}}{{end}}
 
 <div class="tw-hidden" id="no-content">
 	<span class="no-content">{{ctx.Locale.Tr "repo.issues.no_content"}}</span>

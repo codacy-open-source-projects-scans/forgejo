@@ -4,11 +4,13 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"forgejo.org/models/db"
 	git_model "forgejo.org/models/git"
+	"forgejo.org/modules/git"
 	api "forgejo.org/modules/structs"
 	"forgejo.org/modules/web"
 	"forgejo.org/routers/api/v1/utils"
@@ -64,8 +66,13 @@ func NewCommitStatus(ctx *context.APIContext) {
 		Description: form.Description,
 		Context:     form.Context,
 	}
-	if err := commitstatus_service.CreateCommitStatus(ctx, ctx.Repo.Repository, ctx.Doer, sha, status); err != nil {
-		ctx.Error(http.StatusInternalServerError, "CreateCommitStatus", err)
+	if err := commitstatus_service.CreateCommitStatus(ctx, ctx.Repo().Repository, ctx.Doer(), sha, status); err != nil {
+		// TODO: replace with git.IsErrNotExist(err) once #12583 is resolved
+		if _, ok := errors.AsType[git.ErrNotExist](err); ok {
+			ctx.NotFound("sha", sha)
+		} else {
+			ctx.Error(http.StatusInternalServerError, "CreateCommitStatus", err)
+		}
 		return
 	}
 
@@ -190,8 +197,8 @@ func getCommitStatuses(ctx *context.APIContext, sha string) {
 		ctx.Error(http.StatusBadRequest, "ref/sha not given", nil)
 		return
 	}
-	sha = utils.MustConvertToSHA1(ctx.Base, ctx.Repo, sha)
-	repo := ctx.Repo.Repository
+	sha = utils.MustConvertToSHA1(ctx.Base, ctx.Repo(), sha)
+	repo := ctx.Repo().Repository
 
 	listOptions := utils.GetListOptions(ctx)
 
@@ -262,7 +269,7 @@ func GetCombinedCommitStatusByRef(ctx *context.APIContext) {
 		return
 	}
 
-	repo := ctx.Repo.Repository
+	repo := ctx.Repo().Repository
 
 	statuses, count, err := git_model.GetLatestCommitStatus(ctx, repo.ID, sha, utils.GetListOptions(ctx))
 	if err != nil {
@@ -275,7 +282,7 @@ func GetCombinedCommitStatusByRef(ctx *context.APIContext) {
 		return
 	}
 
-	combiStatus := convert.ToCombinedStatus(ctx, statuses, convert.ToRepo(ctx, repo, ctx.Repo.Permission))
+	combiStatus := convert.ToCombinedStatus(ctx, statuses, convert.ToRepo(ctx, repo, ctx.Repo().Permission))
 
 	ctx.SetTotalCountHeader(count)
 	ctx.JSON(http.StatusOK, combiStatus)

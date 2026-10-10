@@ -5,6 +5,7 @@ package db_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
@@ -152,7 +153,8 @@ func TestAfterTx(t *testing.T) {
 
 			sut := func(ctx context.Context) {
 				_, err = db.GetEngine(ctx).Insert(
-					&issues_model.PullRequest{IssueID: 2, BaseRepoID: 1, HeadRepoID: 1000})
+					&issues_model.PullRequest{IssueID: 2, BaseRepoID: 1, HeadRepoID: 1000},
+				)
 				require.NoError(t, err)
 				db.AfterTx(ctx, func() {
 					countAfter, err = db.GetEngine(ctx).Count(&issues_model.PullRequest{})
@@ -274,5 +276,113 @@ func TestRetryTx(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 2, attemptCount)
+	})
+
+	t.Run("nested", func(t *testing.T) {
+		attemptCount := 0
+		testError := errors.New("hello")
+		err := db.RetryTx(t.Context(), db.RetryConfig{
+			AttemptCount: 2,
+		}, func(ctx context.Context) error {
+			attemptCount++
+			return db.RetryTx(ctx, db.RetryConfig{
+				AttemptCount: 2,
+				ErrorIs:      []error{testError},
+			}, func(ctx context.Context) error {
+				if attemptCount == 2 {
+					return nil
+				}
+				return testError
+			})
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, attemptCount)
+	})
+
+	t.Run("inner RetryTx decides on error", func(t *testing.T) {
+		attemptCount := 0
+		testError := errors.New("hello")
+		err := db.RetryTx(t.Context(), db.RetryConfig{
+			AttemptCount: 2,
+			ErrorIs:      []error{},
+		}, func(ctx context.Context) error {
+			attemptCount++
+			return db.RetryTx(ctx, db.RetryConfig{
+				AttemptCount: 2,
+			}, func(ctx context.Context) error {
+				if attemptCount == 2 {
+					return nil
+				}
+				return testError
+			})
+		})
+
+		require.ErrorIs(t, err, testError)
+		assert.Equal(t, 1, attemptCount)
+	})
+}
+
+func TestWithTxOpts(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		var called bool
+		err := db.WithTxOpts(t.Context(), nil, func(ctx context.Context) error {
+			assert.True(t, db.InTransaction(ctx))
+			called = true
+			return nil
+		})
+		require.NoError(t, err)
+		assert.True(t, called)
+	})
+
+	t.Run("isolation level", func(t *testing.T) {
+		var called bool
+		err := db.WithTxOpts(t.Context(), &db.TransactionConfig{IsolationLevel: sql.LevelReadCommitted}, func(ctx context.Context) error {
+			assert.True(t, db.InTransaction(ctx))
+			called = true
+			return nil
+		})
+		require.NoError(t, err)
+		assert.True(t, called)
+	})
+
+	t.Run("nested transaction", func(t *testing.T) {
+		t.Run("succeed", func(t *testing.T) {
+			var called bool
+			var called2 bool
+			err := db.WithTx(t.Context(), func(ctx context.Context) error {
+				assert.True(t, db.InTransaction(ctx))
+				called = true
+				err := db.WithTxOpts(ctx, nil, func(ctx context.Context) error {
+					assert.True(t, db.InTransaction(ctx))
+					called2 = true
+					return nil
+				})
+				require.NoError(t, err)
+				return nil
+			})
+			require.NoError(t, err)
+			assert.True(t, called)
+			assert.True(t, called2)
+		})
+
+		t.Run("unsupported operation", func(t *testing.T) {
+			var called bool
+			var called2 bool
+			err := db.WithTx(t.Context(), func(ctx context.Context) error {
+				assert.True(t, db.InTransaction(ctx))
+				called = true
+				err := db.WithTxOpts(ctx, &db.TransactionConfig{IsolationLevel: sql.LevelReadCommitted}, func(ctx context.Context) error {
+					assert.True(t, db.InTransaction(ctx))
+					called2 = true
+					return nil
+				})
+				require.ErrorContains(t, err, "unsupported operation")
+				return nil
+			})
+			require.NoError(t, err)
+			assert.True(t, called)
+			assert.False(t, called2)
+		})
 	})
 }

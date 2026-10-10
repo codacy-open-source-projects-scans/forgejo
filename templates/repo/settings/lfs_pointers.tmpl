@@ -16,13 +16,13 @@
 			{{end}}
 		</h4>
 		<div class="ui attached segment">
-			<table id="lfs-files-table" class="ui fixed single line table">
+			<table id="lfs-files-table" class="ui very basic table unstackable">
 				<thead>
 					<tr>
 						<th class="three wide">{{ctx.Locale.Tr "repo.settings.lfs_pointers.sha"}}</th>
 						<th class="four wide">{{ctx.Locale.Tr "repo.settings.lfs_pointers.oid"}}</th>
-						<th class="two wide">{{ctx.Locale.Tr "repo.settings.lfs_pointers.inRepo"}}</th>
-						<th class="two wide">{{ctx.Locale.Tr "repo.settings.lfs_pointers.exists"}}</th>
+						<th class="two wide" data-tooltip-content="{{ctx.Locale.Tr "repo.settings.lfs_pointers.inRepo"}}">{{ctx.Locale.Tr "repo.settings.lfs_pointers.inRepo"}}</th>
+						<th class="two wide" data-tooltip-content="{{ctx.Locale.Tr "repo.settings.lfs_pointers.exists"}}">{{ctx.Locale.Tr "repo.settings.lfs_pointers.exists"}}</th>
 						<th class="two wide" data-tooltip-content="{{ctx.Locale.Tr "repo.settings.lfs_pointers.accessible"}}">{{ctx.Locale.Tr "repo.settings.lfs_pointers.accessible"}}</th>
 						<th class="three wide"></th>
 					</tr>
@@ -46,6 +46,10 @@
 							<td class="tw-text-right">
 								<a class="ui primary button" href="{{$.LFSFilesLink}}/find?oid={{.Oid}}&size={{.Size}}&sha={{.SHA}}">{{ctx.Locale.Tr "repo.settings.lfs_findcommits"}}</a>
 							</td>
+						</tr>
+					{{else}}
+						<tr>
+							<td colspan="6" class="tw-text-center">{{ctx.Locale.Tr "repo.settings.lfs.no_pointers"}}</td>
 						</tr>
 					{{end}}
 				</tbody>

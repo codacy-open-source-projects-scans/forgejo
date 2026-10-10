@@ -4,11 +4,12 @@
 // web_src/js/features/repo-issue**
 // @watch end
 
-/* eslint playwright/expect-expect: ["error", { "assertFunctionNames": ["check_wip"] }] */
+/* eslint playwright/expect-expect: ["error", { "assertFunctionNames": ["check_wip", "accessibilityCheck"] }] */
 
 import {expect, type Page} from '@playwright/test';
 import {test} from './utils_e2e.ts';
 import {screenshot} from './shared/screenshots.ts';
+import {accessibilityCheck} from './shared/accessibility.ts';
 
 test.use({user: 'user2'});
 
@@ -16,20 +17,18 @@ test.describe('Pull: Toggle WIP', () => {
   const prTitle = 'pull5';
 
   async function toggle_wip_to({page}: {page: Page}, should: boolean) {
-    await page.waitForLoadState('domcontentloaded');
+    const loadPromise = page.waitForEvent('load');
     if (should) {
       await page.getByText('Still in progress?').click();
     } else {
       await page.getByText('Ready for review?').click();
     }
+    await loadPromise;
   }
 
   async function check_wip({page}: {page: Page}, is: boolean) {
-    await page.waitForLoadState();
-
     const elemTitle = 'h1';
     const stateLabel = '.issue-state-label';
-    await page.waitForLoadState('domcontentloaded');
     await expect(page.locator(elemTitle)).toContainText(prTitle);
     await expect(page.locator(elemTitle)).toContainText('#5');
     const wipRegex = /(wip|\[WIP\])/i;
@@ -45,16 +44,16 @@ test.describe('Pull: Toggle WIP', () => {
   async function setTitle({page}: {page: Page}, title: string) {
     await page.locator('#issue-title-edit-show').click();
     await page.locator('#issue-title-editor input').fill(title);
-    await page.getByText('Save').click();
+    const loadPromise = page.waitForEvent('load');
+    await page.locator('#issue-title-editor').getByText('Save').click();
+    await loadPromise;
   }
 
   test.beforeEach(async ({page}) => {
     const response = await page.goto('/user2/repo1/pulls/5');
     expect(response?.status()).toBe(200); // Status OK
     // ensure original title
-    await page.locator('#issue-title-edit-show').click();
-    await page.locator('#issue-title-editor input').fill(prTitle);
-    await page.getByText('Save').click();
+    await setTitle({page}, prTitle);
     await check_wip({page}, false);
   });
 
@@ -69,9 +68,7 @@ test.describe('Pull: Toggle WIP', () => {
 
   test('manual edit', async ({page}) => {
     // manually edit title to another prefix
-    await page.locator('#issue-title-edit-show').click();
-    await page.locator('#issue-title-editor input').fill(`[WIP] ${prTitle}`);
-    await page.getByText('Save').click();
+    await setTitle({page}, `[WIP] ${prTitle}`);
     await check_wip({page}, true);
     // remove again
     await toggle_wip_to({page}, false);
@@ -81,9 +78,7 @@ test.describe('Pull: Toggle WIP', () => {
   test('maximum title length', async ({page}) => {
     // check maximum title length is handled gracefully
     const maxLenStr = prTitle + 'a'.repeat(240);
-    await page.locator('#issue-title-edit-show').click();
-    await page.locator('#issue-title-editor input').fill(maxLenStr);
-    await page.getByText('Save').click();
+    await setTitle({page}, maxLenStr);
     await expect(page.locator('h1')).toContainText(maxLenStr);
     await check_wip({page}, false);
     await toggle_wip_to({page}, true);
@@ -379,6 +374,30 @@ test('Issue: Reference', async ({page}) => {
   );
 
   await page.getByRole('button', {name: 'Copy'}).click();
-  const reference = await page.evaluate(() => navigator.clipboard.readText());
-  expect(reference).toBe('user2/repo1#1');
+
+  await expect(async () => {
+    const reference = await page.evaluate(() => navigator.clipboard.readText());
+    expect(reference).toBe('user2/repo1#1');
+  }).toPass();
+});
+
+test('Issue: Watch URL Retention', async ({page}) => {
+  const response = await page.goto('/user2/repo1/pulls/5');
+  expect(response?.status()).toBe(200);
+
+  const button = page.locator('.ui.watching button');
+
+  await button.click();
+  expect(page.url()).not.toContain('/watch');
+
+  await button.click();
+  expect(page.url()).not.toContain('/watch');
+});
+
+test('accessibility - button-name', async ({page}) => {
+  const response = await page.goto('/user2/repo1/issues/1');
+  expect(response?.status()).toBe(200);
+  await page.locator('.select-assignees-modify.dropdown').click();
+  await page.locator('.select-assignees-modify.dropdown .no-select.item').click();
+  await accessibilityCheck({page}, ['.issue-content-right'], [], [], ['button-name']);
 });

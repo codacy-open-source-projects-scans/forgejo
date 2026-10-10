@@ -8,11 +8,14 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
 
 	packages_model "forgejo.org/models/packages"
+	"forgejo.org/modules/json"
+	"forgejo.org/modules/log"
 	packages_module "forgejo.org/modules/packages"
 	pypi_module "forgejo.org/modules/packages/pypi"
 	"forgejo.org/modules/setting"
@@ -20,6 +23,8 @@ import (
 	"forgejo.org/routers/api/packages/helper"
 	"forgejo.org/services/context"
 	packages_service "forgejo.org/services/packages"
+
+	"github.com/munnerz/goautoneg"
 )
 
 // https://peps.python.org/pep-0426/#name
@@ -44,8 +49,8 @@ func apiError(ctx *context.Context, status int, obj any) {
 	})
 }
 
-// PackageMetadata returns the metadata for a single package
-func PackageMetadata(ctx *context.Context) {
+// v1HTMLPackageMetadata returns the metadata for a single package in Simple HTML per PEP691
+func v1HTMLPackageMetadata(ctx *context.Context, ctype string) {
 	packageName := normalizer.Replace(ctx.Params("id"))
 
 	pvs, err := packages_model.GetVersionsByPackageName(ctx, ctx.Package.Owner.ID, packages_model.TypePyPI, packageName)
@@ -72,7 +77,100 @@ func PackageMetadata(ctx *context.Context) {
 	ctx.Data["RegistryURL"] = setting.AppURL + "api/packages/" + ctx.Package.Owner.Name + "/pypi"
 	ctx.Data["PackageDescriptor"] = pds[0]
 	ctx.Data["PackageDescriptors"] = pds
+	// PEP 691 defines `text/html` as an alias for this media type, so a single
+	// Content-Type header is sufficient.
+	ctx.Resp.Header().Set("Content-Type", ctype)
 	ctx.HTML(http.StatusOK, "api/packages/pypi/simple")
+}
+
+// v1JSONPackageMetadata returns the metadata for a single package in Simple JSON per PEP691
+func v1JSONPackageMetadata(ctx *context.Context, ctype string) {
+	packageName := normalizer.Replace(ctx.Params("id"))
+
+	pvs, err := packages_model.GetVersionsByPackageName(ctx, ctx.Package.Owner.ID, packages_model.TypePyPI, packageName)
+	if err != nil {
+		apiError(ctx, http.StatusInternalServerError, err)
+		return
+	}
+	if len(pvs) == 0 {
+		apiError(ctx, http.StatusNotFound, err)
+		return
+	}
+
+	pds, err := packages_model.GetPackageDescriptors(ctx, pvs)
+	if err != nil {
+		apiError(ctx, http.StatusInternalServerError, err)
+		return
+	}
+
+	// sort package descriptors by version to mimic PyPI format
+	slices.SortFunc(pds, func(a, b *packages_model.PackageDescriptor) int {
+		return strings.Compare(a.Version.Version, b.Version.Version)
+	})
+	registryURL := setting.AppURL + "api/packages/" + ctx.Package.Owner.Name + "/pypi"
+	versions := make([]string, len(pvs))
+	for i, pv := range pvs {
+		versions[i] = pv.Version
+	}
+	var fileCounter int
+	for _, pd := range pds {
+		fileCounter += len(pd.Files)
+	}
+	files := make([]pypi_module.FileJSON, fileCounter)
+	var i int
+	for _, pd := range pds {
+		for _, file := range pd.Files {
+			files[i] = pypi_module.FileJSON{
+				Filename:       file.File.Name,
+				URL:            registryURL + "/files/" + pd.Package.LowerName + "/" + pd.Version.Version + "/" + file.File.Name,
+				RequiresPython: pd.Metadata.(*pypi_module.Metadata).RequiresPython,
+				Hashes:         pypi_module.FileHashesJSON{SHA256: file.Blob.HashSHA256},
+				Size:           file.Blob.Size,
+			}
+			i++
+		}
+	}
+	content := pypi_module.PackageJSON{
+		Name:     pds[0].Package.Name,
+		Meta:     pypi_module.PackageMetaJSON{APIVersion: "1.4"},
+		Versions: versions,
+		Files:    files,
+	}
+	// PEP 691 requires the canonical media type for JSON responses. Sending an
+	// additional `application/json` header breaks strict clients (e.g. uv).
+	ctx.Resp.Header().Set("Content-Type", ctype)
+	if err := json.NewEncoder(ctx.Resp).Encode(content); err != nil {
+		log.Error("Render JSON failed: %v", err)
+		apiError(ctx, http.StatusInternalServerError, err)
+	}
+}
+
+func PackageMetadata(ctx *context.Context) {
+	types := ctx.Req.Header.Values("Accept")
+	if len(types) == 0 {
+		v1HTMLPackageMetadata(ctx, "text/html")
+		return
+	}
+
+	// `text/html` is listed first so that an `Accept: */*` request falls back
+	// to the HTML representation instead of the JSON one.
+	accept := goautoneg.Negotiate(strings.Join(types, ","), []string{"text/html", "application/vnd.pypi.simple.v1+json", "application/vnd.pypi.simple.v1+html", "application/vnd.pypi.simple.latest+json", "application/vnd.pypi.simple.latest+html"})
+
+	switch accept {
+	case "application/vnd.pypi.simple.v1+json", "application/vnd.pypi.simple.latest+json":
+		// The `latest` media types are aliases for the `v1` media types, so the
+		// canonical `v1` type is used in the response.
+		v1JSONPackageMetadata(ctx, "application/vnd.pypi.simple.v1+json")
+		return
+	case "application/vnd.pypi.simple.v1+html", "application/vnd.pypi.simple.latest+html":
+		v1HTMLPackageMetadata(ctx, "application/vnd.pypi.simple.v1+html")
+		return
+	case "text/html": // alias of v1+ html
+		v1HTMLPackageMetadata(ctx, "text/html")
+		return
+	}
+
+	ctx.PlainText(http.StatusNotAcceptable, "no supported content type in Accept header")
 }
 
 // DownloadPackageFile serves the content of a package

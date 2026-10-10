@@ -60,6 +60,7 @@ import {
   initRepoSettingSearchTeamBox,
 } from './features/repo-settings.js';
 import {initRepoDiffView} from './features/repo-diff.js';
+import {initRepoSuggestionApply} from './features/repo-suggestion.js';
 import {initOrgTeamSearchRepoBox} from './features/org-team.js';
 import {initUserAuthWebAuthn, initUserAuthWebAuthnRegister} from './features/user-auth-webauthn.js';
 import {initRepoRelease, initRepoReleaseNew} from './features/repo-release.js';
@@ -90,6 +91,12 @@ import {initRepositorySearch} from './features/repo-search.js';
 import {initColorPickers} from './features/colorpicker.js';
 import {initRepoMilestoneEditor} from './features/repo-milestone.js';
 import {initModalClose} from './modules/modal.ts';
+import {initAuthorizedIntegrationClaimRuleEditor} from './features/authorized-integration.js';
+import {
+  initModalServiceMessageForm,
+  initPreviewServiceMessageButton,
+  initDeleteServiceMessageButton,
+} from './features/service-message.ts';
 
 // Init Gitea's Fomantic settings
 initGiteaFomantic();
@@ -193,9 +200,14 @@ onDomReady(() => {
   initUserAuthWebAuthnRegister();
   initUserAuth();
   initRepoDiffView();
+  initRepoSuggestionApply();
   initColorPickers();
   initModalClose();
+  initAuthorizedIntegrationClaimRuleEditor();
+  initModalServiceMessageForm();
+  initPreviewServiceMessageButton();
+  initDeleteServiceMessageButton();
 
-  // Deactivate CSS-only noJS usability supplements
+  // no-js helper class is currently unused by UI components in Forgejo, but it is left for compatibility
   document.body.classList.remove('no-js');
 });

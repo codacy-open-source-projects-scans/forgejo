@@ -15,7 +15,6 @@ import (
 
 	"forgejo.org/models"
 	issues_model "forgejo.org/models/issues"
-	project_model "forgejo.org/models/project"
 	webhook_model "forgejo.org/models/webhook"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/structs"
@@ -130,7 +129,7 @@ func ParseRemoteAddr(remoteAddr, authUsername, authPassword string) (string, err
 type RepoSettingForm struct {
 	RepoName               string `binding:"Required;AlphaDashDot;MaxSize(100)"`
 	Description            string `binding:"MaxSize(2048)"`
-	Website                string `binding:"ValidUrl;MaxSize(1024)"`
+	Website                string `binding:"ValidSiteUrl;MaxSize(1024)"`
 	FollowingRepos         string
 	Interval               string
 	MirrorAddress          string
@@ -283,8 +282,21 @@ type WebhookCoreForm struct {
 	Repository               bool
 	Package                  bool
 	ActionFailure            bool
-	ActionRecover            bool
 	ActionSuccess            bool
+	WorkflowRunBlocked       bool
+	WorkflowRunCancelled     bool
+	WorkflowRunFailure       bool
+	WorkflowRunRunning       bool
+	WorkflowRunSkipped       bool
+	WorkflowRunSuccess       bool
+	WorkflowRunWaiting       bool
+	WorkflowJobBlocked       bool
+	WorkflowJobCancelled     bool
+	WorkflowJobFailure       bool
+	WorkflowJobRunning       bool
+	WorkflowJobSkipped       bool
+	WorkflowJobSuccess       bool
+	WorkflowJobWaiting       bool
 	Active                   bool
 	BranchFilter             string `binding:"GlobPattern"`
 	AuthorizationHeader      string
@@ -391,8 +403,8 @@ func (i IssueLockForm) HasValidReason() bool {
 type CreateProjectForm struct {
 	Title        string `binding:"Required;MaxSize(100)"`
 	Content      string
-	TemplateType project_model.TemplateType
-	CardType     project_model.CardType
+	TemplateType string
+	CardType     string
 }
 
 // EditProjectColumnForm is a form for editing a project column
@@ -465,16 +477,17 @@ func (f *MergePullRequestForm) Validate(req *http.Request, errs binding.Errors) 
 
 // CodeCommentForm form for adding code comments for PRs
 type CodeCommentForm struct {
-	Origin         string `binding:"Required;In(timeline,diff)"`
-	Content        string `binding:"Required"`
-	Side           string `binding:"Required;In(previous,proposed)"`
-	Line           int64
-	TreePath       string `form:"path" binding:"Required"`
-	SingleReview   bool   `form:"single_review"`
-	Reply          int64  `form:"reply"`
-	BeforeCommitID string
-	LatestCommitID string
-	Files          []string
+	Origin          string `binding:"Required;In(timeline,diff)"`
+	Content         string `binding:"Required"`
+	Side            string `binding:"Required;In(previous,proposed)"`
+	Line            int64
+	ExtraLinesCount int64  `form:"extra_lines_count"`
+	TreePath        string `form:"path" binding:"Required"`
+	SingleReview    bool   `form:"single_review"`
+	Reply           int64  `form:"reply"`
+	BeforeCommitID  string
+	LatestCommitID  string
+	Files           []string
 }
 
 // Validate validates the fields

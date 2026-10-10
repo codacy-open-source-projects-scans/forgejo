@@ -4,11 +4,10 @@ const BASE_URL = process.env.GITEA_URL?.replace?.(/\/$/g, '') || 'http://localho
 
 /**
  * @see https://playwright.dev/docs/test-configuration
- * @type {import('@playwright/test').PlaywrightTestConfig}
  */
 export default {
   testDir: './tests/e2e/',
-  testMatch: /.*\.test\.e2e\.ts/, // Match any .test.e2e.js files
+  testMatch: /.*\.test\.e2e\.ts/, // Match any .test.e2e.ts files
 
   // you can adjust this value locally to match your machine's power,
   // or pass `--workers x` to playwright

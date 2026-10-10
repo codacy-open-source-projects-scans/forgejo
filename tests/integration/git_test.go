@@ -121,9 +121,12 @@ func testGit(t *testing.T, u *url.URL) {
 			t.Run("PushForkRemoteMessages", doTestForkPushMessages(httpContext, dstPath))
 			t.Run("CreateAgitFlowPull", doCreateAgitFlowPull(dstPath, &httpContext, "test/head"))
 			t.Run("InternalReferences", doInternalReferences(&httpContext, dstPath))
+			t.Run("FsckConsistencyChecks", doFsckConsistencyChecks(dstPath))
 			t.Run("BranchProtect", doBranchProtect(&httpContext, dstPath))
 			t.Run("AutoMerge", doAutoPRMerge(&httpContext, dstPath))
 			t.Run("CreatePRAndSetManuallyMerged", doCreatePRAndSetManuallyMerged(httpContext, httpContext, dstPath, "master", "test-manually-merge"))
+			t.Run("ManuallyMergePRWithShortSHA", doCreatePRAndSetManuallyMergedShortSHA(httpContext, httpContext, dstPath, "master", "test-manually-merge-short"))
+			t.Run("ManuallyMergePRRejectBadCommitIDs", doCreatePRAndRejectBadManualMergeCommitIDs(httpContext, httpContext, dstPath, "master", "test-manually-merge-reject"))
 			t.Run("MergeFork", func(t *testing.T) {
 				defer tests.PrintCurrentTest(t)()
 				t.Run("CreatePRAndMerge", doMergeFork(httpContext, forkedUserCtx, "master", httpContext.Username+":master"))
@@ -170,6 +173,7 @@ func testGit(t *testing.T, u *url.URL) {
 				t.Run("PushForkRemoteMessages", doTestForkPushMessages(sshContext, dstPath))
 				t.Run("CreateAgitFlowPull", doCreateAgitFlowPull(dstPath, &sshContext, "test/head2"))
 				t.Run("InternalReferences", doInternalReferences(&sshContext, dstPath))
+				t.Run("FsckConsistencyChecks", doFsckConsistencyChecks(dstPath))
 				t.Run("BranchProtect", doBranchProtect(&sshContext, dstPath))
 				t.Run("MergeFork", func(t *testing.T) {
 					defer tests.PrintCurrentTest(t)()
@@ -201,9 +205,12 @@ func standardCommitAndPushTest(t *testing.T, dstPath string) (little, big string
 func lfsCommitAndPushTest(t *testing.T, dstPath string) (littleLFS, bigLFS string) {
 	t.Run("LFS", func(t *testing.T) {
 		defer tests.PrintCurrentTest(t)()
-		defer git.NewCommand(git.DefaultContext, "lfs").AddArguments("uninstall").Run(&git.RunOpts{Dir: dstPath})
+
+		err := git.NewCommand(git.DefaultContext, "config", "core.hooksPath", "$GIT/.hooks").AddArguments("--local").Run(&git.RunOpts{Dir: dstPath})
+		require.NoError(t, err)
+
 		prefix := "lfs-data-file-"
-		err := git.NewCommand(git.DefaultContext, "lfs").AddArguments("install").Run(&git.RunOpts{Dir: dstPath})
+		err = git.NewCommand(git.DefaultContext, "lfs").AddArguments("install").Run(&git.RunOpts{Dir: dstPath})
 		require.NoError(t, err)
 		_, _, err = git.NewCommand(git.DefaultContext, "lfs").AddArguments("track").AddDynamicArguments(prefix + "*").RunStdString(&git.RunOpts{Dir: dstPath})
 		require.NoError(t, err)
@@ -232,6 +239,7 @@ func lfsCommitAndPushTest(t *testing.T, dstPath string) (littleLFS, bigLFS strin
 			lockTest(t, dstPath)
 		})
 	})
+
 	return littleLFS, bigLFS
 }
 
@@ -271,8 +279,8 @@ func rawTest(t *testing.T, ctx *APITestContext, little, big, littleLFS, bigLFS s
 			req = NewRequest(t, "GET", path.Join("/", username, reponame, "/raw/branch/master/", littleLFS))
 			resp := session.MakeRequest(t, req, http.StatusOK)
 			assert.NotEqual(t, littleSize, resp.Body.Len())
-			assert.LessOrEqual(t, resp.Body.Len(), 1024)
-			if resp.Body.Len() != littleSize && resp.Body.Len() <= 1024 {
+			assert.Less(t, resp.Body.Len(), lfs.BlobSizeCutoff)
+			if resp.Body.Len() != littleSize && resp.Body.Len() < lfs.BlobSizeCutoff {
 				assert.Contains(t, resp.Body.String(), lfs.MetaFileIdentifier)
 			}
 		}
@@ -286,7 +294,7 @@ func rawTest(t *testing.T, ctx *APITestContext, little, big, littleLFS, bigLFS s
 				req = NewRequest(t, "GET", path.Join("/", username, reponame, "/raw/branch/master/", bigLFS))
 				resp := session.MakeRequest(t, req, http.StatusOK)
 				assert.NotEqual(t, bigSize, resp.Body.Len())
-				if resp.Body.Len() != bigSize && resp.Body.Len() <= 1024 {
+				if resp.Body.Len() != bigSize && resp.Body.Len() < lfs.BlobSizeCutoff {
 					assert.Contains(t, resp.Body.String(), lfs.MetaFileIdentifier)
 				}
 			}
@@ -403,7 +411,7 @@ func doBranchProtect(baseCtx *APITestContext, dstPath string) func(t *testing.T)
 				"apply_to_admins":         "on",
 			}))
 
-			doGitPushTestRepositoryFail(dstPath, "origin", "HEAD:before-create-2")(t)
+			doGitPushTestRepositoryFail(t, dstPath, "origin", "HEAD:before-create-2")
 		})
 
 		t.Run("FailToPushToProtectedBranch", func(t *testing.T) {
@@ -414,7 +422,7 @@ func doBranchProtect(baseCtx *APITestContext, dstPath string) func(t *testing.T)
 				generateCommitWithNewData(t, littleSize, dstPath, "user2@example.com", "User Two", "branch-data-file-")
 			})
 
-			doGitPushTestRepositoryFail(dstPath, "origin", "modified-protected-branch:protected")(t)
+			doGitPushTestRepositoryFail(t, dstPath, "origin", "modified-protected-branch:protected")
 		})
 
 		t.Run("PushToUnprotectedBranch", doGitPushTestRepository(dstPath, "origin", "modified-protected-branch:unprotected"))
@@ -427,7 +435,7 @@ func doBranchProtect(baseCtx *APITestContext, dstPath string) func(t *testing.T)
 			})
 
 			t.Run("ProtectedFilePathsApplyToAdmins", doProtectBranch(ctx, "protected"))
-			doGitPushTestRepositoryFail(dstPath, "origin", "modified-protected-file-protected-branch:protected")(t)
+			doGitPushTestRepositoryFail(t, dstPath, "origin", "modified-protected-file-protected-branch:protected")
 
 			doGitCheckoutBranch(dstPath, "protected")(t)
 			doGitPull(dstPath, "origin", "protected")(t)
@@ -461,7 +469,7 @@ func doBranchProtect(baseCtx *APITestContext, dstPath string) func(t *testing.T)
 			t.Run("GenerateCommit", func(t *testing.T) {
 				generateCommitWithNewData(t, littleSize, dstPath, "user2@example.com", "User Two", "branch-data-file-")
 			})
-			doGitPushTestRepositoryFail(dstPath, "-f", "origin", "toforce:protected")(t)
+			doGitPushTestRepositoryFail(t, dstPath, "-f", "origin", "toforce:protected")
 		})
 
 		t.Run("WhitelistedUserPushToProtectedBranch", func(t *testing.T) {
@@ -604,6 +612,94 @@ func doCreatePRAndSetManuallyMerged(ctx, baseCtx APITestContext, dstPath, baseBr
 	}
 }
 
+// doCreatePRAndSetManuallyMergedShortSHA covers the manual-merge happy path
+// for issue #13610: a 7-char short SHA (git's default --abbrev) resolves to
+// the full commit and the stored MergedCommitID is the resolved full form.
+func doCreatePRAndSetManuallyMergedShortSHA(ctx, baseCtx APITestContext, dstPath, baseBranch, headBranch string) func(t *testing.T) {
+	return func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+		var (
+			pr  api.PullRequest
+			err error
+		)
+
+		trueBool := true
+		falseBool := false
+
+		// Re-assert the repo settings so this test can also stand alone.
+		t.Run("AllowSetManuallyMergedAndSwitchOffAutodetectManualMerge", doAPIEditRepository(baseCtx, &api.EditRepoOption{
+			HasPullRequests:       &trueBool,
+			AllowManualMerge:      &trueBool,
+			AutodetectManualMerge: &falseBool,
+		}))
+
+		t.Run("CreateHeadBranch", doGitCreateBranch(dstPath, headBranch))
+		t.Run("PushToHeadBranch", doGitPushTestRepository(dstPath, "origin", headBranch))
+		t.Run("CreateEmptyPullRequest", func(t *testing.T) {
+			pr, err = doAPICreatePullRequest(ctx, baseCtx.Username, baseCtx.Reponame, baseBranch, headBranch)(t)
+			require.NoError(t, err)
+		})
+
+		fullSHA := pr.Base.Sha
+		require.Greater(t, len(fullSHA), 7, "base SHA should be a full commit ID")
+
+		shortSHA := fullSHA[:7]
+		t.Run("ManuallyMergePRWithShortSHA", doAPIManuallyMergePullRequest(ctx, baseCtx.Username, baseCtx.Reponame, shortSHA, pr.Index))
+
+		t.Run("VerifyStoredCommitIDIsFullLength", func(t *testing.T) {
+			merged := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{ID: pr.ID})
+			assert.Equal(t, issues_model.PullRequestStatusManuallyMerged, merged.Status)
+			assert.Equal(t, fullSHA, merged.MergedCommitID)
+		})
+	}
+}
+
+// doCreatePRAndRejectBadManualMergeCommitIDs covers the manual-merge input
+// validation path: bogus commit IDs 409 on each IsValid failure mode and on
+// GetCommit's not-found path, all surfacing "Wrong commit ID".
+func doCreatePRAndRejectBadManualMergeCommitIDs(ctx, baseCtx APITestContext, dstPath, baseBranch, headBranch string) func(t *testing.T) {
+	return func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+		var (
+			pr  api.PullRequest
+			err error
+		)
+
+		trueBool := true
+		falseBool := false
+
+		// Re-assert the repo settings so this test can also stand alone.
+		t.Run("AllowSetManuallyMergedAndSwitchOffAutodetectManualMerge", doAPIEditRepository(baseCtx, &api.EditRepoOption{
+			HasPullRequests:       &trueBool,
+			AllowManualMerge:      &trueBool,
+			AutodetectManualMerge: &falseBool,
+		}))
+
+		t.Run("CreateHeadBranch", doGitCreateBranch(dstPath, headBranch))
+		t.Run("PushToHeadBranch", doGitPushTestRepository(dstPath, "origin", headBranch))
+		t.Run("CreateEmptyPullRequest", func(t *testing.T) {
+			pr, err = doAPICreatePullRequest(ctx, baseCtx.Username, baseCtx.Reponame, baseBranch, headBranch)(t)
+			require.NoError(t, err)
+		})
+
+		fullSHA := pr.Base.Sha
+		require.Greater(t, len(fullSHA), 7, "base SHA should be a full commit ID")
+
+		rejectCtx := ctx
+		rejectCtx.ExpectedCode = http.StatusConflict
+		rejectCases := []struct{ name, input string }{
+			{"Empty", ""},                                         // no ID at all
+			{"TooShort", fullSHA[:3]},                             // hex but under the 4-char minimum
+			{"TooLong", strings.Repeat("a", 41)},                  // hex but over sha1's 40-char max
+			{"NonHexCharacters", "not-hex"},                       // right-ish length but non-hex
+			{"WellFormedButNonexistent", strings.Repeat("0", 40)}, // passes IsValid, resolves to no object
+		}
+		for _, rc := range rejectCases {
+			t.Run("Reject/"+rc.name, doAPIManuallyMergePullRequest(rejectCtx, baseCtx.Username, baseCtx.Reponame, rc.input, pr.Index))
+		}
+	}
+}
+
 func doEnsureCanSeePull(ctx APITestContext, pr api.PullRequest, editable bool) func(t *testing.T) {
 	return func(t *testing.T) {
 		req := NewRequest(t, "GET", fmt.Sprintf("/%s/%s/pulls/%d", url.PathEscape(ctx.Username), url.PathEscape(ctx.Reponame), pr.Index))
@@ -654,7 +750,9 @@ func doPushCreate(ctx APITestContext, u *url.URL, objectFormat git.ObjectFormat)
 
 		// Disable "Push To Create" and attempt to push
 		setting.Repository.EnablePushCreateUser = false
-		t.Run("FailToPushAndCreateTestRepository", doGitPushTestRepositoryFail(tmpDir, "origin", "master"))
+		t.Run("FailToPushAndCreateTestRepository", func(t *testing.T) {
+			doGitPushTestRepositoryFail(t, tmpDir, "origin", "master")
+		})
 
 		// Enable "Push To Create"
 		setting.Repository.EnablePushCreateUser = true
@@ -678,7 +776,9 @@ func doPushCreate(ctx APITestContext, u *url.URL, objectFormat git.ObjectFormat)
 		t.Run("AddInvalidRemote", doGitAddRemote(tmpDir, "invalid", u))
 
 		// Fail to "Push To Create" the invalid
-		t.Run("FailToPushAndCreateInvalidTestRepository", doGitPushTestRepositoryFail(tmpDir, "invalid", "master"))
+		t.Run("FailToPushAndCreateInvalidTestRepository", func(t *testing.T) {
+			doGitPushTestRepositoryFail(t, tmpDir, "invalid", "master")
+		})
 	}
 }
 
@@ -714,7 +814,7 @@ func doAutoPRMerge(baseCtx *APITestContext, dstPath string) func(t *testing.T) {
 		doc := NewHTMLParser(t, resp.Body)
 
 		// Get first commit URL
-		commitURL, exists := doc.doc.Find("#commits-table tbody tr td.sha a").Last().Attr("href")
+		commitURL, exists := doc.doc.Find(".commits .commit .sha.label").Last().Attr("href")
 		assert.True(t, exists)
 		assert.NotEmpty(t, commitURL)
 
@@ -782,11 +882,15 @@ func doInternalReferences(ctx *APITestContext, dstPath string) func(t *testing.T
 
 		_, stdErr, gitErr := git.NewCommand(git.DefaultContext, "push", "origin").AddDynamicArguments(fmt.Sprintf(":refs/pull/%d/head", pr1.Index)).RunStdString(&git.RunOpts{Dir: dstPath})
 		require.Error(t, gitErr)
-		assert.Contains(t, stdErr, fmt.Sprintf("[remote rejected] refs/pull/%d/head (deny deleting a hidden ref)", pr1.Index))
+		assert.Contains(t, stdErr, fmt.Sprintf("Forgejo: Only AGit pull-requests can be pushed via refs/pull/%d/head", pr1.Index))
+		assert.Contains(t, stdErr, pr1.HeadBranch)
+		assert.Contains(t, stdErr, fmt.Sprintf("[remote rejected] refs/pull/%d/head", pr1.Index))
 
 		_, stdErr, gitErr = git.NewCommand(git.DefaultContext, "push", "origin", "--force").AddDynamicArguments(fmt.Sprintf("HEAD~1:refs/pull/%d/head", pr1.Index)).RunStdString(&git.RunOpts{Dir: dstPath})
 		require.Error(t, gitErr)
-		assert.Contains(t, stdErr, fmt.Sprintf("[remote rejected] HEAD~1 -> refs/pull/%d/head (deny updating a hidden ref)", pr1.Index))
+		assert.Contains(t, stdErr, fmt.Sprintf("Forgejo: Only AGit pull-requests can be pushed via refs/pull/%d/head", pr1.Index))
+		assert.Contains(t, stdErr, pr1.HeadBranch)
+		assert.Contains(t, stdErr, fmt.Sprintf("[remote rejected] HEAD~1 -> refs/pull/%d/head", pr1.Index))
 	}
 }
 
@@ -856,6 +960,7 @@ func doCreateAgitFlowPull(dstPath string, ctx *APITestContext, headBranch string
 			assert.False(t, prMsg.HasMerged)
 			assert.Contains(t, "Testing commit 1", prMsg.Body)
 			assert.Equal(t, commit, prMsg.Head.Sha)
+			assert.Equal(t, "user2/"+headBranch, prMsg.Head.Name)
 
 			_, _, err = git.NewCommand(git.DefaultContext, "push", "origin").AddDynamicArguments("HEAD:refs/for/master/test/" + headBranch).RunStdString(&git.RunOpts{Dir: dstPath})
 			require.NoError(t, err)
@@ -874,6 +979,7 @@ func doCreateAgitFlowPull(dstPath string, ctx *APITestContext, headBranch string
 			prMsg = doAPIGetPullRequest(*ctx, ctx.Username, ctx.Reponame, pr2.Index)(t)
 
 			assert.Equal(t, "user2/test/"+headBranch, pr2.HeadBranch)
+			assert.Equal(t, "user2/test/"+headBranch, prMsg.Head.Name)
 			assert.False(t, prMsg.HasMerged)
 		})
 
@@ -944,6 +1050,91 @@ func doCreateAgitFlowPull(dstPath string, ctx *APITestContext, headBranch string
 			assert.False(t, prMsg.HasMerged)
 			assert.Equal(t, commit, prMsg.Head.Sha)
 		})
+
+		t.Run("Push via refs/pull/.../head", func(t *testing.T) {
+			var pullCommit string
+			t.Run("AddCommit3", func(t *testing.T) {
+				err := os.WriteFile(path.Join(dstPath, "test_file_pushed_via_pull"), []byte("## test content \n ## test content 2"), 0o666)
+				require.NoError(t, err)
+
+				err = git.AddChanges(dstPath, true)
+				require.NoError(t, err)
+
+				err = git.CommitChanges(dstPath, git.CommitChangesOptions{
+					Committer: &git.Signature{
+						Email: "user2@example.com",
+						Name:  "user2",
+						When:  time.Now(),
+					},
+					Author: &git.Signature{
+						Email: "user2@example.com",
+						Name:  "user2",
+						When:  time.Now(),
+					},
+					Message: "Testing commit 3\n\nLonger description.",
+				})
+				require.NoError(t, err)
+				pullCommit, err = gitRepo.GetRefCommitID("HEAD")
+				require.NoError(t, err)
+			})
+			t.Run("Push3", func(t *testing.T) {
+				err := git.NewCommand(git.DefaultContext, "push", "origin").
+					AddDynamicArguments(fmt.Sprintf("HEAD:refs/pull/%d/head", pr1.Index)).
+					Run(&git.RunOpts{Dir: dstPath})
+				require.NoError(t, err)
+
+				unittest.AssertCount(t, &issues_model.PullRequest{}, pullNum+2)
+				prMsg := doAPIGetPullRequest(*ctx, ctx.Username, ctx.Reponame, pr1.Index)(t)
+
+				assert.False(t, prMsg.HasMerged)
+				assert.Equal(t, pullCommit, prMsg.Head.Sha)
+
+				pr1 = unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{
+					HeadRepoID: repo.ID,
+					Flow:       issues_model.PullRequestFlowAGit,
+					Index:      pr1.Index,
+				})
+				assert.Equal(t, 3, pr1.CommitsAhead)
+				assert.Equal(t, 0, pr1.CommitsBehind)
+			})
+			t.Run("Force push", func(t *testing.T) {
+				err := git.NewCommand(git.DefaultContext, "commit", "--amend", "-m", "Amended commit message").Run(&git.RunOpts{Dir: dstPath})
+				require.NoError(t, err)
+				amendedCommit, err := gitRepo.GetRefCommitID("HEAD")
+				require.NoError(t, err)
+
+				// without --force flag: failure
+				_, stdErr, gitErr := git.NewCommand(git.DefaultContext, "push", "origin").
+					AddDynamicArguments(fmt.Sprintf("HEAD:refs/pull/%d/head", pr1.Index)).RunStdString(&git.RunOpts{Dir: dstPath})
+				require.Error(t, gitErr)
+				assert.Contains(t, stdErr, "Updates were rejected") // generic git error message
+
+				// with --force flag: success
+				_, _, err = git.NewCommand(git.DefaultContext, "push", "origin", "--force").
+					AddDynamicArguments(fmt.Sprintf("HEAD:refs/pull/%d/head", pr1.Index)).RunStdString(&git.RunOpts{Dir: dstPath})
+				require.NoError(t, err)
+
+				prMsg := doAPIGetPullRequest(*ctx, ctx.Username, ctx.Reponame, pr1.Index)(t)
+
+				assert.False(t, prMsg.HasMerged)
+				assert.Equal(t, amendedCommit, prMsg.Head.Sha)
+
+				pr1 = unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{
+					HeadRepoID: repo.ID,
+					Flow:       issues_model.PullRequestFlowAGit,
+					Index:      pr1.Index,
+				})
+				assert.Equal(t, 3, pr1.CommitsAhead)
+				assert.Equal(t, 0, pr1.CommitsBehind)
+
+				// See TestGitPushAGit for owner/contributor permissions checks
+			})
+
+			// reset local repo to commit before the refs/pull/.../head test
+			err = git.NewCommand(git.DefaultContext, "reset", "--hard").AddDynamicArguments(commit).Run(&git.RunOpts{Dir: dstPath})
+			require.NoError(t, err)
+		})
+
 		t.Run("PushParams", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 
@@ -1328,6 +1519,102 @@ func TestCloneAccessTokenResources(t *testing.T) {
 				u.Path = "/user2/repo16.git"
 				doGitCloneFail(u)(t)
 			})
+		})
+	})
+}
+
+func doFsckConsistencyChecks(dstPath string) func(t *testing.T) {
+	return func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		tree, _, err := git.NewCommand(git.DefaultContext, "rev-parse", "HEAD^{tree}").RunStdString(&git.RunOpts{Dir: dstPath})
+		require.NoError(t, err)
+		head, _, err := git.NewCommand(git.DefaultContext, "rev-parse", "HEAD^{commit}").RunStdString(&git.RunOpts{Dir: dstPath})
+		require.NoError(t, err)
+
+		// Is checked for and should error.
+		t.Run("badName", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+
+			var buf bytes.Buffer
+			buf.WriteString("tree ")
+			buf.WriteString(tree)
+			buf.WriteString("parent ")
+			buf.WriteString(head)
+			buf.WriteString("author  @>\n")
+			buf.WriteString("committer  @>\n")
+			buf.WriteString("\n")
+
+			commitID, _, err := git.NewCommand(git.DefaultContext, "hash-object", "-t", "commit", "--literally", "--stdin", "-w").RunStdString(&git.RunOpts{Dir: dstPath, Stdin: &buf})
+			require.NoError(t, err)
+			commitID = strings.TrimSpace(commitID)
+
+			_, stdErr, gitErr := git.NewCommand(git.DefaultContext, "push", "origin").AddDynamicArguments(commitID + ":refs/heads/consistency-check").RunStdString(&git.RunOpts{Dir: dstPath})
+			require.Error(t, gitErr)
+			assert.Contains(t, stdErr, "badName: invalid author/committer line - bad name")
+		})
+
+		t.Run("missingSpaceBeforeEmail", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+
+			var buf bytes.Buffer
+			buf.WriteString("tree ")
+			buf.WriteString(tree)
+			buf.WriteString("parent ")
+			buf.WriteString(head)
+			buf.WriteString(`author Gusted<script class="evil">alert('Oh no!');</script> <valid@example.org> 1706659200 +0000`)
+			buf.WriteRune('\n')
+			buf.WriteString(`committer Gusted<script class="evil">alert('Oh no!');</script> <valid@example.org> 1706659200 +0000`)
+			buf.WriteString("\n\n")
+
+			commitID, _, err := git.NewCommand(git.DefaultContext, "hash-object", "-t", "commit", "--literally", "--stdin", "-w").RunStdString(&git.RunOpts{Dir: dstPath, Stdin: &buf})
+			require.NoError(t, err)
+			commitID = strings.TrimSpace(commitID)
+
+			_, stdErr, gitErr := git.NewCommand(git.DefaultContext, "push", "origin").AddDynamicArguments(commitID + ":refs/heads/consistency-check").RunStdString(&git.RunOpts{Dir: dstPath})
+			require.Error(t, gitErr)
+			assert.Contains(t, stdErr, "missingSpaceBeforeEmail: invalid author/committer line - missing space before email")
+		})
+
+		// Is set to be ignored.
+		t.Run("badTimezone", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+
+			var buf bytes.Buffer
+			buf.WriteString("tree ")
+			buf.WriteString(tree)
+			buf.WriteString("parent ")
+			buf.WriteString(head)
+			buf.WriteString("author name <email> 1234 +\n")
+			buf.WriteString("committer name <email> 1234 +\n")
+			buf.WriteString("\n")
+
+			commitID, _, err := git.NewCommand(git.DefaultContext, "hash-object", "-t", "commit", "--literally", "--stdin", "-w").RunStdString(&git.RunOpts{Dir: dstPath, Stdin: &buf})
+			require.NoError(t, err)
+			commitID = strings.TrimSpace(commitID)
+
+			require.NoError(t, git.NewCommand(git.DefaultContext, "push", "origin").AddDynamicArguments(commitID+":refs/heads/consistency-check").Run(&git.RunOpts{Dir: dstPath}))
+		})
+	}
+}
+
+func TestGitAuthorizedIntegration(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		ait := newAITester(t)
+		defer ait.close()
+		token := ait.signedJWT()
+		u.User = url.UserPassword("token", token)
+
+		t.Run("clone private repo of user", func(t *testing.T) {
+			repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 3})
+			u.Path = fmt.Sprintf("/%s/%s.git", repo.OwnerName, repo.Name)
+			doGitClone(t.TempDir(), u)(t)
+		})
+
+		t.Run("cannot clone private repo of another user", func(t *testing.T) {
+			repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 52})
+			u.Path = fmt.Sprintf("/%s/%s.git", repo.OwnerName, repo.Name)
+			doGitCloneFail(u)(t)
 		})
 	})
 }

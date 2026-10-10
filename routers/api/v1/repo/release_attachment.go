@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	repo_model "forgejo.org/models/repo"
+	unit_model "forgejo.org/models/unit"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
@@ -22,21 +23,27 @@ import (
 	"forgejo.org/services/convert"
 )
 
-func checkReleaseMatchRepo(ctx *context.APIContext, releaseID int64) bool {
+func checkReleaseAccess(ctx *context.APIContext, releaseID int64) *repo_model.Release {
 	release, err := repo_model.GetReleaseByID(ctx, releaseID)
 	if err != nil {
 		if repo_model.IsErrReleaseNotExist(err) {
 			ctx.NotFound()
-			return false
+			return nil
 		}
 		ctx.Error(http.StatusInternalServerError, "GetReleaseByID", err)
-		return false
+		return nil
 	}
-	if release.RepoID != ctx.Repo.Repository.ID {
+	if release.RepoID != ctx.Repo().Repository.ID {
 		ctx.NotFound()
-		return false
+		return nil
 	}
-	return true
+	// Draft releases and their attachments must not be visible to users
+	// without write permission on the releases unit, mirroring GetRelease.
+	if release.IsDraft && !ctx.Repo().CanWrite(unit_model.TypeReleases) {
+		ctx.NotFound()
+		return nil
+	}
+	return release
 }
 
 // GetReleaseAttachment gets a single attachment of the release
@@ -76,7 +83,7 @@ func GetReleaseAttachment(ctx *context.APIContext) {
 	//     "$ref": "#/responses/notFound"
 
 	releaseID := ctx.ParamsInt64(":id")
-	if !checkReleaseMatchRepo(ctx, releaseID) {
+	if checkReleaseAccess(ctx, releaseID) == nil {
 		return
 	}
 
@@ -96,7 +103,7 @@ func GetReleaseAttachment(ctx *context.APIContext) {
 		return
 	}
 	// FIXME Should prove the existence of the given repo, but results in unnecessary database requests
-	ctx.JSON(http.StatusOK, convert.ToAPIAttachment(ctx.Repo.Repository, attach))
+	ctx.JSON(http.StatusOK, convert.ToAPIAttachment(ctx.Repo().Repository, attach))
 }
 
 // ListReleaseAttachments lists all attachments of the release
@@ -130,24 +137,15 @@ func ListReleaseAttachments(ctx *context.APIContext) {
 	//     "$ref": "#/responses/notFound"
 
 	releaseID := ctx.ParamsInt64(":id")
-	release, err := repo_model.GetReleaseByID(ctx, releaseID)
-	if err != nil {
-		if repo_model.IsErrReleaseNotExist(err) {
-			ctx.NotFound()
-			return
-		}
-		ctx.Error(http.StatusInternalServerError, "GetReleaseByID", err)
-		return
-	}
-	if release.RepoID != ctx.Repo.Repository.ID {
-		ctx.NotFound()
+	release := checkReleaseAccess(ctx, releaseID)
+	if release == nil {
 		return
 	}
 	if err := release.LoadAttributes(ctx); err != nil {
 		ctx.Error(http.StatusInternalServerError, "LoadAttributes", err)
 		return
 	}
-	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo.Repository, release, false).Attachments)
+	ctx.JSON(http.StatusOK, convert.ToAPIRelease(ctx, ctx.Repo().Repository, release, false).Attachments)
 }
 
 // CreateReleaseAttachment creates an attachment and saves the given file
@@ -212,7 +210,7 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 
 	// Check if release exists an load release
 	releaseID := ctx.ParamsInt64(":id")
-	if !checkReleaseMatchRepo(ctx, releaseID) {
+	if checkReleaseAccess(ctx, releaseID) == nil {
 		return
 	}
 
@@ -257,8 +255,8 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 		// Create a new attachment and save the file
 		attach, err := attachment.UploadAttachment(ctx, content, setting.Repository.Release.AllowedTypes, size, &repo_model.Attachment{
 			Name:       filename,
-			UploaderID: ctx.Doer.ID,
-			RepoID:     ctx.Repo.Repository.ID,
+			UploaderID: ctx.Doer().ID,
+			RepoID:     ctx.Repo().Repository.ID,
 			ReleaseID:  releaseID,
 		})
 		if err != nil {
@@ -270,7 +268,7 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 			return
 		}
 
-		ctx.JSON(http.StatusCreated, convert.ToAPIAttachment(ctx.Repo.Repository, attach))
+		ctx.JSON(http.StatusCreated, convert.ToAPIAttachment(ctx.Repo().Repository, attach))
 	} else if hasExternalURL {
 		url, err := url.Parse(externalURL)
 		if err != nil {
@@ -289,8 +287,8 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 
 		attach, err := attachment.NewExternalAttachment(ctx, &repo_model.Attachment{
 			Name:        filename,
-			UploaderID:  ctx.Doer.ID,
-			RepoID:      ctx.Repo.Repository.ID,
+			UploaderID:  ctx.Doer().ID,
+			RepoID:      ctx.Repo().Repository.ID,
 			ReleaseID:   releaseID,
 			ExternalURL: url.String(),
 		})
@@ -303,7 +301,7 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 			return
 		}
 
-		ctx.JSON(http.StatusCreated, convert.ToAPIAttachment(ctx.Repo.Repository, attach))
+		ctx.JSON(http.StatusCreated, convert.ToAPIAttachment(ctx.Repo().Repository, attach))
 	} else {
 		ctx.Error(http.StatusBadRequest, "MissingAttachment", "One of 'attachment' or 'external_url' is required")
 	}
@@ -357,7 +355,7 @@ func EditReleaseAttachment(ctx *context.APIContext) {
 
 	// Check if release exists an load release
 	releaseID := ctx.ParamsInt64(":id")
-	if !checkReleaseMatchRepo(ctx, releaseID) {
+	if checkReleaseAccess(ctx, releaseID) == nil {
 		return
 	}
 
@@ -397,7 +395,7 @@ func EditReleaseAttachment(ctx *context.APIContext) {
 		}
 		return
 	}
-	ctx.JSON(http.StatusCreated, convert.ToAPIAttachment(ctx.Repo.Repository, attach))
+	ctx.JSON(http.StatusCreated, convert.ToAPIAttachment(ctx.Repo().Repository, attach))
 }
 
 // DeleteReleaseAttachment delete a given attachment
@@ -438,7 +436,7 @@ func DeleteReleaseAttachment(ctx *context.APIContext) {
 
 	// Check if release exists an load release
 	releaseID := ctx.ParamsInt64(":id")
-	if !checkReleaseMatchRepo(ctx, releaseID) {
+	if checkReleaseAccess(ctx, releaseID) == nil {
 		return
 	}
 

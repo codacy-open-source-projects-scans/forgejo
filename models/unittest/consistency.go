@@ -19,7 +19,6 @@ import (
 const (
 	// these const values are copied from `models` package to prevent from cycle-import
 	modelsUserTypeOrganization = 1
-	modelsRepoWatchModeDont    = 2
 	modelsCommentTypeComment   = 0
 )
 
@@ -90,7 +89,12 @@ func init() {
 		}
 
 		actual := GetCountByCond(t, "watch", builder.Eq{"repo_id": repo.int("ID")}.
-			And(builder.Neq{"mode": modelsRepoWatchModeDont}))
+			// This could be BuilderWatchAnything() but that would introduce an import cycle.
+			And(builder.Or(
+				builder.Eq{"`watch`.watch_selection_issues": true},
+				builder.Eq{"`watch`.watch_selection_pull_requests": true},
+				builder.Eq{"`watch`.watch_selection_releases": true},
+			)))
 		assert.EqualValues(t, repo.int("NumWatches"), actual,
 			"Unexpected number of watches for repo id: %d", repo.int("ID"))
 
@@ -156,6 +160,28 @@ func init() {
 		team := reflectionWrap(bean)
 		AssertCountByCond(t, "team_user", builder.Eq{"team_id": team.int("ID")}, team.int("NumMembers"))
 		AssertCountByCond(t, "team_repo", builder.Eq{"team_id": team.int("ID")}, team.int("NumRepos"))
+
+		// All "owners" teams are created w/ includes_all_repositories=true & create_create_org_repo=true
+		AssertCountByCond(t, "team", builder.Eq{
+			"lower_name":                "owners",
+			"includes_all_repositories": false,
+		}, 0)
+		AssertCountByCond(t, "team", builder.Eq{
+			"lower_name":          "owners",
+			"can_create_org_repo": false,
+		}, 0)
+
+		type teamRecord struct {
+			ID    int64
+			OrgID int64
+		}
+		ownerTeamRecords := make([]teamRecord, 0, 10)
+		require.NoError(t, db.GetEngine(t.Context()).Table("team").Where(builder.Eq{"lower_name": "owners"}).Find(&ownerTeamRecords))
+		for _, teamID := range ownerTeamRecords {
+			orgRepos := GetCountByCond(t, "repository", builder.Eq{"owner_id": teamID.OrgID})
+			teamRepos := GetCountByCond(t, "team_repo", builder.Eq{"team_id": teamID.ID})
+			assert.Equal(t, orgRepos, teamRepos, "org (id=%d) has %d repos, Owners team (id=%d) has %d repos, counts must match", teamID.OrgID, orgRepos, teamID.ID, teamRepos)
+		}
 	}
 
 	checkForActionConsistency := func(t *testing.T, bean any) {

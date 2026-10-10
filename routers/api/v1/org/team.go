@@ -13,7 +13,6 @@ import (
 	"forgejo.org/models/organization"
 	"forgejo.org/models/perm"
 	access_model "forgejo.org/models/perm/access"
-	repo_model "forgejo.org/models/repo"
 	unit_model "forgejo.org/models/unit"
 	"forgejo.org/modules/log"
 	api "forgejo.org/modules/structs"
@@ -55,7 +54,7 @@ func ListTeams(ctx *context.APIContext) {
 
 	teams, count, err := organization.SearchTeam(ctx, &organization.SearchTeamOptions{
 		ListOptions: utils.GetListOptions(ctx),
-		OrgID:       ctx.Org.Organization.ID,
+		OrgID:       ctx.Org().Organization.ID,
 	})
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "LoadTeams", err)
@@ -98,7 +97,7 @@ func ListUserTeams(ctx *context.APIContext) {
 
 	teams, count, err := organization.SearchTeam(ctx, &organization.SearchTeamOptions{
 		ListOptions: utils.GetListOptions(ctx),
-		UserID:      ctx.Doer.ID,
+		UserID:      ctx.Doer().ID,
 	})
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "GetUserTeams", err)
@@ -135,7 +134,7 @@ func GetTeam(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	apiTeam, err := convert.ToTeam(ctx, ctx.Org.Team, true)
+	apiTeam, err := convert.ToTeam(ctx, ctx.Org().Team, true)
 	if err != nil {
 		ctx.InternalServerError(err)
 		return
@@ -222,7 +221,7 @@ func CreateTeam(ctx *context.APIContext) {
 		p = unit_model.MinUnitAccessMode(convertUnitsMap(form.UnitsMap))
 	}
 	team := &organization.Team{
-		OrgID:                   ctx.Org.Organization.ID,
+		OrgID:                   ctx.Org().Organization.ID,
 		Name:                    form.Name,
 		Description:             form.Description,
 		IncludesAllRepositories: form.IncludesAllRepositories,
@@ -287,7 +286,7 @@ func EditTeam(ctx *context.APIContext) {
 	//     "$ref": "#/responses/notFound"
 
 	form := web.GetForm(ctx).(*api.EditTeamOption)
-	team := ctx.Org.Team
+	team := ctx.Org().Team
 	if err := team.LoadUnits(ctx); err != nil {
 		ctx.InternalServerError(err)
 		return
@@ -366,7 +365,7 @@ func DeleteTeam(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	if err := models.DeleteTeam(ctx, ctx.Org.Team); err != nil {
+	if err := models.DeleteTeam(ctx, ctx.Org().Team); err != nil {
 		ctx.Error(http.StatusInternalServerError, "DeleteTeam", err)
 		return
 	}
@@ -401,7 +400,7 @@ func GetTeamMembers(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	isMember, err := organization.IsOrganizationMember(ctx, ctx.Org.Team.OrgID, ctx.Doer.ID)
+	isMember, err := organization.IsOrganizationMember(ctx, ctx.Org().Team.OrgID, ctx.Doer().ID)
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "IsOrganizationMember", err)
 		return
@@ -412,7 +411,7 @@ func GetTeamMembers(ctx *context.APIContext) {
 
 	teamMembers, err := organization.GetTeamMembers(ctx, &organization.SearchMembersOptions{
 		ListOptions: utils.GetListOptions(ctx),
-		TeamID:      ctx.Org.Team.ID,
+		TeamID:      ctx.Org().Team.ID,
 	})
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "GetTeamMembers", err)
@@ -421,10 +420,10 @@ func GetTeamMembers(ctx *context.APIContext) {
 
 	members := make([]*api.User, len(teamMembers))
 	for i, member := range teamMembers {
-		members[i] = convert.ToUser(ctx, member, ctx.Doer)
+		members[i] = convert.ToUser(ctx, member, ctx.Doer())
 	}
 
-	ctx.SetTotalCountHeader(int64(ctx.Org.Team.NumMembers))
+	ctx.SetTotalCountHeader(int64(ctx.Org().Team.NumMembers))
 	ctx.JSON(http.StatusOK, members)
 }
 
@@ -466,7 +465,7 @@ func GetTeamMember(ctx *context.APIContext) {
 		ctx.NotFound()
 		return
 	}
-	ctx.JSON(http.StatusOK, convert.ToUser(ctx, u, ctx.Doer))
+	ctx.JSON(http.StatusOK, convert.ToUser(ctx, u, ctx.Doer()))
 }
 
 // AddTeamMember api for add a member to a team
@@ -491,6 +490,8 @@ func AddTeamMember(ctx *context.APIContext) {
 	// responses:
 	//   "204":
 	//     "$ref": "#/responses/empty"
+	//   "409":
+	//     "$ref": "#/responses/forbidden"
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
@@ -498,8 +499,12 @@ func AddTeamMember(ctx *context.APIContext) {
 	if ctx.Written() {
 		return
 	}
-	if err := models.AddTeamMember(ctx, ctx.Org.Team, u.ID); err != nil {
-		ctx.Error(http.StatusInternalServerError, "AddMember", err)
+	if err := org_service.InviteOrAddTeamMember(ctx, ctx.Doer(), u, ctx.Org().Team); err != nil {
+		if organization.IsErrTeamInviteAlreadyExist(err) {
+			ctx.Error(http.StatusConflict, "InviteOrAddTeamMember", err)
+		} else {
+			ctx.Error(http.StatusInternalServerError, "InviteOrAddTeamMember", err)
+		}
 		return
 	}
 	ctx.Status(http.StatusNoContent)
@@ -535,8 +540,167 @@ func RemoveTeamMember(ctx *context.APIContext) {
 		return
 	}
 
-	if err := models.RemoveTeamMember(ctx, ctx.Org.Team, u.ID); err != nil {
+	if err := models.RemoveTeamMember(ctx, ctx.Org().Team, u.ID); err != nil {
 		ctx.Error(http.StatusInternalServerError, "RemoveTeamMember", err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+// GetTeamInvitations api to list invitations to a team
+func GetTeamInvitations(ctx *context.APIContext) {
+	// swagger:operation GET /teams/{teamid}/invitations organization orgListTeamInvitations
+	// ---
+	// summary: List the invitations to a team
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: teamid
+	//   in: path
+	//   description: id of the team
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: page
+	//   in: query
+	//   description: page number of results to return (1-based)
+	//   type: integer
+	// - name: limit
+	//   in: query
+	//   description: page size of results
+	//   type: integer
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/TeamInviteList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	listTeamInvitations(ctx, &organization.SearchInvitesOptions{
+		ListOptions: utils.GetListOptions(ctx),
+		TeamID:      ctx.Org().Team.ID,
+	})
+}
+
+func listTeamInvitations(ctx *context.APIContext, options *organization.SearchInvitesOptions) {
+	teamInvitations, err := organization.GetTeamInvites(ctx, options)
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, "GetTeamInvites", err)
+		return
+	}
+	err = organization.LoadUsers(ctx, teamInvitations)
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, "LoadUsers", err)
+		return
+	}
+
+	invitations := make([]*api.TeamInvite, len(teamInvitations))
+	for i, invitation := range teamInvitations {
+		invitations[i] = convert.ToTeamInvite(ctx, invitation, ctx.Doer())
+	}
+
+	totalCount, err := organization.CountTeamInvites(ctx, options)
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, "CountTeamInvites", err)
+		return
+	}
+	ctx.SetTotalCountHeader(totalCount)
+	ctx.JSON(http.StatusOK, invitations)
+}
+
+// getTeamInvitationWithinTeam load the team designated by the `inviteid` parameter and check that it belongs to the team `id`
+func getTeamInvitationWithinTeam(ctx *context.APIContext) *organization.TeamInvite {
+	teamID := ctx.ParamsInt64("teamid")
+	inviteID := ctx.ParamsInt64("inviteid")
+	invite, err := organization.GetInviteInTeamByID(ctx, inviteID, teamID)
+	if err != nil {
+		if organization.IsErrTeamInviteNotFound(err) {
+			ctx.NotFound("getTeamInvitationWithinTeam")
+		} else {
+			ctx.Error(http.StatusInternalServerError, "GetInviteByID", err)
+		}
+		return nil
+	}
+	err = invite.LoadUsers(ctx)
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, "LoadUsers", err)
+		return nil
+	}
+	return invite
+}
+
+// GetTeamInvitation API to get a particular team invitation
+func GetTeamInvitation(ctx *context.APIContext) {
+	// swagger:operation GET /teams/{teamid}/invitations/{inviteid} organization orgGetTeamInvitation
+	// ---
+	// summary: Get an invitation to a team
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: teamid
+	//   in: path
+	//   description: id of the team
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: inviteid
+	//   in: path
+	//   description: id of the invitation
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/TeamInvite"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	invite := getTeamInvitationWithinTeam(ctx)
+	if ctx.Written() {
+		return
+	}
+	ctx.JSON(http.StatusOK, convert.ToTeamInvite(ctx, invite, ctx.Doer()))
+}
+
+// RemoveTeamInvitation api to remove an invitation to a team
+func RemoveTeamInvitation(ctx *context.APIContext) {
+	// swagger:operation DELETE /teams/{teamid}/invitations/{inviteid} organization orgRemoveTeamInvitation
+	// ---
+	// summary: Remove a team invitation
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: teamid
+	//   in: path
+	//   description: id of the team
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: inviteid
+	//   in: path
+	//   description: id of the invitation
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// responses:
+	//   "204":
+	//     "$ref": "#/responses/empty"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	// check that the invite exists before deleting it
+	invite := getTeamInvitationWithinTeam(ctx)
+	if ctx.Written() {
+		return
+	}
+
+	if err := organization.RemoveInviteByID(ctx, invite.ID, invite.TeamID); err != nil {
+		ctx.Error(http.StatusInternalServerError, "RemoveInviteByID", err)
 		return
 	}
 	ctx.Status(http.StatusNoContent)
@@ -570,11 +734,11 @@ func GetTeamRepos(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	team := ctx.Org.Team
+	team := ctx.Org().Team
 	teamRepos, err := organization.GetTeamRepositories(ctx, &organization.SearchTeamRepoOptions{
 		ListOptions:          utils.GetListOptions(ctx),
 		TeamID:               team.ID,
-		AuthorizationReducer: ctx.Reducer,
+		AuthorizationReducer: ctx.Reducer(),
 	})
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "GetTeamRepos", err)
@@ -582,7 +746,7 @@ func GetTeamRepos(ctx *context.APIContext) {
 	}
 	repos := make([]*api.Repository, len(teamRepos))
 	for i, repo := range teamRepos {
-		permission, err := access_model.GetUserRepoPermissionWithReducer(ctx, repo, ctx.Doer, ctx.Reducer)
+		permission, err := access_model.GetUserRepoPermissionWithReducer(ctx, repo, ctx.Doer(), ctx.Reducer())
 		if err != nil {
 			ctx.Error(http.StatusInternalServerError, "GetUserRepoPermissionWithReducer", err)
 			return
@@ -629,17 +793,14 @@ func GetTeamRepo(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	repo := getRepositoryByParams(ctx)
-	if ctx.Written() {
-		return
-	}
+	repo := ctx.Repo().Repository
 
-	if !organization.HasTeamRepo(ctx, ctx.Org.Team.OrgID, ctx.Org.Team.ID, repo.ID) {
+	if !organization.HasTeamRepo(ctx, ctx.Org().Team.OrgID, ctx.Org().Team.ID, repo.ID) {
 		ctx.NotFound()
 		return
 	}
 
-	permission, err := access_model.GetUserRepoPermissionWithReducer(ctx, repo, ctx.Doer, ctx.Reducer)
+	permission, err := access_model.GetUserRepoPermissionWithReducer(ctx, repo, ctx.Doer(), ctx.Reducer())
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "GetUserRepoPermissionWithReducer", err)
 		return
@@ -650,20 +811,6 @@ func GetTeamRepo(ctx *context.APIContext) {
 	}
 
 	ctx.JSON(http.StatusOK, convert.ToRepo(ctx, repo, permission))
-}
-
-// getRepositoryByParams get repository by a team's organization ID and repo name
-func getRepositoryByParams(ctx *context.APIContext) *repo_model.Repository {
-	repo, err := repo_model.GetRepositoryByName(ctx, ctx.Org.Team.OrgID, ctx.Params(":reponame"))
-	if err != nil {
-		if repo_model.IsErrRepoNotExist(err) {
-			ctx.NotFound()
-		} else {
-			ctx.Error(http.StatusInternalServerError, "GetRepositoryByName", err)
-		}
-		return nil
-	}
-	return repo
 }
 
 // AddTeamRepository api for adding a repository to a team
@@ -698,18 +845,9 @@ func AddTeamRepository(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	repo := getRepositoryByParams(ctx)
-	if ctx.Written() {
-		return
-	}
-	if access, err := access_model.AccessLevel(ctx, ctx.Doer, repo); err != nil {
-		ctx.Error(http.StatusInternalServerError, "AccessLevel", err)
-		return
-	} else if access < perm.AccessModeAdmin {
-		ctx.Error(http.StatusForbidden, "", "Must have admin-level access to the repository")
-		return
-	}
-	if err := org_service.TeamAddRepository(ctx, ctx.Org.Team, repo); err != nil {
+	repo := ctx.Repo().Repository
+
+	if err := org_service.TeamAddRepository(ctx, ctx.Org().Team, repo); err != nil {
 		ctx.Error(http.StatusInternalServerError, "TeamAddRepository", err)
 		return
 	}
@@ -750,18 +888,9 @@ func RemoveTeamRepository(ctx *context.APIContext) {
 	//   "404":
 	//     "$ref": "#/responses/notFound"
 
-	repo := getRepositoryByParams(ctx)
-	if ctx.Written() {
-		return
-	}
-	if access, err := access_model.AccessLevel(ctx, ctx.Doer, repo); err != nil {
-		ctx.Error(http.StatusInternalServerError, "AccessLevel", err)
-		return
-	} else if access < perm.AccessModeAdmin {
-		ctx.Error(http.StatusForbidden, "", "Must have admin-level access to the repository")
-		return
-	}
-	if err := repo_service.RemoveRepositoryFromTeam(ctx, ctx.Org.Team, repo.ID); err != nil {
+	repo := ctx.Repo().Repository
+
+	if err := repo_service.RemoveRepositoryFromTeam(ctx, ctx.Org().Team, repo.ID); err != nil {
 		ctx.Error(http.StatusInternalServerError, "RemoveRepository", err)
 		return
 	}
@@ -817,14 +946,14 @@ func SearchTeam(ctx *context.APIContext) {
 
 	opts := &organization.SearchTeamOptions{
 		Keyword:     ctx.FormTrim("q"),
-		OrgID:       ctx.Org.Organization.ID,
+		OrgID:       ctx.Org().Organization.ID,
 		IncludeDesc: ctx.FormString("include_desc") == "" || ctx.FormBool("include_desc"),
 		ListOptions: listOptions,
 	}
 
 	// Only admin is allowed to search for all teams
 	if !ctx.IsUserSiteAdmin() {
-		opts.UserID = ctx.Doer.ID
+		opts.UserID = ctx.Doer().ID
 	}
 
 	teams, maxResults, err := organization.SearchTeam(ctx, opts)
@@ -886,8 +1015,8 @@ func ListTeamActivityFeeds(ctx *context.APIContext) {
 	listOptions := utils.GetListOptions(ctx)
 
 	opts := activities_model.GetFeedsOptions{
-		RequestedTeam:  ctx.Org.Team,
-		Actor:          ctx.Doer,
+		RequestedTeam:  ctx.Org().Team,
+		Actor:          ctx.Doer(),
 		IncludePrivate: true,
 		Date:           ctx.FormString("date"),
 		ListOptions:    listOptions,
@@ -900,5 +1029,192 @@ func ListTeamActivityFeeds(ctx *context.APIContext) {
 	}
 	ctx.SetTotalCountHeader(count)
 
-	ctx.JSON(http.StatusOK, convert.ToActivities(ctx, feeds, ctx.Doer))
+	ctx.JSON(http.StatusOK, convert.ToActivities(ctx, feeds, ctx.Doer()))
+}
+
+// ListMyOrgs list all my team invitations
+func ListMyTeamInvitations(ctx *context.APIContext) {
+	// swagger:operation GET /user/team_invitations organization orgListCurrentUserTeamInvitations
+	// ---
+	// summary: List the current user's team invitations
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: page
+	//   in: query
+	//   description: page number of results to return (1-based)
+	//   type: integer
+	// - name: limit
+	//   in: query
+	//   description: page size of results
+	//   type: integer
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/TeamInviteList"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	listTeamInvitations(ctx, &organization.SearchInvitesOptions{
+		InvitedID: ctx.Doer().ID,
+	})
+}
+
+func getMyTeamInvitation(ctx *context.APIContext) *organization.TeamInvite {
+	inviteID := ctx.ParamsInt64("inviteid")
+	invite, err := organization.GetInviteForUserByID(ctx, inviteID, ctx.Doer().ID)
+	if err != nil {
+		if organization.IsErrTeamInviteNotFound(err) {
+			ctx.NotFound("GetInviteByID")
+		} else {
+			ctx.Error(http.StatusInternalServerError, "GetInviteByID", err)
+		}
+		return nil
+	}
+	// check that it is not expired
+	if invite.IsExpired() {
+		ctx.NotFound("getMyTeamInvite")
+		return nil
+	}
+	err = invite.LoadUsers(ctx)
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, "LoadUsers", err)
+		return nil
+	}
+	return invite
+}
+
+// GetMyTeamInvitation API to get a team invitation addressed to the current user
+func GetMyTeamInvitation(ctx *context.APIContext) {
+	// swagger:operation GET /user/team_invitations/{inviteid} organization orgGetMyTeamInvitation
+	// ---
+	// summary: Get an invitation to a team for the current user
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: inviteid
+	//   in: path
+	//   description: id of the invitation
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/TeamInvite"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	invite := getMyTeamInvitation(ctx)
+	if ctx.Written() {
+		return
+	}
+	ctx.JSON(http.StatusOK, convert.ToTeamInvite(ctx, invite, ctx.Doer()))
+}
+
+// AcceptMyTeamInvitation API to accept an invitation addressed to the current user
+func AcceptMyTeamInvitation(ctx *context.APIContext) {
+	// swagger:operation POST /user/team_invitations/{inviteid}/accept organization orgAcceptMyTeamInvitation
+	// ---
+	// summary: Accept an invitation to a team for the current user
+	// consumes:
+	// - application/json
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: inviteid
+	//   in: path
+	//   description: id of the invitation
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: body
+	//   in: body
+	//   schema:
+	//     "$ref": "#/definitions/AcceptTeamInviteOptions"
+	// responses:
+	//   "204":
+	//     "$ref": "#/responses/TeamInvite"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	//   "406":
+	//     "$ref": "#/responses/notAcceptable"
+	//   "422":
+	//     "$ref": "#/responses/validationError"
+
+	invite := getMyTeamInvitation(ctx)
+	if ctx.Written() {
+		return
+	}
+	team, err := organization.GetTeamByID(ctx, invite.TeamID)
+	if err != nil {
+		ctx.ServerError("GetTeamByID", err)
+		return
+	}
+	form := web.GetForm(ctx).(*api.AcceptTeamInviteOptions)
+
+	err = org_service.AcceptInvite(ctx, team, invite, ctx.Doer(), form.HideMembership)
+	if err != nil {
+		if organization.IsErrTeamInviteNotFound(err) {
+			ctx.NotFound("AcceptInvite")
+		} else if organization.IsErrTeamInviteExpired(err) {
+			ctx.Error(http.StatusNotAcceptable, "AcceptInvite", err)
+		} else {
+			ctx.ServerError("AcceptInvite", err)
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusNoContent, convert.ToTeamInvite(ctx, invite, ctx.Doer()))
+}
+
+// DeclineMyTeamInvitation API to decline an invitation addressed to the current user
+func DeclineMyTeamInvitation(ctx *context.APIContext) {
+	// swagger:operation POST /user/team_invitations/{inviteid}/decline organization orgDeclineMyTeamInvitation
+	// ---
+	// summary: Decline an invitation to a team for the current user
+	// consumes:
+	// - application/json
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: inviteid
+	//   in: path
+	//   description: id of the invitation
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// responses:
+	//   "204":
+	//     "$ref": "#/responses/TeamInvite"
+	//   "401":
+	//     "$ref": "#/responses/unauthorized"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	//   "406":
+	//     "$ref": "#/responses/notAcceptable"
+	//   "422":
+	//     "$ref": "#/responses/validationError"
+
+	invite := getMyTeamInvitation(ctx)
+	if ctx.Written() {
+		return
+	}
+
+	err := org_service.DeclineInvite(ctx, invite)
+	if err != nil {
+		if organization.IsErrTeamInviteNotFound(err) {
+			ctx.NotFound("DeclineInvite")
+		} else if organization.IsErrTeamInviteExpired(err) {
+			ctx.Error(http.StatusNotAcceptable, "DeclineInvite", err)
+		} else {
+			ctx.ServerError("DeclineInvite", err)
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusNoContent, convert.ToTeamInvite(ctx, invite, ctx.Doer()))
 }

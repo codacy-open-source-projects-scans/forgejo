@@ -8,8 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +17,7 @@ import (
 	issues_model "forgejo.org/models/issues"
 	repo_model "forgejo.org/models/repo"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/avatar"
 	base_module "forgejo.org/modules/base"
 	"forgejo.org/modules/git"
 	"forgejo.org/modules/gitrepo"
@@ -32,6 +31,7 @@ import (
 	"forgejo.org/modules/timeutil"
 	"forgejo.org/modules/uri"
 	"forgejo.org/modules/util"
+	"forgejo.org/services/migrations/allowlist"
 	"forgejo.org/services/pull"
 	repo_service "forgejo.org/services/repository"
 
@@ -55,6 +55,7 @@ type GiteaLocalUploader struct {
 	sameApp        bool
 	userMap        map[int64]int64 // external user id mapping to user id
 	prCache        map[int64]*issues_model.PullRequest
+	commentMap     map[commentKey]migratedComment // foreign comment index to inserted comment, to resolve reply links
 	gitServiceType structs.GitServiceType
 }
 
@@ -72,6 +73,27 @@ func NewGiteaLocalUploader(ctx context.Context, doer *user_model.User, repoOwner
 		userMap:     make(map[int64]int64),
 		prCache:     make(map[int64]*issues_model.PullRequest),
 	}
+}
+
+// EnableCommentReplyTo allocates commentMap, enabling resolveReplyLinks: replies are only
+// resolved when the downloader announces comments carrying Meta["ReplyTo"].
+func (g *GiteaLocalUploader) EnableCommentReplyTo() {
+	g.commentMap = make(map[commentKey]migratedComment)
+}
+
+// commentKey identifies a migrated comment by the issue it belongs to and its index on the
+// source forge.
+type commentKey struct {
+	issueID      int64
+	foreignIndex int64
+}
+
+// migratedComment retains what a reply needs to quote its parent comment.
+type migratedComment struct {
+	id             int64
+	posterID       int64
+	originalAuthor string
+	firstLine      string
 }
 
 // MaxBatchInsertSize returns the table's max batch insert size
@@ -131,7 +153,7 @@ func (g *GiteaLocalUploader) CreateRepo(repo *base.Repository, opts base.Migrate
 		Releases:       opts.Releases, // if didn't get releases, then sync them from tags
 		RepoName:       g.repoName,
 		Wiki:           opts.Wiki,
-	}, NewMigrationHTTPTransport())
+	}, allowlist.NewMigrationHTTPTransport())
 
 	g.sameApp = strings.HasPrefix(repo.OriginalURL, setting.AppURL)
 	g.repo = r
@@ -141,6 +163,13 @@ func (g *GiteaLocalUploader) CreateRepo(repo *base.Repository, opts base.Migrate
 	g.gitRepo, err = gitrepo.OpenRepository(g.ctx, g.repo)
 	if err != nil {
 		return err
+	}
+
+	// attempt to migrate the repository avatar in a best-effort manner
+	if repo.AvatarURL != "" {
+		if err = g.migrateRepositoryAvatar(repo.AvatarURL); err != nil {
+			log.Warn("Migrating repo avatar failed: %v", err)
+		}
 	}
 
 	// detect object format from git repository and update to database
@@ -161,18 +190,18 @@ func (g *GiteaLocalUploader) Close() {
 
 // CreateTopics creates topics
 func (g *GiteaLocalUploader) CreateTopics(topics ...string) error {
-	// Ignore topics too long for the db
-	c := 0
-	for _, topic := range topics {
-		if len(topic) > 50 {
-			continue
-		}
-
-		topics[c] = topic
-		c++
+	validTopics, invalidTopics := repo_model.SanitizeAndValidateTopics(topics)
+	if len(invalidTopics) > 0 {
+		log.Warn("Invalid topics: %v in migration to %s/%s", invalidTopics, g.repoOwner, g.repoName)
 	}
-	topics = topics[:c]
-	return repo_model.SaveTopics(g.ctx, g.repo.ID, topics...)
+
+	// Truncate if it exceeds the maximum number of topics per repo.
+	if len(validTopics) > repo_model.MaxTopicsPerRepo {
+		validTopics = validTopics[:repo_model.MaxTopicsPerRepo]
+		log.Warn("More than %[0]d topics, truncated to first %[0]d topics in migration to %s/%s", repo_model.MaxTopicsPerRepo, g.repoOwner, g.repoName)
+	}
+
+	return repo_model.SaveTopics(g.ctx, g.repo.ID, validTopics...)
 }
 
 // CreateMilestones creates milestones
@@ -459,7 +488,7 @@ func (g *GiteaLocalUploader) CreateComments(comments ...*base.Comment) error {
 		var issue *issues_model.Issue
 		issue, ok := g.issues[comment.IssueIndex]
 		if !ok {
-			return fmt.Errorf("comment references non existent IssueIndex %d", comment.IssueIndex)
+			return fmt.Errorf("comment[index=%d,poster_id=%d] belongs to a issue[index=%d] that was not migrated", comment.Index, comment.PosterID, comment.IssueIndex)
 		}
 
 		if comment.Created.IsZero() {
@@ -534,7 +563,82 @@ func (g *GiteaLocalUploader) CreateComments(comments ...*base.Comment) error {
 	if len(cms) == 0 {
 		return nil
 	}
-	return issues_model.InsertIssueComments(g.ctx, cms)
+	if err := issues_model.InsertIssueComments(g.ctx, cms); err != nil {
+		return err
+	}
+	return g.resolveReplyLinks(comments, cms)
+}
+
+// resolveReplyLinks prepends to each reply (Meta["ReplyTo"] = parent comment Index) the
+// header the quote-reply button produces. Parent ids only exist once inserted, hence the
+// content update after the fact; commentMap spans batches to find earlier-inserted parents.
+func (g *GiteaLocalUploader) resolveReplyLinks(comments []*base.Comment, cms []*issues_model.Comment) error {
+	if g.commentMap == nil {
+		return nil
+	}
+	for i, cm := range cms {
+		g.commentMap[commentKey{cm.IssueID, comments[i].Index}] = migratedComment{
+			id:             cm.ID,
+			posterID:       cm.PosterID,
+			originalAuthor: cm.OriginalAuthor,
+			firstLine:      strings.TrimSuffix(strings.SplitN(cm.Content, "\n", 2)[0], "\r"),
+		}
+	}
+	for i, cm := range cms {
+		// Check ReplyTo
+		replyTo, ok := replyToIndex(comments[i].Meta)
+		if !ok {
+			continue
+		}
+
+		// Check parent
+		parent, ok := g.commentMap[commentKey{cm.IssueID, replyTo}]
+		if !ok {
+			continue
+		}
+
+		// Resolve author
+		author := parent.originalAuthor
+		if author == "" {
+			switch poster, err := user_model.GetUserByID(g.ctx, parent.posterID); {
+			case err == nil:
+				author = poster.Name
+			case user_model.IsErrUserNotExist(err):
+				author = user_model.GhostUserName
+			default:
+				return err
+			}
+		}
+
+		// Build comment reply header
+		issue := g.issues[comments[i].IssueIndex]
+		path := "issues"
+		if issue.IsPull {
+			path = "pulls"
+		}
+		cm.Content = fmt.Sprintf("@%s wrote in %s/%s/%d#issuecomment-%d:\n> %s\n\n%s",
+			author, g.repo.HTMLURL(), path, issue.Index, parent.id, parent.firstLine, cm.Content)
+		if _, err := db.GetEngine(g.ctx).ID(cm.ID).Cols("content").Update(cm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replyToIndex extracts Meta["ReplyTo"], tolerating the integer types a yaml or json
+// round-trip may produce.
+func replyToIndex(meta map[string]any) (int64, bool) {
+	switch v := meta["ReplyTo"].(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case uint64:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	}
+	return 0, false
 }
 
 // CreatePullRequests creates pull requests
@@ -566,42 +670,7 @@ func (g *GiteaLocalUploader) updateGitForPullRequest(pr *base.PullRequest) (head
 	// SECURITY: this pr must have been must have been ensured safe
 	if !pr.EnsuredSafe {
 		log.Error("PR #%d in %s/%s has not been checked for safety.", pr.Number, g.repoOwner, g.repoName)
-		return "", fmt.Errorf("the PR[%d] was not checked for safety", pr.Number)
-	}
-
-	// Anonymous function to download the patch file (allows us to use defer)
-	err = func() error {
-		// if the patchURL is empty there is nothing to download
-		if pr.PatchURL == "" {
-			return nil
-		}
-
-		// SECURITY: We will assume that the pr.PatchURL has been checked
-		// pr.PatchURL maybe a local file - but note EnsureSafe should be asserting that this safe
-		ret, err := uri.Open(pr.PatchURL) // TODO: This probably needs to use the downloader as there may be rate limiting issues here
-		if err != nil {
-			return err
-		}
-		defer ret.Close()
-
-		pullDir := filepath.Join(g.repo.RepoPath(), "pulls")
-		if err = os.MkdirAll(pullDir, os.ModePerm); err != nil {
-			return err
-		}
-
-		f, err := os.Create(filepath.Join(pullDir, fmt.Sprintf("%d.patch", pr.Number)))
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		// TODO: Should there be limits on the size of this file?
-		_, err = io.Copy(f, ret)
-
-		return err
-	}()
-	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pull request[index=%d] was not checked for safety", pr.Number)
 	}
 
 	head = "unknown repository"
@@ -845,7 +914,7 @@ func (g *GiteaLocalUploader) CreateReviews(reviews ...*base.Review) error {
 		var issue *issues_model.Issue
 		issue, ok := g.issues[review.IssueIndex]
 		if !ok {
-			return fmt.Errorf("review references non existent IssueIndex %d", review.IssueIndex)
+			return fmt.Errorf("review[index=%d,reviewer_id=%d] belongs to a issue[index=%d] that was not migrated", review.ID, review.ReviewerID, review.IssueIndex)
 		}
 		if review.CreatedAt.IsZero() {
 			review.CreatedAt = time.Unix(int64(issue.CreatedUnix), 0)
@@ -918,7 +987,9 @@ func (g *GiteaLocalUploader) CreateReviews(reviews ...*base.Review) error {
 				_ = writer.Close()
 			}(comment)
 
-			patch, _ = git.CutDiffAroundLine(reader, int64((&issues_model.Comment{Line: int64(line + comment.Position - 1)}).UnsignedLine()), line < 0, setting.UI.CodeCommentLines)
+			// For multi-line comments, center the patch on the last line and expand context to include the full range
+			cutLine := int64((&issues_model.Comment{Line: int64(line + comment.Position - 1), ExtraLinesCount: comment.ExtraLinesCount}).UnsignedDisplayLine())
+			patch, _ = git.CutDiffAroundLine(reader, cutLine, line < 0, setting.UI.CodeCommentLines+int(comment.ExtraLinesCount))
 
 			if comment.CreatedAt.IsZero() {
 				comment.CreatedAt = review.CreatedAt
@@ -934,18 +1005,24 @@ func (g *GiteaLocalUploader) CreateReviews(reviews ...*base.Review) error {
 			}
 
 			c := issues_model.Comment{
-				Type:        issues_model.CommentTypeCode,
-				IssueID:     issue.ID,
-				Content:     comment.Content,
-				Line:        int64(line + comment.Position - 1),
-				TreePath:    comment.TreePath,
-				CommitSHA:   comment.CommitID,
-				Patch:       patch,
-				CreatedUnix: timeutil.TimeStamp(comment.CreatedAt.Unix()),
-				UpdatedUnix: timeutil.TimeStamp(comment.UpdatedAt.Unix()),
+				Type:            issues_model.CommentTypeCode,
+				IssueID:         issue.ID,
+				Content:         comment.Content,
+				Line:            int64(line + comment.Position - 1),
+				ExtraLinesCount: comment.ExtraLinesCount,
+				TreePath:        comment.TreePath,
+				CommitSHA:       comment.CommitID,
+				Patch:           patch,
+				CreatedUnix:     timeutil.TimeStamp(comment.CreatedAt.Unix()),
+				UpdatedUnix:     timeutil.TimeStamp(comment.UpdatedAt.Unix()),
 			}
 
-			if err := g.remapUser(review, &c); err != nil {
+			// A comment without its own author (e.g. a reply in a thread) inherits the review author.
+			if comment.PosterName == "" {
+				comment.PosterName = review.ReviewerName
+				comment.PosterID = review.ReviewerID
+			}
+			if err := g.remapUser(comment, &c); err != nil {
 				return err
 			}
 
@@ -1032,4 +1109,20 @@ func (g *GiteaLocalUploader) remapExternalUser(source user_model.ExternalUserMig
 		g.userMap[source.GetExternalID()] = userid
 	}
 	return userid, nil
+}
+
+func (g *GiteaLocalUploader) migrateRepositoryAvatar(avatarURL string) error {
+	client := allowlist.NewMigrationHTTPClient()
+	client.Timeout = setting.Migrations.AvatarFetchTimeout
+	byteBuffer, err := avatar.FetchExternalImageData(avatarURL, client)
+	if err != nil {
+		return err
+	}
+
+	bytes, err := io.ReadAll(byteBuffer)
+	if err != nil {
+		return err
+	}
+
+	return repo_service.UploadAvatar(g.ctx, g.repo, bytes)
 }

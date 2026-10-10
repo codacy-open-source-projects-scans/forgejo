@@ -11,6 +11,7 @@ import (
 	"forgejo.org/models/db"
 	"forgejo.org/models/organization"
 	"forgejo.org/models/perm"
+	"forgejo.org/models/unit"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/structs"
@@ -130,7 +131,7 @@ func TestIncludesAllRepositoriesTeams(t *testing.T) {
 	}
 
 	// Remove repo and check teams repositories.
-	require.NoError(t, DeleteRepositoryDirectly(db.DefaultContext, user, repoIDs[0]), "DeleteRepository")
+	require.NoError(t, DeleteRepositoryDirectly(db.DefaultContext, repoIDs[0], DeleteRepositoryOpts{}), "DeleteRepository")
 	teamRepos[0] = repoIDs[1:]
 	teamRepos[1] = repoIDs[1:]
 	teamRepos[3] = repoIDs[1:3]
@@ -142,7 +143,7 @@ func TestIncludesAllRepositoriesTeams(t *testing.T) {
 	// Wipe created items.
 	for i, rid := range repoIDs {
 		if i > 0 { // first repo already deleted.
-			require.NoError(t, DeleteRepositoryDirectly(db.DefaultContext, user, rid), "DeleteRepository %d", i)
+			require.NoError(t, DeleteRepositoryDirectly(db.DefaultContext, rid, DeleteRepositoryOpts{}), "DeleteRepository %d", i)
 		}
 	}
 	require.NoError(t, organization.DeleteOrganization(db.DefaultContext, org), "DeleteOrganization")
@@ -156,4 +157,10 @@ func TestCreateRepository(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r.Topics)
 	require.Empty(t, r.Topics)
+
+	// check that maintainer edits are allowed by default
+	unit, err := r.GetUnit(t.Context(), unit.TypePullRequests)
+	require.NoError(t, err)
+	config := unit.PullRequestsConfig()
+	assert.True(t, config.DefaultAllowMaintainerEdit)
 }

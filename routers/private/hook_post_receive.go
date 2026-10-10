@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"testing"
 	"time"
 
 	"forgejo.org/models/db"
@@ -31,6 +32,11 @@ import (
 	repo_service "forgejo.org/services/repository"
 )
 
+// TestSeamPostReceiveSync is a test seam (a place where you can alter behaviour without editing the code) that is
+// invoked when post-receive hook is just about to sync branches to the database, but hasn't yet.  This should only be
+// used in test code.
+var TestSeamPostReceiveSync func(*repo_module.PushUpdateOptions)
+
 // HookPostReceive updates services and users
 func HookPostReceive(ctx *app_context.PrivateContext) {
 	opts := web.GetForm(ctx).(*private.HookOptions)
@@ -45,11 +51,7 @@ func HookPostReceive(ctx *app_context.PrivateContext) {
 	repoName := ctx.Params(":repo")
 
 	// defer getting the repository at this point - as we should only retrieve it if we're going to call update
-	var (
-		repo    *repo_model.Repository
-		gitRepo *git.Repository
-	)
-	defer gitRepo.Close() // it's safe to call Close on a nil pointer
+	var repo *repo_model.Repository
 
 	updates := make([]*repo_module.PushUpdateOptions, 0, len(opts.OldCommitIDs))
 	wasEmpty := false
@@ -121,8 +123,7 @@ func HookPostReceive(ctx *app_context.PrivateContext) {
 			}
 		}
 		if len(branchesToSync) > 0 {
-			var err error
-			gitRepo, err = gitrepo.OpenRepository(ctx, repo)
+			gitRepo, err := gitrepo.OpenRepository(ctx, repo)
 			if err != nil {
 				log.Error("Failed to open repository: %s/%s Error: %v", ownerName, repoName, err)
 				ctx.JSON(http.StatusInternalServerError, private.HookPostReceiveResult{
@@ -131,16 +132,17 @@ func HookPostReceive(ctx *app_context.PrivateContext) {
 				return
 			}
 
-			var (
-				branchNames = make([]string, 0, len(branchesToSync))
-				commitIDs   = make([]string, 0, len(branchesToSync))
-			)
+			branchNames := make([]string, 0, len(branchesToSync))
 			for _, update := range branchesToSync {
 				branchNames = append(branchNames, update.RefFullName.BranchName())
-				commitIDs = append(commitIDs, update.NewCommitID)
+				if TestSeamPostReceiveSync != nil && testing.Testing() {
+					TestSeamPostReceiveSync(update)
+				}
 			}
 
-			if err := repo_service.SyncBranchesToDB(ctx, repo.ID, opts.UserID, branchNames, commitIDs, gitRepo.GetCommit); err != nil {
+			err = repo_service.SyncBranchesToDB(ctx, repo.ID, opts.UserID, branchNames, gitRepo.GetBranchCommit)
+			gitRepo.Close()
+			if err != nil {
 				ctx.JSON(http.StatusInternalServerError, private.HookPostReceiveResult{
 					Err: fmt.Sprintf("Failed to sync branch to DB in repository: %s/%s Error: %v", ownerName, repoName, err),
 				})
@@ -189,6 +191,7 @@ func HookPostReceive(ctx *app_context.PrivateContext) {
 			ctx.JSON(http.StatusInternalServerError, private.HookPostReceiveResult{
 				Err: fmt.Sprintf("Failed to Update: %s/%s Error: %v", ownerName, repoName, err),
 			})
+			return
 		}
 	}
 
@@ -288,7 +291,8 @@ func HookPostReceive(ctx *app_context.PrivateContext) {
 				log.Error("Failed to get active PR in: %-v Branch: %s to: %-v Error: %v", repo, branch, baseRepo, err)
 				ctx.JSON(http.StatusInternalServerError, private.HookPostReceiveResult{
 					Err: fmt.Sprintf(
-						"Failed to get active PR in: %-v Branch: %s to: %-v Error: %v", repo, branch, baseRepo, err),
+						"Failed to get active PR in: %-v Branch: %s to: %-v Error: %v", repo, branch, baseRepo, err,
+					),
 					RepoWasEmpty: wasEmpty,
 				})
 				return

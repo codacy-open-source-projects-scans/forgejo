@@ -1,5 +1,5 @@
 import {hideElem, showElem} from '../utils/dom.js';
-import {GET} from '../modules/fetch.js';
+import {GET} from '../modules/fetch.ts';
 
 export function initInstall() {
   const page = document.querySelector('.page-content.install');
@@ -75,15 +75,6 @@ function initPreInstall() {
     if (this.checked) {
       document.querySelector('#disable-gravatar input').checked = false;
       document.querySelector('#offline-mode input').checked = false;
-    }
-  });
-  document.querySelector('#enable-openid-signin input').addEventListener('change', function () {
-    if (this.checked) {
-      if (!document.querySelector('#disable-registration input').checked) {
-        document.querySelector('#enable-openid-signup input').checked = true;
-      }
-    } else {
-      document.querySelector('#enable-openid-signup input').checked = false;
     }
   });
   document.querySelector('#disable-registration input').addEventListener('change', function () {

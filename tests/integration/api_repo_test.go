@@ -53,6 +53,7 @@ func TestAPIUserReposWithWrongToken(t *testing.T) {
 	resp := MakeRequest(t, req, http.StatusUnauthorized)
 
 	assert.Contains(t, resp.Body.String(), "access token does not exist")
+	assert.NotContains(t, resp.Body.String(), "wrong_token")
 }
 
 func TestAPIUserReposAccessTokenResources(t *testing.T) {
@@ -171,9 +172,9 @@ func TestAPISearchRepo(t *testing.T) {
 	}{
 		{
 			name: "RepositoriesMax50", requestURL: "/api/v1/repos/search?limit=50&private=false", expectedResults: expectedResults{
-				nil:   {count: 38},
-				user:  {count: 38},
-				user2: {count: 38},
+				nil:   {count: 39},
+				user:  {count: 39},
+				user2: {count: 39},
 			},
 		},
 		{
@@ -957,7 +958,7 @@ func TestAPIRepoTransfer(t *testing.T) {
 
 	// cleanup
 	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: apiRepo.ID})
-	_ = repo_service.DeleteRepositoryDirectly(db.DefaultContext, user, repo.ID)
+	require.NoError(t, repo_service.DeleteRepositoryDirectly(db.DefaultContext, repo.ID, repo_service.DeleteRepositoryOpts{}))
 }
 
 // This test verifies that a repo-specific access token with `write:repository` scope is not a sufficient to transfer a

@@ -34,7 +34,7 @@ func (*NullNotifier) NewIssue(ctx context.Context, issue *issues_model.Issue, me
 }
 
 // IssueChangeStatus places a place holder function
-func (*NullNotifier) IssueChangeStatus(ctx context.Context, doer *user_model.User, commitID string, issue *issues_model.Issue, actionComment *issues_model.Comment, isClosed bool) {
+func (*NullNotifier) IssueChangeStatus(ctx context.Context, doer *user_model.User, prInfo *issues_model.PRNotificationInfo, issue *issues_model.Issue, actionComment *issues_model.Comment, isClosed bool) {
 }
 
 // DeleteIssue notify when some issue deleted
@@ -142,6 +142,9 @@ func (*NullNotifier) IssueChangeLabels(ctx context.Context, doer *user_model.Use
 	addedLabels, removedLabels []*issues_model.Label) {
 }
 
+func (*NullNotifier) NewReaction(ctx context.Context, reaction *issues_model.Reaction)    {}
+func (*NullNotifier) DeleteReaction(ctx context.Context, reaction *issues_model.Reaction) {}
+
 // CreateRepository places a place holder function
 func (*NullNotifier) CreateRepository(ctx context.Context, doer, u *user_model.User, repo *repo_model.Repository) {
 }
@@ -213,6 +216,26 @@ func (*NullNotifier) PackageDelete(ctx context.Context, doer *user_model.User, p
 func (*NullNotifier) ChangeDefaultBranch(ctx context.Context, repo *repo_model.Repository) {
 }
 
-// ActionRunNowDone places a place holder function
-func (*NullNotifier) ActionRunNowDone(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status, lastRun *actions_model.ActionRun) {
+func (n *NullNotifier) NewWorkflowRunAttempt(_ context.Context, _ *actions_model.ActionRun) {
+	// Do nothing.
+}
+
+func (n *NullNotifier) WorkflowRunStatusChanged(_ context.Context, _ *actions_model.ActionRun, _ actions_model.Status) {
+	// Do nothing.
+}
+
+func (n *NullNotifier) WorkflowRunCompleted(_ context.Context, _ *actions_model.ActionRun, _ actions_model.Status) {
+	// Do nothing.
+}
+
+func (n *NullNotifier) NewWorkflowJobAttempt(_ context.Context, _ *actions_model.ActionRunJob) {
+	// Do nothing.
+}
+
+func (n *NullNotifier) WorkflowJobStatusChanged(_ context.Context, _ *actions_model.ActionRunJob, _ actions_model.Status) {
+	// Do nothing.
+}
+
+func (n *NullNotifier) WorkflowJobCompleted(_ context.Context, _ *actions_model.ActionRunJob, _ actions_model.Status) {
+	// Do nothing.
 }

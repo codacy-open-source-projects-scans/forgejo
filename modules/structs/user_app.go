@@ -8,14 +8,15 @@ import (
 	"time"
 )
 
-// AccessToken represents an API access token.
+// AccessToken represents an API access token
 // swagger:response AccessToken
 type AccessToken struct {
-	ID             int64    `json:"id"`
-	Name           string   `json:"name"`
-	Token          string   `json:"sha1"`
-	TokenLastEight string   `json:"token_last_eight"`
-	Scopes         []string `json:"scopes"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	Token          string    `json:"sha1"`
+	TokenLastEight string    `json:"token_last_eight"`
+	Scopes         []string  `json:"scopes"`
+	Created        time.Time `json:"created_at"`
 	// Indicates that an access token only has access to the specified repositories.  Will be null if the access token
 	// is not limited to a set of specified repositories.
 	Repositories []*RepositoryMeta `json:"repositories"`
@@ -42,7 +43,7 @@ type CreateOAuth2ApplicationOptions struct {
 	RedirectURIs       []string `json:"redirect_uris" binding:"Required"`
 }
 
-// OAuth2Application represents an OAuth2 application.
+// OAuth2Application represents an OAuth2 application
 // swagger:response OAuth2Application
 type OAuth2Application struct {
 	ID                 int64     `json:"id"`

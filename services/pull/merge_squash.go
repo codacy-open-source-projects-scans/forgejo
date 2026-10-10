@@ -5,6 +5,7 @@ package pull
 
 import (
 	"fmt"
+	"strings"
 
 	repo_model "forgejo.org/models/repo"
 	user_model "forgejo.org/models/user"
@@ -64,13 +65,15 @@ func doMergeStyleSquash(ctx *mergeContext, message string) error {
 
 	cmdCommit := git.NewCommand(ctx, "commit").
 		AddOptionFormat("--author='%s <%s>'", sig.Name, sig.Email).
-		AddOptionFormat("--message=%s", message)
+		AddArguments("--file=-")
 	if ctx.signKeyID == "" {
 		cmdCommit.AddArguments("--no-gpg-sign")
 	} else {
 		cmdCommit.AddOptionFormat("-S%s", ctx.signKeyID)
 	}
-	if err := cmdCommit.Run(ctx.RunOpts()); err != nil {
+	runOpts := ctx.RunOpts()
+	runOpts.Stdin = strings.NewReader(message)
+	if err := cmdCommit.Run(runOpts); err != nil {
 		log.Error("git commit %-v: %v\n%s\n%s", ctx.pr, err, ctx.outbuf.String(), ctx.errbuf.String())
 		return fmt.Errorf("git commit [%s:%s -> %s:%s]: %w\n%s\n%s", ctx.pr.HeadRepo.FullName(), ctx.pr.HeadBranch, ctx.pr.BaseRepo.FullName(), ctx.pr.BaseBranch, err, ctx.outbuf.String(), ctx.errbuf.String())
 	}

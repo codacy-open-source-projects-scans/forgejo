@@ -22,11 +22,13 @@ const (
 	OAuth2UsernameNickname OAuth2UsernameType = "nickname"
 	// OAuth2UsernameEmail username of oauth2 email field will be used as gitea name
 	OAuth2UsernameEmail OAuth2UsernameType = "email"
+	// @OAuth2UsernamePreferredUsername oauth2 preferred_username field will be used as gitea name
+	OAuth2UsernamePreferredUsername OAuth2UsernameType = "preferred_username"
 )
 
 func (username OAuth2UsernameType) isValid() bool {
 	switch username {
-	case OAuth2UsernameUserid, OAuth2UsernameNickname, OAuth2UsernameEmail:
+	case OAuth2UsernameUserid, OAuth2UsernameNickname, OAuth2UsernameEmail, OAuth2UsernamePreferredUsername:
 		return true
 	}
 	return false
@@ -128,7 +130,7 @@ func loadOAuth2From(rootCfg ConfigProvider) {
 	// Including: CSRF token, account validation token, etc ...
 	// In main branch, the signing token should be refactored (eg: one unique for LFS/OAuth2/etc ...)
 	if InstallLock {
-		signingKey, err := loadSymmeticSigningKeyCfg(rootCfg, sec, "JWT_")
+		signingKey, err := loadSymmetricSigningKeyCfg(rootCfg, sec, "JWT_")
 		if err != nil {
 			log.Fatal("%v", err)
 		}

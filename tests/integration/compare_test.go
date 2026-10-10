@@ -15,13 +15,12 @@ import (
 	repo_model "forgejo.org/models/repo"
 	unit_model "forgejo.org/models/unit"
 	"forgejo.org/models/unittest"
-	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/gitrepo"
-	"forgejo.org/modules/optional"
+	"forgejo.org/modules/setting"
 	"forgejo.org/modules/test"
 	repo_service "forgejo.org/services/repository"
-	files_service "forgejo.org/services/repository/files"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/assert"
@@ -251,6 +250,49 @@ func TestCompareBranches(t *testing.T) {
 	session.MakeRequest(t, req, http.StatusOK)
 }
 
+func TestCompareBranchesPaginatesDiff(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	defer func(old int) {
+		setting.UI.DiffPagingNum = old
+	}(setting.UI.DiffPagingNum)
+
+	setting.UI.DiffPagingNum = 2
+
+	session := loginUser(t, "user2")
+
+	// Indirect compare remove-files-b (head) with add-csv (base) branch
+	//
+	//	'link_hi' and 'test.csv' are deleted, 'test.txt' is added
+	req := NewRequest(t, "GET", "/user2/repo20/compare/add-csv...remove-files-b")
+	resp := session.MakeRequest(t, req, http.StatusOK)
+	htmlDoc := NewHTMLParser(t, resp.Body)
+
+	// PageSize is set to 2, so only the first 2 changes should be visble initially
+	diffCount := 2
+	diffChanges := []string{"link_hi", "test.csv"}
+
+	inspectCompare(t, htmlDoc, diffCount, diffChanges)
+
+	diffShowMoreFiles := htmlDoc.doc.Find("#diff-show-more-files")
+	assert.Equal(t, 1, diffShowMoreFiles.Length())
+
+	loadMoreFilesHref, exists := diffShowMoreFiles.First().Attr("data-href")
+	assert.True(t, exists)
+
+	req = NewRequest(t, "GET", "/user2/repo20/compare/add-csv...remove-files-b"+loadMoreFilesHref)
+	resp = session.MakeRequest(t, req, http.StatusOK)
+	htmlDoc = NewHTMLParser(t, resp.Body)
+
+	// When triggering the "load more request" we should only receive the missing (1) changed file
+	diffCount = 1
+	diffChanges = []string{"test.txt"}
+
+	inspectCompare(t, htmlDoc, diffCount, diffChanges)
+
+	diffShowMoreFiles = htmlDoc.doc.Find("#diff-show-more-files")
+	assert.Equal(t, 0, diffShowMoreFiles.Length())
+}
+
 func TestCompareWithPRsDisabled(t *testing.T) {
 	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		session := loginUser(t, "user1")
@@ -343,22 +385,16 @@ func TestCompareCrossRepo(t *testing.T) {
 
 func TestCompareCodeExpand(t *testing.T) {
 	onApplicationRun(t, func(t *testing.T, u *url.URL) {
-		owner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
-
 		// Create a new repository, with a file that has many lines
-		repo, _, f := tests.CreateDeclarativeRepoWithOptions(t, owner, tests.DeclarativeRepoOptions{
-			Files: optional.Some([]*files_service.ChangeRepoFile{
-				{
-					Operation:     "create",
-					TreePath:      "docs.md",
-					ContentReader: strings.NewReader("01\n02\n03\n04\n05\n06\n07\n08\n09\n0a\n0b\n0c\n0d\n0e\n0f\n10\n11\n12\n12\n13\n14\n15\n16\n17\n18\n19\n1a\n1b\n1c\n1d\n1e\n1f\n20\n"),
-				},
-			}),
+		repo := forgery.CreateRepository(t, nil, &forgery.CreateRepositoryOptions{
+			Files: forgery.MapFS{
+				"docs.md": forgery.MapFile("01\n02\n03\n04\n05\n06\n07\n08\n09\n0a\n0b\n0c\n0d\n0e\n0f\n10\n11\n12\n12\n13\n14\n15\n16\n17\n18\n19\n1a\n1b\n1c\n1d\n1e\n1f\n20\n"),
+			},
 		})
-		defer f()
+		owner := repo.Owner
 
 		// Fork the repository
-		forker := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		forker := forgery.CreateUser(t, nil)
 		session := loginUser(t, forker.Name)
 		testRepoFork(t, session, owner.Name, repo.Name, forker.Name, repo.Name+"-copy")
 		testCreateBranch(t, session, forker.Name, repo.Name+"-copy", "branch/main", "code-expand", http.StatusSeeOther)

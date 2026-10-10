@@ -4,23 +4,27 @@
 package actions
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	actions_model "forgejo.org/models/actions"
 	"forgejo.org/models/unit"
 	"forgejo.org/models/unittest"
+	"forgejo.org/modules/test"
 	"forgejo.org/modules/timeutil"
+	notify_service "forgejo.org/services/notify"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRerun_GetAllRerunJobs(t *testing.T) {
 	job1 := &actions_model.ActionRunJob{JobID: "job1"}
-	job2 := &actions_model.ActionRunJob{JobID: "job2", Needs: []string{"job1"}}
-	job3 := &actions_model.ActionRunJob{JobID: "job3", Needs: []string{"job2"}}
-	job4 := &actions_model.ActionRunJob{JobID: "job4", Needs: []string{"job2", "job3"}}
+	job2 := &actions_model.ActionRunJob{JobID: "job2", Needs: []actions_model.LocalJobIdentifier{"job1"}}
+	job3 := &actions_model.ActionRunJob{JobID: "job3", Needs: []actions_model.LocalJobIdentifier{"job2"}}
+	job4 := &actions_model.ActionRunJob{JobID: "job4", Needs: []actions_model.LocalJobIdentifier{"job2", "job3"}}
 
 	jobs := []*actions_model.ActionRunJob{job1, job2, job3, job4}
 
@@ -57,10 +61,31 @@ func TestRerun_RerunAllJobs(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunAllJobs")()
 		require.NoError(t, unittest.PrepareTestDatabase())
 
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+		notifier.On("NewWorkflowJobAttempt", mock.Anything, mock.Anything).Return()
+		notifier.On("NewWorkflowRunAttempt", mock.Anything, mock.Anything).Return()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
+		var recalculateRepoTarget *int64
+		defer test.MockVariableValue(&recalculateRunPriorities, func(_ context.Context, repoID int64) error {
+			recalculateRepoTarget = &repoID
+			return nil
+		})()
+
 		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 455620})
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{RunID: run.ID}, 1)
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: run.ID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 0)
 
 		rerunJobs, err := RerunAllJobs(t.Context(), run)
 		require.NoError(t, err)
+
+		assert.Equal(t, &run.RepoID, recalculateRepoTarget)
 
 		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 455620})
 
@@ -68,6 +93,8 @@ func TestRerun_RerunAllJobs(t *testing.T) {
 		assert.Equal(t, timeutil.TimeStamp(0), run.Started)
 		assert.Equal(t, timeutil.TimeStamp(0), run.Stopped)
 		assert.Equal(t, 11*time.Second, run.PreviousDuration)
+		assert.Equal(t, actions_model.DefaultRunPriority, run.Priority)
+		assert.False(t, run.Prioritize)
 
 		assert.Len(t, rerunJobs, 2)
 		assert.Equal(t, int64(683880), rerunJobs[0].ID)
@@ -81,13 +108,49 @@ func TestRerun_RerunAllJobs(t *testing.T) {
 		assert.Equal(t, actions_model.StatusWaiting, rerunJobs[1].Status)
 		assert.Equal(t, timeutil.TimeStamp(0), rerunJobs[1].Started)
 		assert.Equal(t, timeutil.TimeStamp(0), rerunJobs[1].Stopped)
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: run.ID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 1)
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 2)
+		notifier.AssertNumberOfCalls(t, "NewWorkflowRunAttempt", 1)
+		notifier.AssertCalled(
+			t, "NewWorkflowJobAttempt", mock.Anything,
+			mock.MatchedBy(func(job *actions_model.ActionRunJob) bool {
+				return job.ID == 683880 && job.Status == actions_model.StatusBlocked
+			}),
+		)
+		notifier.AssertCalled(
+			t, "NewWorkflowJobAttempt", mock.Anything,
+			mock.MatchedBy(func(job *actions_model.ActionRunJob) bool {
+				return job.ID == 683881 && job.Status == actions_model.StatusWaiting
+			}),
+		)
+		notifier.AssertCalled(
+			t, "NewWorkflowRunAttempt", mock.Anything,
+			mock.MatchedBy(func(run *actions_model.ActionRun) bool {
+				return run.ID == 455620 && run.Status == actions_model.StatusWaiting
+			}),
+		)
 	})
 
 	t.Run("Error if workflow running", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunAllJobs")()
 		require.NoError(t, unittest.PrepareTestDatabase())
 
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
 		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 455630})
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{RunID: run.ID}, 1)
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: run.ID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 0)
 
 		rerunJobs, err := RerunAllJobs(t.Context(), run)
 		require.ErrorContains(t, err, "workflow is still running")
@@ -100,11 +163,22 @@ func TestRerun_RerunAllJobs(t *testing.T) {
 		assert.Equal(t, time.Duration(0), run.PreviousDuration)
 
 		assert.Empty(t, rerunJobs)
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{RunID: run.ID}, 1)
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: run.ID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 0)
 	})
 
 	t.Run("Error if workflow invalid", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunAllJobs")()
 		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
 
 		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 455640})
 
@@ -124,6 +198,12 @@ func TestRerun_RerunAllJobs(t *testing.T) {
 	t.Run("Error if workflow disabled", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunAllJobs")()
 		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
 
 		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 455620})
 
@@ -151,26 +231,85 @@ func TestRerun_RerunJob(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
 		require.NoError(t, unittest.PrepareTestDatabase())
 
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+		notifier.On("NewWorkflowJobAttempt", mock.Anything, mock.Anything).Return()
+		notifier.On("NewWorkflowRunAttempt", mock.Anything, mock.Anything).Return()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
+		var recalculateRepoTarget *int64
+		defer test.MockVariableValue(&recalculateRunPriorities, func(_ context.Context, repoID int64) error {
+			recalculateRepoTarget = &repoID
+			return nil
+		})()
+
 		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683910})
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: job.RunID})
+
+		assert.Equal(t, actions_model.StatusSuccess, run.Status)
+		assert.Equal(t, timeutil.TimeStamp(1776331635), run.Started)
+		assert.Equal(t, timeutil.TimeStamp(1776331721), run.Stopped)
+		assert.Zero(t, run.PreviousDuration)
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: job.RunID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 0)
 
 		rerunJobs, err := RerunJob(t.Context(), job)
-
 		require.NoError(t, err)
 
 		assert.Len(t, rerunJobs, 1)
 		assert.Equal(t, job.ID, rerunJobs[0].ID)
+		assert.Equal(t, &run.RepoID, recalculateRepoTarget)
 
 		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683910})
+		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: job.RunID})
 
 		assert.Equal(t, int64(2), job.Attempt)
 		assert.Equal(t, actions_model.StatusWaiting, job.Status)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Started)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Stopped)
+
+		assert.Equal(t, actions_model.StatusWaiting, run.Status)
+		assert.Zero(t, run.Started)
+		assert.Zero(t, run.Stopped)
+		assert.Equal(t, 86*time.Second, run.PreviousDuration)
+		assert.Equal(t, actions_model.DefaultRunPriority, run.Priority)
+		assert.False(t, run.Prioritize)
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: job.RunID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 1)
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 1)
+		notifier.AssertNumberOfCalls(t, "NewWorkflowRunAttempt", 1)
+		notifier.AssertCalled(
+			t, "NewWorkflowJobAttempt", mock.Anything,
+			mock.MatchedBy(func(job *actions_model.ActionRunJob) bool {
+				return job.ID == 683910 && job.Status == actions_model.StatusWaiting
+			}),
+		)
+		notifier.AssertCalled(
+			t, "NewWorkflowRunAttempt", mock.Anything,
+			mock.MatchedBy(func(run *actions_model.ActionRun) bool {
+				return run.ID == 455650 && run.Status == actions_model.StatusWaiting
+			}),
+		)
 	})
 
 	t.Run("Rerun job needed by others", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
 		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+		notifier.On("NewWorkflowJobAttempt", mock.Anything, mock.Anything).Return()
+		notifier.On("NewWorkflowRunAttempt", mock.Anything, mock.Anything).Return()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
 
 		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683911})
 
@@ -195,11 +334,109 @@ func TestRerun_RerunJob(t *testing.T) {
 		assert.Equal(t, actions_model.StatusBlocked, dependentJob.Status)
 		assert.Equal(t, timeutil.TimeStamp(0), dependentJob.Started)
 		assert.Equal(t, timeutil.TimeStamp(0), dependentJob.Stopped)
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 2)
+		notifier.AssertNumberOfCalls(t, "NewWorkflowRunAttempt", 1)
+		notifier.AssertCalled(
+			t, "NewWorkflowJobAttempt", mock.Anything,
+			mock.MatchedBy(func(job *actions_model.ActionRunJob) bool {
+				return job.ID == 683911 && job.Status == actions_model.StatusWaiting
+			}),
+		)
+		notifier.AssertCalled(
+			t, "NewWorkflowJobAttempt", mock.Anything,
+			mock.MatchedBy(func(job *actions_model.ActionRunJob) bool {
+				return job.ID == 683912 && job.Status == actions_model.StatusBlocked
+			}),
+		)
+		notifier.AssertCalled(
+			t, "NewWorkflowRunAttempt", mock.Anything,
+			mock.MatchedBy(func(run *actions_model.ActionRun) bool {
+				return run.ID == 455650 && run.Status == actions_model.StatusWaiting
+			}),
+		)
+	})
+
+	t.Run("Rerun job needed by others with cancellation", func(t *testing.T) {
+		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
+		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+		notifier.On("NewWorkflowJobAttempt", mock.Anything, mock.Anything).Return(nil)
+		notifier.On("WorkflowJobCompleted", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		notifier.On("NewWorkflowRunAttempt", mock.Anything, mock.Anything).Return()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683911})
+
+		rerunJobs, err := RerunJob(t.Context(), job)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(683911), rerunJobs[0].ID)
+		assert.Equal(t, int64(683912), rerunJobs[1].ID)
+
+		// Cancel the first job so that we can rerun it.
+		require.NoError(t, cancelSingleJob(t.Context(), job, actions_model.StatusFailure))
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 2)
+		notifier.AssertNumberOfCalls(t, "WorkflowJobCompleted", 1)
+		notifier.AssertNumberOfCalls(t, "NewWorkflowRunAttempt", 1)
+
+		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683911})
+
+		assert.Equal(t, int64(2), job.Attempt)
+		assert.Equal(t, actions_model.StatusFailure, job.Status)
+		assert.Equal(t, timeutil.TimeStamp(0), job.Started)
+		assert.NotZero(t, job.Stopped)
+
+		dependentJob := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683912})
+
+		assert.Equal(t, int64(2), dependentJob.Attempt)
+		assert.Equal(t, actions_model.StatusBlocked, dependentJob.Status)
+		assert.Equal(t, timeutil.TimeStamp(0), dependentJob.Started)
+		assert.Equal(t, timeutil.TimeStamp(0), dependentJob.Stopped)
+
+		// Rerun again. The dependent job should be cancelled first.
+		rerunJobs, err = RerunJob(t.Context(), job)
+		require.NoError(t, err)
+
+		assert.Len(t, rerunJobs, 2)
+		assert.Equal(t, int64(683911), rerunJobs[0].ID)
+		assert.Equal(t, int64(683912), rerunJobs[1].ID)
+
+		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683911})
+
+		assert.Equal(t, int64(3), job.Attempt)
+		assert.Equal(t, actions_model.StatusWaiting, job.Status)
+		assert.Equal(t, timeutil.TimeStamp(0), job.Started)
+		assert.Equal(t, timeutil.TimeStamp(0), job.Stopped)
+
+		dependentJob = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683912})
+
+		assert.Equal(t, int64(3), dependentJob.Attempt)
+		assert.Equal(t, actions_model.StatusBlocked, dependentJob.Status)
+		assert.Equal(t, timeutil.TimeStamp(0), dependentJob.Started)
+		assert.Equal(t, timeutil.TimeStamp(0), dependentJob.Stopped)
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 4)
+		notifier.AssertNumberOfCalls(t, "WorkflowJobCompleted", 2)
+		notifier.AssertNumberOfCalls(t, "NewWorkflowRunAttempt", 1)
 	})
 
 	t.Run("Rerun job with needs", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
 		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+		notifier.On("NewWorkflowJobAttempt", mock.Anything, mock.Anything).Return()
+		notifier.On("NewWorkflowRunAttempt", mock.Anything, mock.Anything).Return()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
 
 		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683912})
 
@@ -217,13 +454,27 @@ func TestRerun_RerunJob(t *testing.T) {
 		assert.Equal(t, actions_model.StatusWaiting, job.Status)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Started)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Stopped)
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 1)
+		notifier.AssertNumberOfCalls(t, "NewWorkflowRunAttempt", 1)
 	})
 
 	t.Run("Error if workflow invalid", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
 		require.NoError(t, unittest.PrepareTestDatabase())
 
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
 		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683900})
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{RunID: job.RunID}, 1)
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: job.RunID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 0)
 
 		rerunJobs, err := RerunJob(t.Context(), job)
 
@@ -236,11 +487,22 @@ func TestRerun_RerunJob(t *testing.T) {
 		assert.Equal(t, actions_model.StatusFailure, job.Status)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Started)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Stopped)
+
+		unittest.AssertCount(t, &actions_model.ActionArtifact{RunID: job.RunID}, 1)
+		unittest.AssertCount(t, &actions_model.ActionArtifact{
+			RunID: job.RunID, Status: int64(actions_model.ArtifactStatusPendingDeletion),
+		}, 0)
 	})
 
 	t.Run("Error if workflow disabled", func(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
 		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
 
 		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683881})
 
@@ -266,6 +528,12 @@ func TestRerun_RerunJob(t *testing.T) {
 		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
 		require.NoError(t, unittest.PrepareTestDatabase())
 
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
 		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683592})
 
 		rerunJobs, err := RerunJob(t.Context(), job)
@@ -279,5 +547,42 @@ func TestRerun_RerunJob(t *testing.T) {
 		assert.Equal(t, actions_model.StatusRunning, job.Status)
 		assert.Equal(t, timeutil.TimeStamp(1776331665), job.Started)
 		assert.Equal(t, timeutil.TimeStamp(0), job.Stopped)
+	})
+
+	t.Run("Run not altered when run is already running", func(t *testing.T) {
+		defer unittest.OverrideFixtures("services/actions/TestRerun_RerunJob")()
+		require.NoError(t, unittest.PrepareTestDatabase())
+
+		notifier := notify_service.NewMockNotifier(t)
+		notifier.On("Run").Return().Maybe()
+		notifier.On("NewWorkflowJobAttempt", mock.Anything, mock.Anything).Return(nil)
+
+		notify_service.RegisterNotifier(notifier)
+		defer notify_service.UnregisterNotifier(notifier)
+
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 683920})
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: job.RunID})
+
+		assert.Equal(t, actions_model.StatusRunning, run.Status)
+		assert.Equal(t, timeutil.TimeStamp(1776331635), run.Started)
+		assert.Zero(t, run.Stopped)
+		assert.Zero(t, run.PreviousDuration)
+
+		rerunJobs, err := RerunJob(t.Context(), job)
+
+		require.NoError(t, err)
+		assert.Len(t, rerunJobs, 1)
+		assert.Equal(t, int64(683920), rerunJobs[0].ID)
+
+		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: job.RunID})
+
+		assert.Equal(t, actions_model.StatusRunning, run.Status)
+		assert.Equal(t, timeutil.TimeStamp(1776331635), run.Started)
+		assert.Zero(t, run.Stopped)
+		assert.Zero(t, run.PreviousDuration)
+		assert.Equal(t, actions_model.MaxRunPriority, run.Priority)
+		assert.True(t, run.Prioritize)
+
+		notifier.AssertNumberOfCalls(t, "NewWorkflowJobAttempt", 1)
 	})
 }

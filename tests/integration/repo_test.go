@@ -24,7 +24,6 @@ import (
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/git"
-	"forgejo.org/modules/optional"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
 	"forgejo.org/modules/test"
@@ -32,6 +31,7 @@ import (
 	repo_service "forgejo.org/services/repository"
 	files_service "forgejo.org/services/repository/files"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/assert"
@@ -374,65 +374,105 @@ func TestViewFileInRepoRSSFeed(t *testing.T) {
 	})
 }
 
-// TestBlameFileInRepo repo description, topics and summary should not be displayed when running blame on a file
 func TestBlameFileInRepo(t *testing.T) {
-	defer tests.PrepareTestEnv(t)()
-
-	session := loginUser(t, "user2")
-
-	t.Run("Assert", func(t *testing.T) {
-		defer tests.PrintCurrentTest(t)()
-
-		req := NewRequest(t, "GET", "/user2/repo1/blame/branch/master/README.md")
-		resp := session.MakeRequest(t, req, http.StatusOK)
-
-		htmlDoc := NewHTMLParser(t, resp.Body)
-		description := htmlDoc.doc.Find("#repo-desc")
-		repoTopics := htmlDoc.doc.Find("#repo-topics")
-		repoSummary := htmlDoc.doc.Find(".repository-summary")
-
-		assert.Equal(t, 0, description.Length())
-		assert.Equal(t, 0, repoTopics.Length())
-		assert.Equal(t, 0, repoSummary.Length())
-	})
-
-	t.Run("File size", func(t *testing.T) {
-		defer tests.PrintCurrentTest(t)()
-
-		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
-		gitRepo, err := git.OpenRepository(git.DefaultContext, repo.RepoPath())
-		require.NoError(t, err)
-		defer gitRepo.Close()
-
-		commit, err := gitRepo.GetCommit("HEAD")
-		require.NoError(t, err)
-
-		blob, err := commit.GetBlobByPath("README.md")
-		require.NoError(t, err)
-
-		fileSize := blob.Size()
-		require.NotZero(t, fileSize)
-
-		t.Run("Above maximum", func(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		t.Run("Assert", func(t *testing.T) {
+			// TestBlameFileInRepo repo description, topics and summary should not be displayed when running blame on a file
 			defer tests.PrintCurrentTest(t)()
-			defer test.MockVariableValue(&setting.UI.MaxDisplayFileSize, fileSize)()
 
-			req := NewRequest(t, "GET", "/user2/repo1/blame/branch/master/README.md")
-			resp := session.MakeRequest(t, req, http.StatusOK)
+			repo := forgery.CreateRepository(t, nil, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					"README.md": forgery.MapFile("hello, world"),
+				},
+			})
+
+			req := NewRequest(t, "GET", fmt.Sprintf("/%s/blame/branch/main/README.md", repo.FullName()))
+			resp := MakeRequest(t, req, http.StatusOK)
 
 			htmlDoc := NewHTMLParser(t, resp.Body)
-			assert.Contains(t, htmlDoc.Find(".code-view").Text(), translation.NewLocale("en-US").Tr("repo.file_too_large"))
+			description := htmlDoc.doc.Find("#repo-desc")
+			repoTopics := htmlDoc.doc.Find("#repo-topics")
+			repoSummary := htmlDoc.doc.Find(".repository-summary")
+
+			assert.Equal(t, 0, description.Length())
+			assert.Equal(t, 0, repoTopics.Length())
+			assert.Equal(t, 0, repoSummary.Length())
 		})
 
-		t.Run("Under maximum", func(t *testing.T) {
+		t.Run("File size", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
-			defer test.MockVariableValue(&setting.UI.MaxDisplayFileSize, fileSize+1)()
 
-			req := NewRequest(t, "GET", "/user2/repo1/blame/branch/master/README.md")
-			resp := session.MakeRequest(t, req, http.StatusOK)
+			content := "hello, world"
+			fileSize := int64(len(content))
+			repo := forgery.CreateRepository(t, nil, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					"README.md": forgery.MapFile(content),
+				},
+			})
+
+			t.Run("Above maximum", func(t *testing.T) {
+				defer tests.PrintCurrentTest(t)()
+				defer test.MockVariableValue(&setting.UI.MaxDisplayFileSize, fileSize)()
+
+				req := NewRequest(t, "GET", fmt.Sprintf("/%s/blame/branch/main/README.md", repo.FullName()))
+				resp := MakeRequest(t, req, http.StatusOK)
+
+				htmlDoc := NewHTMLParser(t, resp.Body)
+				assert.Contains(t, htmlDoc.Find(".code-view").Text(), translation.NewLocale("en-US").Tr("repo.file_too_large"))
+			})
+
+			t.Run("Under maximum", func(t *testing.T) {
+				defer tests.PrintCurrentTest(t)()
+				defer test.MockVariableValue(&setting.UI.MaxDisplayFileSize, fileSize+1)()
+
+				req := NewRequest(t, "GET", fmt.Sprintf("/%s/blame/branch/main/README.md", repo.FullName()))
+				resp := MakeRequest(t, req, http.StatusOK)
+
+				htmlDoc := NewHTMLParser(t, resp.Body)
+				assert.NotContains(t, htmlDoc.Find(".code-view").Text(), translation.NewLocale("en-US").Tr("repo.file_too_large"))
+			})
+		})
+
+		t.Run("Commit with empty message", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			user := forgery.CreateUser(t, nil)
+			twolines := "line1\nline2\n"
+			repo := forgery.CreateRepository(t, user, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					"README.md": forgery.MapFile(twolines),
+				},
+			})
+
+			dstPath := t.TempDir()
+			uClone := *u
+			uClone.Path = repo.FullName()
+			uClone.User = url.UserPassword(user.Name, userPassword)
+			t.Run("Clone", doGitClone(dstPath, &uClone))
+			threelines := twolines + "line3\n"
+			require.NoError(t, os.WriteFile(path.Join(dstPath, "README.md"), []byte(threelines), 0o666))
+			_, _, err := git.NewCommand(git.DefaultContext, "add", "README.md").RunStdString(&git.RunOpts{Dir: dstPath})
+			require.NoError(t, err)
+			_, _, err = git.NewCommand(git.DefaultContext, "commit", "--allow-empty-message", "-m", "").RunStdString(&git.RunOpts{Dir: dstPath})
+			require.NoError(t, err)
+			_, _, err = git.NewCommand(git.DefaultContext, "push").RunStdString(&git.RunOpts{Dir: dstPath})
+			require.NoError(t, err)
+
+			req := NewRequest(t, "GET", fmt.Sprintf("/%s/blame/branch/main/README.md", repo.FullName()))
+			resp := MakeRequest(t, req, http.StatusOK)
 
 			htmlDoc := NewHTMLParser(t, resp.Body)
-			assert.NotContains(t, htmlDoc.Find(".code-view").Text(), translation.NewLocale("en-US").Tr("repo.file_too_large"))
+			for i, expected := range []struct {
+				content string
+				message string
+			}{
+				{"line1", "init"},                 // first commit message
+				{"line2", ""},                     // first commit message is not repeated
+				{"line3", "Empty commit message"}, // second commit message
+			} {
+				row := htmlDoc.Find(fmt.Sprintf("table tbody tr:nth-child(%d)", i+1))
+				assert.Equal(t, expected.message, strings.TrimSpace(row.Find(".lines-commit .blame-message a").Text()))
+				assert.Equal(t, expected.content, strings.TrimSpace(row.Find(".lines-code").Text()))
+			}
 		})
 	})
 }
@@ -579,7 +619,7 @@ func TestRenamedFileHistory(t *testing.T) {
 
 			renameNotice := htmlDoc.doc.Find(".ui.bottom.attached.header")
 			assert.Equal(t, 1, renameNotice.Length())
-			assert.Contains(t, renameNotice.Text(), "Renamed from licnse (Browse further)")
+			assert.Contains(t, renameNotice.Text(), "Renamed from licnse (Previous history)")
 
 			oldFileHistoryLink, ok := renameNotice.Find("a").Attr("href")
 			assert.True(t, ok)
@@ -596,7 +636,7 @@ func TestRenamedFileHistory(t *testing.T) {
 			resp = MakeRequest(t, NewRequest(t, "GET", "/user2/repo59/commits/branch/master/license?page=2"), http.StatusOK)
 			page2 := NewHTMLParser(t, resp.Body)
 
-			// Browse further is only shown on 2nd page
+			// Show previous history link is only shown on 2nd page
 			browseFurtherSel := ".ui.bottom.attached.header a[href='/user2/repo59/commits/commit/80b83c5c8220c3aa3906e081f202a2a7563ec879/licnse']"
 			page1.AssertElement(t, browseFurtherSel, false)
 			page2.AssertElement(t, browseFurtherSel, true)
@@ -617,19 +657,15 @@ func TestRenamedFileHistory(t *testing.T) {
 
 		t.Run("Renamed file (with escaped name)", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
-			user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+			user2 := forgery.CreateUser(t, nil)
 
-			repo, commitID, f := tests.CreateDeclarativeRepo(t, user2, "",
-				[]unit_model.Type{unit_model.TypeCode}, nil,
-				[]*files_service.ChangeRepoFile{
-					{
-						Operation:     "create",
-						TreePath:      "#beep",
-						ContentReader: strings.NewReader("ping pong"),
-					},
+			var commitID string
+			repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					"#beep": forgery.MapFile("ping pong"),
 				},
-			)
-			defer f()
+				LatestSha: &commitID,
+			})
 
 			files, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, user2, &files_service.ChangeRepoFilesOptions{
 				Files: []*files_service.ChangeRepoFile{
@@ -666,7 +702,7 @@ func TestRenamedFileHistory(t *testing.T) {
 
 			renameNotice := htmlDoc.doc.Find(".ui.bottom.attached.header")
 			assert.Equal(t, 1, renameNotice.Length())
-			assert.Contains(t, renameNotice.Text(), "Renamed from #beep (Browse further)")
+			assert.Contains(t, renameNotice.Text(), "Renamed from #beep (Previous history)")
 
 			oldFileHistoryLink, ok := renameNotice.Find("a").Attr("href")
 			assert.True(t, ok)
@@ -794,7 +830,7 @@ func TestViewCommitSignature(t *testing.T) {
 		// Ensure the git config is updated with the new signing format.
 		require.NoError(t, git.InitFull(t.Context()))
 
-		user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		user := forgery.CreateUser(t, nil)
 		testCtx := NewAPITestContext(t, user.Name, "commit-header-signed", auth_model.AccessTokenScopeWriteRepository, auth_model.AccessTokenScopeWriteUser)
 		u.Path = testCtx.GitPath()
 
@@ -993,47 +1029,19 @@ func TestRepoFilesList(t *testing.T) {
 		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 
 		// create the repo
-		repo, _, f := tests.CreateDeclarativeRepo(t, user2, "",
-			[]unit_model.Type{unit_model.TypeCode}, nil,
-			[]*files_service.ChangeRepoFile{
-				{
-					Operation:     "create",
-					TreePath:      "zEta",
-					ContentReader: strings.NewReader("zeta"),
-				},
-				{
-					Operation:     "create",
-					TreePath:      "licensa",
-					ContentReader: strings.NewReader("licensa"),
-				},
-				{
-					Operation:     "create",
-					TreePath:      "licensz",
-					ContentReader: strings.NewReader("licensz"),
-				},
-				{
-					Operation:     "create",
-					TreePath:      "delta",
-					ContentReader: strings.NewReader("delta"),
-				},
-				{
-					Operation:     "create",
-					TreePath:      "Charlie/aa.txt",
-					ContentReader: strings.NewReader("charlie"),
-				},
-				{
-					Operation:     "create",
-					TreePath:      "Beta",
-					ContentReader: strings.NewReader("beta"),
-				},
-				{
-					Operation:     "create",
-					TreePath:      "alpha",
-					ContentReader: strings.NewReader("alpha"),
-				},
+		repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+			Files: forgery.MapFS{
+				"zEta":           forgery.MapFile("zeta"),
+				"licensa":        forgery.MapFile("licensa"),
+				"LICENSE":        forgery.MapFile("LICENSE"),
+				"licensz":        forgery.MapFile("licensz"),
+				"delta":          forgery.MapFile("delta"),
+				"Charlie/aa.txt": forgery.MapFile("charlie"),
+				"Beta":           forgery.MapFile("beta"),
+				"alpha":          forgery.MapFile("alpha"),
+				"README.md":      forgery.MapFile("README.md"),
 			},
-		)
-		defer f()
+		})
 
 		req := NewRequest(t, "GET", "/"+repo.FullName())
 		resp := MakeRequest(t, req, http.StatusOK)
@@ -1223,8 +1231,11 @@ func TestRepoSubmoduleView(t *testing.T) {
 	onApplicationRun(t, func(t *testing.T, u *url.URL) {
 		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 		t.Run("FromGit", func(t *testing.T) {
-			repo, _, f := tests.CreateDeclarativeRepo(t, user2, "", []unit_model.Type{unit_model.TypeCode}, nil, nil)
-			defer f()
+			repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					"README.md": forgery.MapFile("some explanation"), // file is expected in doGitClone
+				},
+			})
 
 			// Clone the repository, add a submodule and push it.
 			dstPath := t.TempDir()
@@ -1262,24 +1273,15 @@ func TestRepoSubmoduleView(t *testing.T) {
 		})
 
 		t.Run("Declarative", func(t *testing.T) {
-			repo, _, f := tests.CreateDeclarativeRepo(t, user2, "", []unit_model.Type{unit_model.TypeCode}, nil, []*files_service.ChangeRepoFile{
-				{
-					Operation: "create",
-					TreePath:  ".gitmodules",
-					ContentReader: strings.NewReader(`[submodule "relative-module"]
+			repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					".gitmodules": forgery.MapFile(`[submodule "relative-module"]
   path = relative-module
   url = https://git.example.org/submodule.git
 `),
-				}, {
-					Operation:     "create",
-					TreePath:      "relative-module",
-					FromTreePath:  "",
-					ContentReader: nil,
-					SHA:           "95601d16476a",
-					Options:       files_service.RepoFileOptionMode(git.EntryModeCommit),
+					"relative-module": forgery.MapSubmodule("95601d16476a"),
 				},
 			})
-			defer f()
 
 			// Check that the submodule entry exist and the link is correct.
 			req := NewRequest(t, "GET", "/"+repo.FullName())
@@ -1300,26 +1302,17 @@ func TestRepoSubmoduleView(t *testing.T) {
 		})
 
 		t.Run("SubmodulesFileTooBig", func(t *testing.T) {
-			repo, _, f := tests.CreateDeclarativeRepo(t, user2, "", []unit_model.Type{unit_model.TypeCode}, nil, []*files_service.ChangeRepoFile{
-				{
-					Operation: "create",
-					TreePath:  ".gitmodules",
-					ContentReader: strings.NewReader(strings.Repeat("#", git.MaxGitmodulesFileSize-5) + // ensure that the partial read is invalid
+			repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+				Files: forgery.MapFS{
+					".gitmodules": forgery.MapFile(strings.Repeat("#", git.MaxGitmodulesFileSize-5) + // ensure that the partial read is invalid
 						`
 [submodule "relative-module"]
   path = relative-module
   url = https://git.example.org/submodule.git
 `),
-				}, {
-					Operation:     "create",
-					TreePath:      "relative-module",
-					FromTreePath:  "",
-					ContentReader: nil,
-					SHA:           "95601d16476a",
-					Options:       files_service.RepoFileOptionMode(git.EntryModeCommit),
+					"relative-module": forgery.MapSubmodule("95601d16476a"),
 				},
 			})
-			defer f()
 
 			// Check that the submodule entry exist and the link is correct.
 			req := NewRequest(t, "GET", "/"+repo.FullName())
@@ -1369,21 +1362,17 @@ func TestInitInstructions(t *testing.T) {
 
 	forEachObjectFormat(t, func(t *testing.T, objectFormat git.ObjectFormat) {
 		defer tests.PrintCurrentTest(t)()
-		name := objectFormat.Name()
+
 		var init string
-		if name == "sha1" {
+		if objectFormat == git.Sha1ObjectFormat {
 			init = "git init"
 		} else {
-			init = fmt.Sprintf("git init --object-format=%s", name)
+			init = fmt.Sprintf("git init --object-format=%s", objectFormat.Name())
 		}
 
-		repo, _, f := tests.CreateDeclarativeRepoWithOptions(t, user, tests.DeclarativeRepoOptions{
-			Name:         optional.Some(name + "-instruction"),
-			AutoInit:     optional.Some(false),
-			EnabledUnits: optional.Some([]unit_model.Type{unit_model.TypeCode}),
-			ObjectFormat: optional.Some(name),
+		repo := forgery.CreateRepository(t, user, &forgery.CreateRepositoryOptions{
+			ObjectFormat: objectFormat,
 		})
-		defer f()
 
 		portMatcher := regexp.MustCompile(`localhost:\d+`)
 		resp := session.MakeRequest(t, NewRequest(t, "GET", "/"+repo.FullName()), http.StatusOK)
@@ -1394,7 +1383,56 @@ func TestInitInstructions(t *testing.T) {
 git switch -c main
 git add README.md
 git commit -m "first commit"
-git remote add origin http://localhost/user2/%s-instruction.git
-git push -u origin main`, init, name), portMatcher.ReplaceAllString(htmlDoc.Find(".empty-repo-guide code").First().Text(), "localhost"))
+git remote add origin http://localhost/user2/%s.git
+git push -u origin main`, init, repo.Name), portMatcher.ReplaceAllString(htmlDoc.Find(".empty-repo-guide code").First().Text(), "localhost"))
+	})
+}
+
+func TestViewRepoSize(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	checkSizeSpanOfRepo := func(repo string, t *testing.T) string {
+		req := NewRequest(t, "GET", repo)
+		resp := MakeRequest(t, req, http.StatusOK)
+
+		htmlDoc := NewHTMLParser(t, resp.Body)
+		sizeSpan := htmlDoc.doc.Find("span[data-test-name='repo-size']")
+		require.NotNil(t, sizeSpan)
+
+		attr, exists := sizeSpan.Attr("data-tooltip-content")
+		assert.True(t, exists)
+		return attr
+	}
+
+	t.Run("LFS enabled", func(t *testing.T) {
+		defer test.MockVariableValue(&setting.LFS.StartServer, true)()
+
+		t.Run("LFS-less repo", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			attr := checkSizeSpanOfRepo("/user2/repo1", t)
+			assert.Equal(t, "git: 6.3 KiB, lfs: 0 B", attr)
+		})
+
+		t.Run("LFS repo", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			attr := checkSizeSpanOfRepo("/user2/lfs", t)
+			assert.Equal(t, "git: 10 B, lfs: 1 B", attr)
+		})
+	})
+
+	t.Run("LFS disabled", func(t *testing.T) {
+		defer test.MockVariableValue(&setting.LFS.StartServer, false)()
+
+		t.Run("LFS-less repo", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			attr := checkSizeSpanOfRepo("/user2/repo1", t)
+			assert.Equal(t, "git: 6.3 KiB", attr)
+		})
+
+		t.Run("LFS repo", func(t *testing.T) {
+			defer tests.PrintCurrentTest(t)()
+			attr := checkSizeSpanOfRepo("/user2/lfs", t)
+			assert.Equal(t, "git: 10 B, lfs: 1 B", attr)
+		})
 	})
 }

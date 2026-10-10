@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,9 +16,12 @@ import (
 	issues_model "forgejo.org/models/issues"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/test"
 	"forgejo.org/modules/timeutil"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -72,9 +76,17 @@ func TestAdminViewUser(t *testing.T) {
 	req := NewRequest(t, "GET", "/admin/users/1")
 	session.MakeRequest(t, req, http.StatusOK)
 
+	req = NewRequest(t, "GET", "/user4")
+	resp := session.MakeRequest(t, req, http.StatusOK)
+	assert.Contains(t, resp.Body.String(), "data-modal=\"#delete-user-modal\"")
+
 	session = loginUser(t, "user2")
 	req = NewRequest(t, "GET", "/admin/users/1")
 	session.MakeRequest(t, req, http.StatusForbidden)
+
+	req = NewRequest(t, "GET", "/user4")
+	resp = session.MakeRequest(t, req, http.StatusOK)
+	assert.NotContains(t, resp.Body.String(), "data-modal=\"#delete-user-modal\"")
 }
 
 func TestAdminEditUser(t *testing.T) {
@@ -126,6 +138,63 @@ func TestAdminEditUserHideEmail(t *testing.T) {
 	resp = session.MakeRequest(t, req, http.StatusOK)
 	htmlDoc = NewHTMLParser(t, resp.Body)
 	htmlDoc.AssertElement(t, `input[name="hide_email"][checked]`, true)
+}
+
+func TestAdminEditUserWebsite(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user1")
+	user := forgery.CreateUser(t, nil)
+	urlStr := fmt.Sprintf("/admin/users/%d/edit", user.ID)
+
+	t.Run("an HTTPS website under default schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		// changing website should work
+		req := NewRequestWithValues(t, "POST", urlStr, map[string]string{
+			"user_name":  user.Name,
+			"login_name": user.LoginName,
+			"login_type": "0-0",
+			"email":      user.Email,
+			"website":    "https://codeberg.org",
+		})
+		resp := session.MakeRequest(t, req, http.StatusSeeOther)
+		assertHasFlashMessages(t, resp, "success")
+	})
+
+	t.Run("an H3 website under default schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+
+		// changing website should not work
+		req := NewRequestWithValues(t, "POST", urlStr, map[string]string{
+			"user_name":  user.Name,
+			"login_name": user.LoginName,
+			"login_type": "0-0",
+			"email":      user.Email,
+			"website":    "h3://codeberg.org",
+		})
+		resp := session.MakeRequest(t, req, http.StatusOK)
+		doc := NewHTMLParser(t, resp.Body)
+		flash := doc.Find("#flash-message").Text()
+		assert.Equal(t, `Website"Url" is not a valid URL.`, strings.TrimSpace(flash))
+	})
+
+	t.Run("an H3 website under custom schemes", func(t *testing.T) {
+		defer tests.PrintCurrentTest(t)()
+		defer test.MockProtect(&setting.Service.ValidSiteURLSchemes)()
+		setting.Service.ValidSiteURLSchemes = append(setting.Service.ValidSiteURLSchemes, "h3")
+
+		// changing website should work
+		req := NewRequestWithValues(t, "POST", urlStr, map[string]string{
+			"user_name":  user.Name,
+			"login_name": user.LoginName,
+			"login_type": "0-0",
+			"email":      user.Email,
+			"website":    "h3://codeberg.org",
+		})
+		resp := session.MakeRequest(t, req, http.StatusSeeOther)
+		assertHasFlashMessages(t, resp, "success")
+	})
 }
 
 func testSuccessfulEdit(t *testing.T, formData user_model.User) {
@@ -201,7 +270,13 @@ func TestSourceId(t *testing.T) {
 	resp = session.MakeRequest(t, req, http.StatusOK)
 	DecodeJSON(t, resp, &users)
 	assert.Len(t, users, 1)
-	assert.Equal(t, "imported", users[0].UserName)
+
+	// SQLite sorts uppercase strings differently to MYSQL and PostgreSQL
+	if setting.Database.Type.IsSQLite3() {
+		assert.Equal(t, "User44", users[0].UserName)
+	} else {
+		assert.Equal(t, "imported", users[0].UserName)
+	}
 
 	// Now our new user should be in the list, because we filter by source_id 23
 	req = NewRequest(t, "GET", "/api/v1/admin/users?limit=1&source_id=23").AddTokenAuth(token)
@@ -240,17 +315,26 @@ func TestAdminViewUsersSorted(t *testing.T) {
 	session := loginUser(t, "user1")
 	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeReadAdmin)
 
-	testCases := []struct {
+	type testCase struct {
 		loginSource   int64
 		sortType      string
 		expectedUsers []string
-	}{
-		{0, "alphabetically", []string{"imported", "the_34-user.with.all.allowedChars", "user1", "user10"}},
-		{0, "reversealphabetically", []string{"user9", "user8", "user5", "user40"}},
-		{0, "newest", []string{"imported", "user40", "user39", "user38"}},
+	}
+
+	testCases := []testCase{
+		{0, "newest", []string{"User44", "imported", "user40", "user39"}},
 		{0, "oldest", []string{"user1", "user2", "user4", "user5"}},
 		{44, "recentupdate", []string{"sorttest1", "sorttest2", "sorttest3", "sorttest4"}},
 		{44, "leastupdate", []string{"sorttest10", "sorttest9", "sorttest8", "sorttest7"}},
+	}
+
+	// SQLite sorts uppercase strings differently to MYSQL and PostgreSQL
+	if setting.Database.Type.IsSQLite3() {
+		testCases = append(testCases, testCase{0, "alphabetically", []string{"User44", "imported", "the_34-user.with.all.allowedChars", "user1"}})
+		testCases = append(testCases, testCase{0, "reversealphabetically", []string{"user9", "user8", "user5", "user40"}})
+	} else {
+		testCases = append(testCases, testCase{0, "alphabetically", []string{"imported", "the_34-user.with.all.allowedChars", "user1", "user10"}})
+		testCases = append(testCases, testCase{0, "reversealphabetically", []string{"user9", "user8", "user5", "User44"}})
 	}
 
 	for _, testCase := range testCases {

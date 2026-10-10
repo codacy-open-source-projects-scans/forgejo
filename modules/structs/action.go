@@ -5,6 +5,8 @@ package structs
 
 import (
 	"time"
+
+	"forgejo.org/modules/optional"
 )
 
 // ActionRunJob represents a job of a run
@@ -12,6 +14,8 @@ import (
 type ActionRunJob struct {
 	// Identifier of this job.
 	ID int64 `json:"id"`
+	// Identifier of the workflow run this job belongs to.
+	RunID int64 `json:"run_id"`
 	// How many times the job has been attempted including the current attempt.
 	Attempt int64 `json:"attempt"`
 	// Opaque identifier that uniquely identifies a single attempt of a job.
@@ -22,6 +26,8 @@ type ActionRunJob struct {
 	OwnerID int64 `json:"owner_id"`
 	// the action run job name
 	Name string `json:"name"`
+	// HTMLURL is the URL where a user can view the job using their browser.
+	HTMLURL string `json:"html_url"`
 	// the action run job needed ids
 	Needs []string `json:"needs"`
 	// the action run job labels to run on
@@ -30,6 +36,37 @@ type ActionRunJob struct {
 	TaskID int64 `json:"task_id"`
 	// the action run job status
 	Status string `json:"status"`
+	// the steps that make up this workflow job's execution, including the
+	// "Set up job" entry (number=0) and "Complete job" tail. Only populated by
+	// endpoints that return a single job (e.g. GET /repos/{owner}/{repo}/actions/jobs/{job_id}).
+	Steps []*ActionRunJobStep `json:"steps,omitempty"`
+}
+
+// ActionRunJobStep is a step in a workflow job's execution. The slice on
+// ActionRunJob.Steps always includes a "Set up job" entry at number=0 and a
+// "Complete job" entry as the last element; the entries in between are the
+// workflow's real steps in declaration order. The Number field is the value
+// accepted by the job-logs endpoint's `?step=` filter.
+//
+// swagger:model
+type ActionRunJobStep struct {
+	// position in the job's step list. 0 is the "Set up job" entry; the last
+	// index is the "Complete job" entry; real steps are numbered 1..N in
+	// declaration order.
+	Number int64 `json:"number"`
+	// step name (workflow YAML `name:` for real steps; "Set up job" and
+	// "Complete job" for the head and tail respectively)
+	Name string `json:"name"`
+	// step status (success, failure, running, waiting, skipped, cancelled, ...)
+	Status string `json:"status"`
+	// when the step started
+	// swagger:type string
+	// swagger:strfmt date-time
+	Started optional.Option[time.Time] `json:"started"`
+	// when the step stopped
+	// swagger:type string
+	// swagger:strfmt date-time
+	Stopped optional.Option[time.Time] `json:"stopped"`
 }
 
 // ActionRun represents an action run
@@ -70,9 +107,13 @@ type ActionRun struct {
 	// the current status of this run
 	Status string `json:"status"`
 	// when the action run was started
-	Started time.Time `json:"started"`
+	// swagger:type string
+	// swagger:strfmt date-time
+	Started optional.Option[time.Time] `json:"started"`
 	// when the action run was stopped
-	Stopped time.Time `json:"stopped"`
+	// swagger:type string
+	// swagger:strfmt date-time
+	Stopped optional.Option[time.Time] `json:"stopped"`
 	// when the action run was created
 	Created time.Time `json:"created"`
 	// when the action run was last updated

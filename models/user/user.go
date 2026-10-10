@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/trace"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -31,6 +32,7 @@ import (
 	"forgejo.org/modules/git"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/optional"
+	service_message "forgejo.org/modules/service_message"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/structs"
 	"forgejo.org/modules/timeutil"
@@ -112,6 +114,7 @@ type User struct {
 	CreatedUnix   timeutil.TimeStamp `xorm:"INDEX created"`
 	UpdatedUnix   timeutil.TimeStamp `xorm:"INDEX updated"`
 	LastLoginUnix timeutil.TimeStamp `xorm:"INDEX"`
+	Confirms      service_message.ConfirmTimestamps
 
 	// Remember visibility choice for convenience, true for private
 	LastRepoVisibility bool
@@ -201,9 +204,13 @@ func (u *User) BeforeUpdate() {
 
 // AfterLoad is invoked from XORM after filling all the fields of this object.
 func (u *User) AfterLoad() {
-	if u.Theme == "" {
+	if !IsThemeValid(u.Theme) {
 		u.Theme = setting.UI.DefaultTheme
 	}
+}
+
+func IsThemeValid(theme string) bool {
+	return slices.Contains(setting.UI.Themes, theme)
 }
 
 // SetLastLogin set time to last login
@@ -362,11 +369,30 @@ func (u *User) OrganisationLink() string {
 // GenerateEmailAuthorizationCode generates an activation code based for the user for the specified purpose.
 // The standard expiry is ActiveCodeLives minutes.
 func (u *User) GenerateEmailAuthorizationCode(ctx context.Context, purpose auth.AuthorizationPurpose) (string, error) {
-	lookup, validator, err := auth.GenerateAuthToken(ctx, u.ID, timeutil.TimeStampNow().Add(int64(setting.Service.ActiveCodeLives)*60), purpose)
+	lookup, validator, err := auth.GenerateAuthToken(ctx, u.ID, optional.None[int64](), timeutil.TimeStampNow().Add(int64(setting.Service.ActiveCodeLives)*60), purpose)
 	if err != nil {
 		return "", err
 	}
 	return lookup + ":" + validator, nil
+}
+
+// SetConfirm sets the Confirms field in the user struct
+func (u *User) SetConfirm(smType service_message.SMType, userTimestamp timeutil.TimeStamp) error {
+	if u.Confirms == nil {
+		confirm := make(map[service_message.SMType]timeutil.TimeStamp)
+		u.Confirms = confirm
+	}
+	u.Confirms[smType] = userTimestamp
+	return nil
+}
+
+// MustShowServiceMessage compares the creation time stamps and the confirm time stamps, returns true if confirm is out of date
+func (u *User) MustShowServiceMessage(smType service_message.SMType, smTimestamp timeutil.TimeStamp) bool {
+	if u.Confirms == nil {
+		return true
+	}
+	userConfirmed := u.Confirms[smType]
+	return smTimestamp > userConfirmed // is service message newer than user confirmation
 }
 
 // GetUserFollowers returns range of user's followers.
@@ -672,6 +698,7 @@ var (
 		"ghost",           // reserved name for deleted users (id: -1)
 		"gitea-actions",   // gitea builtin user (id: -2)
 		"forgejo-actions", // forgejo builtin user (id: -2)
+		"actor",           // user for activitypub / federation (id: -3)
 	}
 
 	// These names are reserved for user accounts: user's keys, user's rss feed, user's avatar, etc.
@@ -724,6 +751,11 @@ func AdminCreateUser(ctx context.Context, u *User, overwriteDefault ...*CreateUs
 func createUser(ctx context.Context, u *User, createdByAdmin bool, overwriteDefault ...*CreateUserOverwriteOptions) (err error) {
 	overwriteDefaultPresent := len(overwriteDefault) != 0 && overwriteDefault[0] != nil
 
+	// Apply username prefix for non-admin user creation if configured.
+	if !createdByAdmin && setting.Service.UsernamePrefix != "" && !strings.HasPrefix(u.Name, setting.Service.UsernamePrefix) {
+		u.Name = setting.Service.UsernamePrefix + u.Name
+	}
+
 	// If a username is invalid as-is, check whether the username is meant
 	// for an ActivityPub account. Username constraints that belong to "foreign"
 	// ActivityPub servers, whose implementations we cannot control, are expected
@@ -761,6 +793,7 @@ func createUser(ctx context.Context, u *User, createdByAdmin bool, overwriteDefa
 	u.Theme = setting.UI.DefaultTheme
 	u.IsRestricted = setting.Service.DefaultUserIsRestricted
 	u.IsActive = !setting.Service.RegisterEmailConfirm && !setting.Service.RegisterManualConfirm
+	u.EnableRepoUnitHints = true
 
 	// Ensure consistency of the dates.
 	if u.UpdatedUnix < u.CreatedUnix {
@@ -923,46 +956,46 @@ func countUsers(ctx context.Context, opts *CountUserFilter) int64 {
 
 // VerifyUserActiveCode verifies that the code is valid for the given purpose for this user.
 // If delete is specified, the token will be deleted.
-func VerifyUserAuthorizationToken(ctx context.Context, code string, purpose auth.AuthorizationPurpose) (user *User, deleteToken func() error, err error) {
+func VerifyUserAuthorizationToken(ctx context.Context, code string, purpose auth.AuthorizationPurpose) (user *User, authToken *auth.AuthorizationToken, deleteToken func() error, err error) {
 	lookupKey, validator, found := strings.Cut(code, ":")
 	if !found {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	authToken, err := auth.FindAuthToken(ctx, lookupKey, purpose)
+	authToken, err = auth.FindAuthToken(ctx, lookupKey, purpose)
 	if err != nil {
 		if errors.Is(err, util.ErrNotExist) {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if authToken.IsExpired() {
-		return nil, nil, auth.DeleteAuthToken(ctx, authToken)
+		return nil, nil, nil, auth.DeleteAuthToken(ctx, authToken)
 	}
 
 	rawValidator, err := hex.DecodeString(validator)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if subtle.ConstantTimeCompare([]byte(authToken.HashedValidator), []byte(auth.HashValidator(rawValidator))) == 0 {
-		return nil, nil, errors.New("validator doesn't match")
+		return nil, nil, nil, errors.New("validator doesn't match")
 	}
 
 	u, err := GetUserByID(ctx, authToken.UID)
 	if err != nil {
 		if IsErrUserNotExist(err) {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	deleteToken = func() error {
 		return auth.DeleteAuthToken(ctx, authToken)
 	}
 
-	return u, deleteToken, nil
+	return u, authToken, deleteToken, nil
 }
 
 // ValidateUser check if user is valid to insert / update into database
@@ -1352,14 +1385,20 @@ func isUserVisibleToViewerCond(viewer *User) builder.Cond {
 			builder.
 				Select("`team_user`.uid").
 				From("team_user").
-				Join("INNER", "`team_user` AS t2", "`team_user`.org_id = `t2`.org_id").
-				Where(builder.Eq{"`t2`.uid": viewer.ID})),
+				// Explicitly don't self-join, two seperate queries are much faster for
+				// a lot of rows
+				Where(builder.In("`team_user`.org_id",
+					builder.
+						Select("`team_user`.org_id").
+						From("team_user").
+						Where(builder.Eq{"`team_user`.uid": viewer.ID})))),
 		// viewer's org
 		builder.In("`user`.id",
 			builder.
 				Select("`team_user`.org_id").
 				From("team_user").
-				Where(builder.Eq{"`team_user`.uid": viewer.ID})))
+				Where(builder.Eq{"`team_user`.uid": viewer.ID})),
+	)
 }
 
 // IsUserVisibleToViewer check if viewer is able to see user profile
@@ -1397,7 +1436,10 @@ func IsUserVisibleToViewer(ctx context.Context, u, viewer *User) bool {
 						builder.In("org_id",
 							builder.Select("org_id").
 								From("team_user", "t2").
-								Where(builder.Eq{"uid": u.ID}))))).
+								Where(builder.Eq{"uid": u.ID})),
+					),
+				),
+			).
 			Count()
 		if err != nil {
 			return false

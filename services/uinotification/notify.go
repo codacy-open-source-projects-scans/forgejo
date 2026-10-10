@@ -101,7 +101,7 @@ func (ns *notificationService) NewIssue(ctx context.Context, issue *issues_model
 	}
 }
 
-func (ns *notificationService) IssueChangeStatus(ctx context.Context, doer *user_model.User, commitID string, issue *issues_model.Issue, actionComment *issues_model.Comment, isClosed bool) {
+func (ns *notificationService) IssueChangeStatus(ctx context.Context, doer *user_model.User, prInfo *issues_model.PRNotificationInfo, issue *issues_model.Issue, actionComment *issues_model.Comment, isClosed bool) {
 	_ = ns.issueQueue.Push(issueNotificationOpts{
 		IssueID:              issue.ID,
 		NotificationAuthorID: doer.ID,
@@ -139,7 +139,7 @@ func (ns *notificationService) NewPullRequest(ctx context.Context, pr *issues_mo
 		return
 	}
 	toNotify := make(container.Set[int64], 32)
-	repoWatchers, err := repo_model.GetRepoWatchersIDs(ctx, pr.Issue.RepoID)
+	repoWatchers, err := repo_model.GetSelectWatcherIDs(ctx, pr.Issue.RepoID, repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false})
 	if err != nil {
 		log.Error("GetRepoWatchersIDs: %v", err)
 		return

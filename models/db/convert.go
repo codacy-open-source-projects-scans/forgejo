@@ -11,8 +11,8 @@ import (
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 
-	"xorm.io/xorm"
-	"xorm.io/xorm/schemas"
+	"code.forgejo.org/xorm/xorm"
+	"code.forgejo.org/xorm/xorm/schemas"
 )
 
 // ConvertDatabaseTable converts database and tables from utf8 to utf8mb4 if it's mysql and set ROW_FORMAT=dynamic
@@ -26,7 +26,7 @@ func ConvertDatabaseTable() error {
 		return err
 	}
 
-	databaseName := strings.SplitN(setting.Database.Name, "?", 2)[0]
+	databaseName, _, _ := strings.Cut(setting.Database.Name, "?")
 	_, err = x.Exec(fmt.Sprintf("ALTER DATABASE `%s` CHARACTER SET utf8mb4 COLLATE %s", databaseName, r.ExpectedCollation))
 	if err != nil {
 		return err

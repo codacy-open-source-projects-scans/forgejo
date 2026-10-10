@@ -24,8 +24,8 @@ import (
 	"forgejo.org/modules/testlogger"
 	"forgejo.org/modules/util"
 
+	"code.forgejo.org/xorm/xorm"
 	"github.com/stretchr/testify/require"
-	"xorm.io/xorm"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Import pgx driver
 )
@@ -40,7 +40,7 @@ func PrepareTestEnv(t *testing.T, skip int, syncModels ...any) (*xorm.Engine, fu
 	ourSkip += skip
 	deferFn := testlogger.PrintCurrentTest(t, ourSkip)
 	require.NoError(t, os.RemoveAll(setting.RepoRootPath))
-	require.NoError(t, unittest.CopyDir(path.Join(filepath.Dir(setting.AppPath), "tests/gitea-repositories-meta"), setting.RepoRootPath))
+	require.NoError(t, unittest.CopyDir(path.Join(setting.AppWorkPath, "tests/gitea-repositories-meta"), setting.RepoRootPath))
 	ownerDirs, err := os.ReadDir(setting.RepoRootPath)
 	if err != nil {
 		require.NoError(t, err, "unable to read the new repo root: %v\n", err)
@@ -91,7 +91,7 @@ func PrepareTestEnv(t *testing.T, skip int, syncModels ...any) (*xorm.Engine, fu
 		}
 	}
 
-	fixturesDir := filepath.Join(filepath.Dir(setting.AppPath), "models", "gitea_migrations", "fixtures", t.Name())
+	fixturesDir := filepath.Join(setting.AppWorkPath, "models", "gitea_migrations", "fixtures", t.Name())
 
 	if _, err := os.Stat(fixturesDir); err == nil {
 		t.Logf("initializing fixtures from: %s", fixturesDir)
@@ -99,7 +99,8 @@ func PrepareTestEnv(t *testing.T, skip int, syncModels ...any) (*xorm.Engine, fu
 			unittest.FixturesOptions{
 				Dir:              fixturesDir,
 				OnlyAffectModels: syncModels,
-			}, x); err != nil {
+			}, x,
+		); err != nil {
 			t.Errorf("error whilst initializing fixtures from %s: %v", fixturesDir, err)
 			return x, deferFn
 		}
@@ -119,28 +120,24 @@ func PrepareTestEnv(t *testing.T, skip int, syncModels ...any) (*xorm.Engine, fu
 func MainTest(m *testing.M) {
 	log.RegisterEventWriter("test", testlogger.NewTestLoggerWriter)
 
-	giteaRoot := base.SetupGiteaRoot()
-	if giteaRoot == "" {
-		fmt.Println("Environment variable $GITEA_ROOT not set")
+	projectRoot := base.SetupProjectRoot()
+	if projectRoot == "" {
+		fmt.Println("Environment variable $PROJECT_ROOT not set")
 		os.Exit(1)
 	}
-	giteaBinary := "gitea"
-	setting.AppPath = path.Join(giteaRoot, giteaBinary)
-	if _, err := os.Stat(setting.AppPath); err != nil {
-		fmt.Printf("Could not find gitea binary at %s\n", setting.AppPath)
-		os.Exit(1)
+	setting.AppWorkPath = projectRoot
+	setting.AppPath = path.Join(projectRoot, "gitea_migrations-should-not-need-a-binary") // use RunMainAppWithStdin if a binary is needed
+
+	projectConf := os.Getenv("PROJECT_CONF")
+	if projectConf == "" {
+		projectConf = path.Join(setting.AppWorkPath, "tests/sqlite.ini")
+		fmt.Printf("Environment variable $PROJECT_CONF not set - defaulting to %s\n", projectConf)
 	}
 
-	giteaConf := os.Getenv("GITEA_CONF")
-	if giteaConf == "" {
-		giteaConf = path.Join(filepath.Dir(setting.AppPath), "tests/sqlite.ini")
-		fmt.Printf("Environment variable $GITEA_CONF not set - defaulting to %s\n", giteaConf)
-	}
-
-	if !path.IsAbs(giteaConf) {
-		setting.CustomConf = path.Join(giteaRoot, giteaConf)
+	if !path.IsAbs(projectConf) {
+		setting.CustomConf = path.Join(projectRoot, projectConf)
 	} else {
-		setting.CustomConf = giteaConf
+		setting.CustomConf = projectConf
 	}
 
 	tmpDataPath, err := os.MkdirTemp("", "data")
@@ -201,7 +198,7 @@ func deleteDB() error {
 		}
 		defer db.Close()
 
-		databaseName := strings.SplitN(setting.Database.Name, "?", 2)[0]
+		databaseName, _, _ := strings.Cut(setting.Database.Name, "?")
 
 		if _, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName)); err != nil {
 			return err

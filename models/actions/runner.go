@@ -308,6 +308,13 @@ func GetVisibleRunnerByID(ctx context.Context, id, ownerID, repoID int64) (*Acti
 
 // UpdateRunner updates runner's information.
 func UpdateRunner(ctx context.Context, r *ActionRunner, cols ...string) error {
+	if r.OwnerID != 0 && r.RepoID != 0 {
+		// The ownership of existing runners should not be changed silently. That leads to subtle bugs and inscrutable
+		// behaviour.
+		return fmt.Errorf("OwnerID (%d) and RepoID (%d) of runner %d cannot be set simultaneously",
+			r.OwnerID, r.RepoID, r.ID)
+	}
+
 	e := db.GetEngine(ctx)
 	r.Name, _ = util.SplitStringAtByteN(r.Name, 255)
 	var err error
@@ -394,6 +401,13 @@ func FixRunnersWithoutBelongingRepo(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// DeleteEphemeralRunner removes the ephemeral runner with the given ID. If the runner with the given ID is not an
+// ephemeral runner, nothing happens.
+func DeleteEphemeralRunner(ctx context.Context, id int64) error {
+	_, err := db.GetEngine(ctx).Where(builder.Eq{"id": id, "ephemeral": true}).Delete(&ActionRunner{})
+	return err
 }
 
 func DeleteOfflineRunners(ctx context.Context, olderThan timeutil.TimeStamp, globalOnly bool) error {

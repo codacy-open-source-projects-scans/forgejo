@@ -9,7 +9,7 @@ import {renderPreviewPanelContent} from '../repo-editor.js';
 import {easyMDEToolbarActions} from './EasyMDEToolbarActions.js';
 import {initTextExpander} from './TextExpander.js';
 import {showErrorToast, showHintToast} from '../../modules/toast.js';
-import {POST} from '../../modules/fetch.js';
+import {POST} from '../../modules/fetch.ts';
 import {initTab} from '../../modules/tab.ts';
 
 /**
@@ -78,6 +78,11 @@ class ComboMarkdownEditor {
     this.textarea.addEventListener('input', (e) => this.options?.onContentChanged?.(this, e));
     this.applyEditorHeights(this.textarea, this.options.editorHeights);
 
+    const monospaceEnabled = localStorage?.getItem('markdown-editor-monospace') === 'true';
+    if (monospaceEnabled) {
+      this.textarea.classList.add('tw-font-mono');
+    }
+
     if (this.textarea.getAttribute('data-disable-autosize') !== 'true') {
       this.textareaAutosize = autosize(this.textarea, {viewportMarginBottom: 130});
     }
@@ -96,8 +101,8 @@ class ComboMarkdownEditor {
     this.textareaMarkdownToolbar.querySelector('button[data-md-action="unindent"]')?.addEventListener('click', () => {
       this.indentSelection(true, false);
     });
-    this.textareaMarkdownToolbar.querySelector('button[data-md-action="new-table"]')?.setAttribute('data-modal', `div[data-markdown-table-modal-id="${this.elementIdSuffix}"]`);
-    this.textareaMarkdownToolbar.querySelector('button[data-md-action="new-link"]')?.setAttribute('data-modal', `div[data-markdown-link-modal-id="${this.elementIdSuffix}"]`);
+    this.textareaMarkdownToolbar.querySelector('button[data-md-action="new-table"]')?.setAttribute('data-modal', `dialog[data-markdown-table-modal-id="${this.elementIdSuffix}"]`);
+    this.textareaMarkdownToolbar.querySelector('button[data-md-action="new-link"]')?.setAttribute('data-modal', `dialog[data-markdown-link-modal-id="${this.elementIdSuffix}"]`);
 
     // Find all data-md-ctrl-shortcut elements in the markdown toolbar.
     const shortcutKeys = new Map();
@@ -173,7 +178,6 @@ class ComboMarkdownEditor {
     });
 
     const monospaceButton = this.container.querySelector('.markdown-switch-monospace');
-    const monospaceEnabled = localStorage?.getItem('markdown-editor-monospace') === 'true';
     const monospaceText = monospaceButton.getAttribute(monospaceEnabled ? 'data-disable-text' : 'data-enable-text');
     monospaceButton.setAttribute('data-tooltip-content', monospaceText);
     monospaceButton.setAttribute('aria-label', monospaceText);
@@ -263,7 +267,7 @@ class ComboMarkdownEditor {
 
   addNewTable(event) {
     const elementId = event.target.getAttribute('data-element-id');
-    const newTableModal = document.querySelector(`div[data-markdown-table-modal-id="${elementId}"]`);
+    const newTableModal = document.querySelector(`dialog[data-markdown-table-modal-id="${elementId}"]`);
     const form = newTableModal.querySelector('div[data-selector-name="form"]');
 
     // Validate input fields
@@ -291,12 +295,13 @@ class ComboMarkdownEditor {
     replaceTextareaSelection(document.getElementById(`_combo_markdown_editor_${elementId}`), code);
 
     // Close the modal
-    newTableModal.querySelector('button[data-selector-name="cancel-button"]').click();
+    newTableModal.close();
   }
 
   setupTableInserter() {
-    const newTableModal = this.container.querySelector('div[data-modal-name="new-markdown-table"]');
+    const newTableModal = this.container.querySelector('dialog[data-modal-name="new-markdown-table"]');
     newTableModal.setAttribute('data-markdown-table-modal-id', this.elementIdSuffix);
+    document.body.append(newTableModal); // Contains form elements, avoid conflict with form of comment editor.
 
     const button = newTableModal.querySelector('button[data-selector-name="ok-button"]');
     button.setAttribute('data-element-id', this.elementIdSuffix);
@@ -305,49 +310,49 @@ class ComboMarkdownEditor {
 
   addNewLink(event) {
     const elementId = event.target.getAttribute('data-element-id');
-    const newLinkModal = document.querySelector(`div[data-markdown-link-modal-id="${elementId}"]`);
-    const form = newLinkModal.querySelector('div[data-selector-name="form"]');
+    const newLinkModal = document.querySelector(`dialog[data-markdown-link-modal-id="${elementId}"]`);
+    const fieldset = newLinkModal.querySelector('fieldset[data-selector-name="form"]');
 
     // Validate input fields
-    for (const currentInput of form.querySelectorAll('input')) {
+    for (const currentInput of fieldset.querySelectorAll('input')) {
       if (!currentInput.checkValidity()) {
         currentInput.reportValidity();
         return;
       }
     }
 
-    const url = form.querySelector('input[name="link-url"]').value;
-    const description = form.querySelector('input[name="link-description"]').value;
+    const url = fieldset.querySelector('input[name="link-url"]').value;
+    const description = fieldset.querySelector('input[name="link-description"]').value;
 
     const code = `[${description}](${url})`;
 
     replaceTextareaSelection(document.getElementById(`_combo_markdown_editor_${elementId}`), code);
 
     // Close the modal then clear its fields in case the user wants to add another one.
-    newLinkModal.querySelector('button[data-selector-name="cancel-button"]').click();
-    form.querySelector('input[name="link-url"]').value = '';
-    form.querySelector('input[name="link-description"]').value = '';
+    newLinkModal.close();
+    fieldset.querySelector('input[name="link-url"]').value = '';
+    fieldset.querySelector('input[name="link-description"]').value = '';
   }
 
   setupLinkInserter() {
-    const newLinkModal = this.container.querySelector('div[data-modal-name="new-markdown-link"]');
+    const newLinkModal = this.container.querySelector('dialog[data-modal-name="new-markdown-link"]');
     newLinkModal.setAttribute('data-markdown-link-modal-id', this.elementIdSuffix);
     const textarea = document.getElementById(`_combo_markdown_editor_${this.elementIdSuffix}`);
+    document.body.append(newLinkModal); // Contains form elements, avoid conflict with form of comment editor.
 
-    $(newLinkModal).modal({
-      // Pre-fill the description field from the selection to create behavior similar
-      // to pasting an URL over selected text.
-      onShow: () => {
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
+    newLinkModal.addEventListener('toggle', (e) => {
+      if (!e.target.open) {
+        return;
+      }
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
 
-        if (start !== end) {
-          const selection = textarea.value.slice(start ?? undefined, end ?? undefined);
-          newLinkModal.querySelector('input[name="link-description"]').value = selection;
-        } else {
-          newLinkModal.querySelector('input[name="link-description"]').value = '';
-        }
-      },
+      if (start !== end) {
+        const selection = textarea.value.slice(start ?? undefined, end ?? undefined);
+        newLinkModal.querySelector('input[name="link-description"]').value = selection;
+      } else {
+        newLinkModal.querySelector('input[name="link-description"]').value = '';
+      }
     });
 
     const button = newLinkModal.querySelector('button[data-selector-name="ok-button"]');

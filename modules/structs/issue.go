@@ -82,6 +82,15 @@ type Issue struct {
 	PinOrder int `json:"pin_order"`
 }
 
+type IssueSuggestion struct {
+	Index            int64     `json:"number"`
+	State            StateType `json:"state"`
+	Title            string    `json:"title"`
+	IsPr             bool      `json:"is_pr"`
+	HasMerged        bool      `json:"merged"`
+	IsWorkInProgress bool      `json:"draft"`
+}
+
 // CreateIssueOption options to create one issue
 type CreateIssueOption struct {
 	// required:true
@@ -131,7 +140,7 @@ type IssueDeadline struct {
 	Deadline *time.Time `json:"due_date"`
 }
 
-// IssueFormFieldType defines issue form field type, can be "markdown", "textarea", "input", "dropdown" or "checkboxes"
+// IssueFormFieldType defines issue form field type, can be `markdown`, `textarea`, `input`, `dropdown` or `checkboxes`
 type IssueFormFieldType string
 
 const (
@@ -263,7 +272,10 @@ func (it IssueTemplate) Type() IssueTemplateType {
 // IssueMeta basic issue information
 // swagger:model
 type IssueMeta struct {
-	Index int64  `json:"index"`
+	// required:true
+	Index int64 `json:"index"`
+	// required:true
 	Owner string `json:"owner"`
-	Name  string `json:"repo"`
+	// required:true
+	Name string `json:"repo"`
 }

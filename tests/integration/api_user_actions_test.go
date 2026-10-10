@@ -12,6 +12,7 @@ import (
 	auth_model "forgejo.org/models/auth"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
 	"forgejo.org/routers/api/v1/shared"
 	"forgejo.org/tests"
@@ -38,11 +39,13 @@ func TestActionsAPISearchActionJobs_UserRunner(t *testing.T) {
 
 	job394 := api.ActionRunJob{
 		ID:      394,
+		RunID:   891,
 		Attempt: 2,
 		Handle:  "a723d3e3-49a1-4e6b-947f-e987e60bfbd6",
 		RepoID:  1,
 		OwnerID: 2,
 		Name:    "job_2",
+		HTMLURL: setting.AppURL + "user2/repo1/actions/runs/187/jobs/2/attempt/2",
 		Needs:   nil,
 		RunsOn:  []string{"debian-latest"},
 		TaskID:  47,

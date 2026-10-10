@@ -57,6 +57,7 @@ func TestAPIGetTokens(t *testing.T) {
 		assert.Equal(t, []string{""}, at.Scopes)
 		assert.Empty(t, at.Token)
 		assert.Equal(t, "69d28c91", at.TokenLastEight)
+		assert.NotZero(t, at.Created)
 		assert.Nil(t, at.Repositories) // not repo-specific access token - nil expected, not an empty array
 	})
 
@@ -590,7 +591,8 @@ func runTestCase(t *testing.T, testCase *requiredScopeTestCase, user *user_model
 			}
 			categoryUnauthorizedScopes := auth_model.GetRequiredScopes(
 				unauthorizedLevel,
-				category)
+				category,
+			)
 			unauthorizedScopes = append(unauthorizedScopes, categoryUnauthorizedScopes...)
 		}
 
@@ -753,6 +755,7 @@ func TestAPITokenCreation(t *testing.T) {
 		resp := MakeRequest(t, req, http.StatusCreated)
 		var token api.AccessToken
 		DecodeJSON(t, resp, &token)
+		assert.NotZero(t, token.Created)
 	})
 
 	t.Run("repo-specific", func(t *testing.T) {

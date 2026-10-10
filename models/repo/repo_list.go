@@ -191,6 +191,8 @@ type SearchRepoOptions struct {
 	// Retrieve multiple repositories by their owner name & repository name, similar to [GetRepositoryByOwnerAndName]
 	// but in bulk.
 	OwnerAndName [][2]string
+	// Filter to repositories with this unit enabled.
+	EnabledUnit optional.Option[unit.Type]
 }
 
 // UserOwnedRepoCond returns user ownered repositories
@@ -339,7 +341,8 @@ func SearchRepositoryCondition(opts *SearchRepoOptions) builder.Cond {
 			builder.Eq{"is_private": false},
 			builder.NotIn("owner_id", builder.Select("id").From("`user`").Where(
 				builder.Or(builder.Eq{"visibility": structs.VisibleTypeLimited}, builder.Eq{"visibility": structs.VisibleTypePrivate}),
-			)))
+			)),
+		)
 	}
 
 	if has, value := opts.IsPrivate.Get(); has {
@@ -518,6 +521,10 @@ func SearchRepositoryCondition(opts *SearchRepoOptions) builder.Cond {
 		}
 	}
 
+	if has, unit := opts.EnabledUnit.Get(); has {
+		cond = cond.And(builder.In("`repository`.id", builder.Select("`repo_unit`.repo_id").From("repo_unit").Where(builder.Eq{"`repo_unit`.type": unit})))
+	}
+
 	return cond
 }
 
@@ -577,7 +584,7 @@ func searchRepositoryByCondition(ctx context.Context, opts *SearchRepoOptions, c
 		args = append(args, opts.PriorityOwnerID)
 	} else if strings.Count(opts.Keyword, "/") == 1 {
 		// With "owner/repo" search times, prioritise results which match the owner field
-		orgName := strings.Split(opts.Keyword, "/")[0]
+		orgName, _, _ := strings.Cut(opts.Keyword, "/")
 		opts.OrderBy = db.SearchOrderBy(fmt.Sprintf("CASE WHEN owner_name LIKE ? THEN 0 ELSE 1 END, %s", opts.OrderBy))
 		args = append(args, orgName)
 	}
@@ -626,7 +633,9 @@ func AccessibleRepositoryCondition(user *user_model.User, unitType unit.Type) bu
 			builder.Eq{"`repository`.is_private": false},
 			// 2. Aren't in an private organisation/user or limited organisation/user if the doer is not logged in.
 			builder.NotIn("`repository`.owner_id", builder.Select("id").From("`user`").Where(
-				builder.In("visibility", orgVisibilityLimit)))))
+				builder.In("visibility", orgVisibilityLimit),
+			)),
+		))
 	}
 
 	if user != nil {
@@ -737,4 +746,17 @@ func GetUserRepositories(ctx context.Context, opts *SearchRepoOptions) (Reposito
 	sess = sess.Where(cond).OrderBy(opts.OrderBy.String())
 	repos := make(RepositoryList, 0, opts.PageSize)
 	return repos, count, db.SetSessionPagination(sess, opts).Find(&repos)
+}
+
+func makeTypeUnitConds(types []unit.Type) builder.Cond {
+	conds := make([]builder.Cond, len(types))
+	for i, t := range types {
+		conds[i] = builder.Eq{"`repo_unit`.type": t}
+	}
+	return builder.Or(conds...)
+}
+
+func JoinRepoType(b *builder.Builder, types ...unit.Type) *builder.Builder {
+	return b.Join("INNER", "`repo_unit`", "`repository`.id = `repo_unit`.repo_id").
+		And(makeTypeUnitConds(types))
 }

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
+	"path"
 	"testing"
 
 	auth_model "forgejo.org/models/auth"
@@ -44,12 +44,13 @@ func TestInstanceSigning(t *testing.T) {
 		t.Run("SSH", func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 
-			pubKeyContent, err := os.ReadFile("tests/integration/ssh-signing-key.pub")
+			signingKeyPath := path.Join(setting.AppWorkPath, "tests/integration/ssh-signing-key")
+			pubKeyPath := signingKeyPath + ".pub"
+
+			pubKeyContent, err := os.ReadFile(pubKeyPath)
 			require.NoError(t, err)
 
 			pubKey, _, _, _, err := ssh.ParseAuthorizedKey(pubKeyContent)
-			require.NoError(t, err)
-			signingKeyPath, err := filepath.Abs("tests/integration/ssh-signing-key")
 			require.NoError(t, err)
 			require.NoError(t, os.Chmod(signingKeyPath, 0o600))
 			defer test.MockVariableValue(&setting.SSHInstanceKey, pubKey)()
@@ -116,11 +117,13 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 		t.Run("CreateCRUDFile-Never", crudActionCreateFile(
 			t, testCtx, user, "master", "never", "unsigned-never.txt", func(t *testing.T, response api.FileResponse) {
 				assert.False(t, response.Verification.Verified)
-			}))
+			},
+		))
 		t.Run("CreateCRUDFile-Never", crudActionCreateFile(
 			t, testCtx, user, "never", "never2", "unsigned-never2.txt", func(t *testing.T, response api.FileResponse) {
 				assert.False(t, response.Verification.Verified)
-			}))
+			},
+		))
 	})
 
 	t.Run("Unsigned-Initial-CRUD-ParentSigned", func(t *testing.T) {
@@ -131,11 +134,13 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 		t.Run("CreateCRUDFile-ParentSigned", crudActionCreateFile(
 			t, testCtx, user, "master", "parentsigned", "signed-parent.txt", func(t *testing.T, response api.FileResponse) {
 				assert.False(t, response.Verification.Verified)
-			}))
+			},
+		))
 		t.Run("CreateCRUDFile-ParentSigned", crudActionCreateFile(
 			t, testCtx, user, "parentsigned", "parentsigned2", "signed-parent2.txt", func(t *testing.T, response api.FileResponse) {
 				assert.False(t, response.Verification.Verified)
-			}))
+			},
+		))
 	})
 
 	t.Run("Unsigned-Initial-CRUD-Never", func(t *testing.T) {
@@ -146,7 +151,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 		t.Run("CreateCRUDFile-Never", crudActionCreateFile(
 			t, testCtx, user, "parentsigned", "parentsigned-never", "unsigned-never2.txt", func(t *testing.T, response api.FileResponse) {
 				assert.False(t, response.Verification.Verified)
-			}))
+			},
+		))
 	})
 
 	t.Run("Unsigned-Initial-CRUD-Always", func(t *testing.T) {
@@ -159,13 +165,15 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 				require.NotNil(t, response.Verification)
 				assert.True(t, response.Verification.Verified)
 				assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-			}))
+			},
+		))
 		t.Run("CreateCRUDFile-ParentSigned-always", crudActionCreateFile(
 			t, testCtx, user, "parentsigned", "parentsigned-always", "signed-parent2.txt", func(t *testing.T, response api.FileResponse) {
 				require.NotNil(t, response.Verification)
 				assert.True(t, response.Verification.Verified)
 				assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-			}))
+			},
+		))
 	})
 
 	t.Run("Unsigned-Initial-CRUD-ParentSigned", func(t *testing.T) {
@@ -178,7 +186,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 				require.NotNil(t, response.Verification)
 				assert.True(t, response.Verification.Verified)
 				assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-			}))
+			},
+		))
 	})
 
 	t.Run("AlwaysSign-Pubkey", func(t *testing.T) {
@@ -273,7 +282,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 		t.Run("CreateCRUDFile-Never", crudActionCreateFile(
 			t, testCtx, user, "master", "never", "unsigned-never.txt", func(t *testing.T, response api.FileResponse) {
 				assert.False(t, response.Verification.Verified)
-			}))
+			},
+		))
 	})
 
 	t.Run("AlwaysSign-Initial-CRUD-ParentSigned-On-Always", func(t *testing.T) {
@@ -286,7 +296,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 			t, testCtx, user, "master", "parentsigned", "signed-parent.txt", func(t *testing.T, response api.FileResponse) {
 				assert.True(t, response.Verification.Verified)
 				assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-			}))
+			},
+		))
 	})
 
 	t.Run("AlwaysSign-Initial-CRUD-Pubkey", func(t *testing.T) {
@@ -301,7 +312,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 				t, testCtx, user, "master", "pubkey", "signed-pubkey.txt", func(t *testing.T, response api.FileResponse) {
 					assert.True(t, response.Verification.Verified)
 					assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-				}))
+				},
+			))
 		})
 
 		t.Run("No publickey", func(t *testing.T) {
@@ -312,7 +324,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 			t.Run("CreateCRUDFile-Pubkey", crudActionCreateFile(
 				t, testCtx, user, "master", "pubkey", "unsigned-pubkey.txt", func(t *testing.T, response api.FileResponse) {
 					assert.False(t, response.Verification.Verified)
-				}))
+				},
+			))
 		})
 	})
 
@@ -333,7 +346,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 				t, testCtx, user, "master", "twofa", "signed-twofa.txt", func(t *testing.T, response api.FileResponse) {
 					assert.True(t, response.Verification.Verified)
 					assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-				}))
+				},
+			))
 		})
 
 		t.Run("No 2fa", func(t *testing.T) {
@@ -344,7 +358,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 			t.Run("CreateCRUDFile-Pubkey", crudActionCreateFile(
 				t, testCtx, user, "master", "twofa", "unsigned-twofa.txt", func(t *testing.T, response api.FileResponse) {
 					assert.False(t, response.Verification.Verified)
-				}))
+				},
+			))
 		})
 	})
 
@@ -358,7 +373,8 @@ func testCRUD(t *testing.T, u *url.URL, signingFormat string, objectFormat git.O
 			t, testCtx, user, "master", "always", "signed-always.txt", func(t *testing.T, response api.FileResponse) {
 				assert.True(t, response.Verification.Verified)
 				assert.Equal(t, "fox@example.com", response.Verification.Signer.Email)
-			}))
+			},
+		))
 	})
 
 	t.Run("UnsignedMerging", func(t *testing.T) {
@@ -438,10 +454,11 @@ func crudActionCreateFile(_ *testing.T, ctx APITestContext, user *user_model.Use
 }
 
 func importTestingKey() (*openpgp.Entity, error) {
-	if _, _, err := process.GetManager().Exec("gpg --import tests/integration/private-testing.key", "gpg", "--import", "tests/integration/private-testing.key"); err != nil {
+	keyringFilePath := path.Join(setting.AppWorkPath, "tests/integration/private-testing.key")
+	if _, _, err := process.GetManager().Exec("gpg --import "+keyringFilePath, "gpg", "--import", keyringFilePath); err != nil {
 		return nil, err
 	}
-	keyringFile, err := os.Open("tests/integration/private-testing.key")
+	keyringFile, err := os.Open(keyringFilePath)
 	if err != nil {
 		return nil, err
 	}

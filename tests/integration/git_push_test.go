@@ -4,22 +4,29 @@
 package integration
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"forgejo.org/models/db"
 	git_model "forgejo.org/models/git"
+	issues_model "forgejo.org/models/issues"
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/git"
-	"forgejo.org/modules/log"
 	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/setting"
 	"forgejo.org/modules/test"
+	"forgejo.org/routers/private"
+	pull_service "forgejo.org/services/pull"
 	repo_service "forgejo.org/services/repository"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -201,7 +208,7 @@ func runTestGitPush(t *testing.T, u *url.URL, objectFormat git.ObjectFormat, git
 		assert.Equal(t, commitID, branch.CommitID)
 	}
 
-	require.NoError(t, repo_service.DeleteRepositoryDirectly(db.DefaultContext, user, repo.ID))
+	require.NoError(t, repo_service.DeleteRepositoryDirectly(db.DefaultContext, repo.ID, repo_service.DeleteRepositoryOpts{}))
 }
 
 func TestOptionsGitPush(t *testing.T) {
@@ -267,22 +274,20 @@ func testOptionsGitPush(t *testing.T, u *url.URL) {
 		doGitAddRemote(gitPath, "collaborator", u)(t)
 
 		t.Run("User without write access is not allowed to push", func(t *testing.T) {
-			pushLogChecker, cleanup := test.NewLogChecker("ssh", log.ERROR)
-			pushLogChecker.Filter("User 'user5' is not allowed to push to branch 'branch3' in 'user2/repo-to-push'.")
-			pushLogChecker.Filter("If you instead wanted to create a pull request to the branch 'branch3', please use:")
-			pushLogChecker.Filter("git push origin HEAD:refs/for/branch3/choose-a-descriptor")
-			pushLogChecker.Filter("You might want to replace 'origin' with the name of your Git remote if it is different from origin. You can freely choose the descriptor to set it to a topic.")
-			pushLogChecker.Filter("You can learn about creating pull requests with AGit in the docs: https://forgejo.org/docs/latest/user/agit-support/")
-			defer cleanup()
+			defer test.MockVariableValue(&setting.AppDocsVer, func() string { return "v0.0" })()
 			branchName := "branch3"
 			doGitCreateBranch(gitPath, branchName)(t)
-			doGitPushTestRepositoryFail(gitPath, "collaborator", branchName)(t)
-			pushLogFiltered, _ := pushLogChecker.Check(5 * time.Second)
-			assert.True(t, pushLogFiltered[0])
+			stderr := doGitPushTestRepositoryFail(t, gitPath, "collaborator", branchName)
+
+			assert.Contains(t, stderr, `remote: Forgejo: User 'user5' is not allowed to push to branch 'branch3' in 'user2/repo-to-push'.`)
+			assert.Contains(t, stderr, `remote: If you instead wanted to create a pull request to the branch 'branch3', please use:`)
+			assert.Contains(t, stderr, `remote: git push origin HEAD:refs/for/branch3/choose-a-descriptor`)
+			assert.Contains(t, stderr, `remote: You might want to replace 'origin' with the name of your Git remote if it is different from origin. You can freely choose the descriptor to set it to a topic.`)
+			assert.Contains(t, stderr, `remote: You can learn about creating pull requests with AGit in the documentation: https://forgejo.org/docs/v0.0/user/git-cli/agit-support/`) // derived from setting.AppDocsVer
 		})
 
 		// give write access to the collaborator
-		repo_module.AddCollaborator(db.DefaultContext, repo, collaborator)
+		require.NoError(t, repo_module.AddCollaborator(db.DefaultContext, repo, collaborator))
 
 		t.Run("Collaborator with write access is allowed to push", func(t *testing.T) {
 			branchName := "branch4"
@@ -291,25 +296,313 @@ func testOptionsGitPush(t *testing.T, u *url.URL) {
 		})
 
 		t.Run("Collaborator with write access fails to change private & template via push options", func(t *testing.T) {
-			logChecker, cleanup := test.NewLogChecker(log.DEFAULT, log.TRACE)
-			logChecker.StopMark("Git push options validation")
-			defer cleanup()
-			sshLogChecker, cleanup := test.NewLogChecker("ssh", log.ERROR)
-			sshLogChecker.Filter("permission denied for changing repo settings")
-			defer cleanup()
 			branchName := "branch5"
 			doGitCreateBranch(gitPath, branchName)(t)
-			doGitPushTestRepositoryFail(gitPath, "collaborator", branchName, "-o", "repo.private=true", "-o", "repo.template=true")(t)
+			stderr := doGitPushTestRepositoryFail(t, gitPath, "collaborator", branchName, "-o", "repo.private=true", "-o", "repo.template=true")
+			assert.Contains(t, stderr, "Forgejo: options validation failed: permission denied for changing repo settings")
+
 			repo, err = repo_model.GetRepositoryByOwnerAndName(db.DefaultContext, user.Name, "repo-to-push")
 			require.NoError(t, err)
 			require.False(t, repo.IsPrivate)
 			require.False(t, repo.IsTemplate)
-			_, logStopped := logChecker.Check(5 * time.Second)
-			logFiltered, _ := sshLogChecker.Check(5 * time.Second)
-			assert.True(t, logStopped)
-			assert.True(t, logFiltered[0])
 		})
 
-		require.NoError(t, repo_service.DeleteRepositoryDirectly(db.DefaultContext, user, repo.ID))
+		require.NoError(t, repo_service.DeleteRepositoryDirectly(db.DefaultContext, repo.ID, repo_service.DeleteRepositoryOpts{}))
+	})
+}
+
+func TestGitPushAllowMaintainerEditRestrictedHead(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		baseRepoOwner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 4})
+
+		// Create a base repository as a target for the pull request
+		baseRepo := forgery.CreateRepository(t, baseRepoOwner, &forgery.CreateRepositoryOptions{DefaultBranch: "master"})
+		baseRepoPath := t.TempDir()
+		doGitInitTestRepository(baseRepoPath, git.Sha1ObjectFormat)(t)
+		u.Path = baseRepo.FullName() + ".git"
+		u.User = url.UserPassword(baseRepoOwner.LowerName, userPassword)
+		doGitAddRemote(baseRepoPath, "origin", u)(t)
+		doGitPushTestRepository(baseRepoPath, "origin", baseRepo.DefaultBranch)(t)
+
+		// Fork the base repo
+		forkUser := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		forkRepo, err := repo_service.ForkRepositoryAndUpdates(t.Context(), forkUser, forkUser, repo_service.ForkRepoOptions{
+			BaseRepo:    baseRepo,
+			Name:        "repo-pr-update",
+			Description: "desc",
+		})
+		require.NoError(t, err)
+		forkRepoPath := t.TempDir()
+		u.Path = forkRepo.FullName() + ".git"
+		u.User = url.UserPassword(forkUser.LowerName, userPassword)
+		doGitClone(forkRepoPath, u)(t)
+
+		// Make a modification in the fork repo
+		branchName := "my-branch-for-pr"
+		doGitCreateBranch(forkRepoPath, branchName)(t)
+		doGitAddSomeCommits(forkRepoPath, branchName)(t)
+		doGitPushTestRepository(forkRepoPath, "origin", branchName)(t)
+
+		// Create a pull request in the base repo to incorporate the fork's modification
+		pullIssue := &issues_model.Issue{
+			RepoID:   baseRepo.ID,
+			Title:    "Test Pull Request from Fork",
+			PosterID: forkUser.ID,
+			Poster:   forkUser,
+			IsPull:   true,
+		}
+		pullRequest := &issues_model.PullRequest{
+			HeadRepo:            forkRepo,
+			HeadRepoID:          forkRepo.ID,
+			HeadBranch:          branchName,
+			BaseRepo:            baseRepo,
+			BaseRepoID:          baseRepo.ID,
+			BaseBranch:          baseRepo.DefaultBranch,
+			Type:                issues_model.PullRequestGitea,
+			AllowMaintainerEdit: true,
+		}
+		err = pull_service.NewPullRequest(git.DefaultContext, baseRepo, pullIssue, nil, nil, pullRequest, nil)
+		require.NoError(t, err)
+
+		// The existence of the pull request allows maintainers of the base repo (baseRepoOwner) to write to the fork
+		// repo, but *only* to the branch for the pull request.  Set up for editing as the baseRepoOwner...
+		u.Path = forkRepo.FullName() + ".git"
+		u.User = url.UserPassword(baseRepoOwner.LowerName, userPassword)
+		doGitAddRemote(baseRepoPath, "fork", u)(t)
+		doGitFetch(baseRepoPath, "fork")(t)
+		doGitCheckoutBranch(baseRepoPath, branchName)(t)
+
+		// Test writing to the PR branch, should succeed:
+		doGitAddSomeCommits(baseRepoPath, branchName)(t)
+		doGitPushTestRepository(baseRepoPath, "fork", branchName)(t)
+
+		// We're allowed to write to the PR branch, but not to another branch:
+		doGitCreateBranch(baseRepoPath, "another-branch")(t)
+		doGitAddSomeCommits(baseRepoPath, "another-branch")(t)
+		doGitPushTestRepositoryFail(t, baseRepoPath, "fork", "another-branch")
+
+		// Verify that each branch being pushed is checked independently -- pushing to a branch we're permitted to, and
+		// then a branch that we're not, does not allow the push:
+		doGitAddSomeCommits(baseRepoPath, branchName)(t)       // Ensure we have new commits ready to push
+		doGitAddSomeCommits(baseRepoPath, "another-branch")(t) // Ensure we have new commits ready to push
+		doGitPushTestRepositoryFail(t, baseRepoPath, "fork", branchName, "another-branch")
+	})
+}
+
+func TestGitPushMirror(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		owner := forgery.CreateUser(t, nil)
+		repo := forgery.CreateRepository(t, owner, &forgery.CreateRepositoryOptions{
+			Files: forgery.FilesInit{},
+		})
+
+		repoPath := t.TempDir()
+		u.Path = repo.FullName() + ".git"
+		u.User = url.UserPassword(owner.LowerName, userPassword)
+		doGitClone(repoPath, u)(t)
+
+		// create a PR
+		branchName := "local-branch"
+		doGitCreateBranch(repoPath, branchName)(t)
+		doGitAddSomeCommits(repoPath, branchName)(t)
+		err := git.NewCommand(git.DefaultContext, "push", "origin").
+			AddDynamicArguments(fmt.Sprintf("%s:refs/for/main/first-pr", branchName)).Run(&git.RunOpts{Dir: repoPath})
+		require.NoError(t, err)
+		err = git.NewCommand(git.DefaultContext, "push", "origin").
+			AddDynamicArguments(fmt.Sprintf("%s:refs/for/main/second-pr", branchName)).Run(&git.RunOpts{Dir: repoPath})
+		require.NoError(t, err)
+
+		// push --mirror
+		var stderr bytes.Buffer
+		err = git.NewCommand(git.DefaultContext, "push", "--mirror").Run(&git.RunOpts{Dir: repoPath, Stderr: &stderr})
+		assert.Contains(t, stderr.String(), "(Forgejo ignored PR deletion attempt)")
+		require.NoError(t, err)
+
+		// ensure the PRs can still be fetched
+		err = git.NewCommand(git.DefaultContext, "fetch", "origin").
+			AddDynamicArguments(fmt.Sprintf("refs/pull/%d/head:%s", 1, "first-agit-pr")).
+			Run(&git.RunOpts{Dir: repoPath})
+		require.NoError(t, err)
+		err = git.NewCommand(git.DefaultContext, "fetch", "origin").
+			AddDynamicArguments(fmt.Sprintf("refs/pull/%d/head:%s", 2, "second-agit-pr")).
+			Run(&git.RunOpts{Dir: repoPath})
+		require.NoError(t, err)
+	})
+}
+
+// Two pushes to the same branch that are processed concurrently must not roll back the branch's commit ID in the
+// database.  This is tricky to test; `TestSeamPostReceiveSync` is used in the post-receive hook to cause a process to
+// stall to replicate the uncertain concurrency that occurs in reality.
+func TestGitPushConcurrentBranchUpdate(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		owner := forgery.CreateUser(t, &forgery.CreateUserOptions{})
+
+		repo := forgery.CreateRepository(t, owner, &forgery.CreateRepositoryOptions{
+			Files: forgery.FilesInit{},
+		})
+		branchName := repo.DefaultBranch
+
+		repoPath := t.TempDir()
+		u.Path = repo.FullName() + ".git"
+		u.User = url.UserPassword(owner.LowerName, userPassword)
+		doGitClone(repoPath, u)(t)
+
+		revParseHead := func() string {
+			stdout, _, err := git.NewCommand(git.DefaultContext, "rev-parse", "HEAD").RunStdString(&git.RunOpts{Dir: repoPath})
+			require.NoError(t, err)
+			return strings.TrimSpace(stdout)
+		}
+		initialCommitID := revParseHead()
+		doGitAddSomeCommits(repoPath, branchName)(t)
+		firstCommitID := revParseHead()
+		doGitAddSomeCommits(repoPath, branchName)(t)
+		secondCommitID := revParseHead()
+		t.Logf("initialCommitID = %q", initialCommitID)
+		t.Logf("firstCommitID = %q", firstCommitID)
+		t.Logf("secondCommitID = %q", secondCommitID)
+
+		pushCommit := func(commitID string) error {
+			_, stderr, err := git.NewCommand(git.DefaultContext, "push", "origin").
+				AddDynamicArguments(fmt.Sprintf("%s:refs/heads/%s", commitID, branchName)).
+				RunStdString(&git.RunOpts{Dir: repoPath})
+			if err != nil {
+				return fmt.Errorf("%s: %w", stderr, err)
+			}
+			return nil
+		}
+
+		assertBranchCommitInDB := func(expectedCommitID string) {
+			t.Helper()
+			branch, err := git_model.GetBranch(t.Context(), repo.ID, branchName)
+			require.NoError(t, err)
+			assert.Equal(t, expectedCommitID, branch.CommitID)
+		}
+
+		// Inject into the post-receive handler a function which recognizes when we're pushing the first commit, and
+		// freezes the goroutine until we want it to continue.
+		firstPostReceiveHookRunning := make(chan any, 1)
+		unblockFirstPostReceiveHook := make(chan any, 1)
+		defer test.MockVariableValue(&private.TestSeamPostReceiveSync, func(puo *repo_module.PushUpdateOptions) {
+			if puo.NewCommitID == firstCommitID {
+				close(firstPostReceiveHookRunning)
+				<-unblockFirstPostReceiveHook
+			}
+		})()
+
+		// Begin the first push of `firstCommitID`; runs in a goroutine because it will be blocked by the
+		// TestSeamPostReceiveSync implementation.
+		firstPushDone := make(chan error, 1)
+		go func() {
+			firstPushDone <- pushCommit(firstCommitID)
+		}()
+		firstPushReleased := false
+		finishFirstPush := func() {
+			if !firstPushReleased {
+				firstPushReleased = true
+				close(unblockFirstPostReceiveHook)
+				assert.NoError(t, <-firstPushDone)
+			}
+		}
+		defer finishFirstPush() // if test fails/exits, still try to cleanup the running goroutine
+
+		// Wait until the first post-receive hook is running, identified by firstPostReceiveHookRunning:
+		select {
+		case <-firstPostReceiveHookRunning:
+			// Expected - first push is now waiting on the post-receive hook to complete
+		case <-time.NewTimer(30 * time.Second).C:
+			assert.FailNow(t, "first push's post-receive hook never started")
+		case <-t.Context().Done():
+		}
+
+		// Test pre-condition: the first push, which should be stalled right now, should not have yet updated the
+		// database to the first commit ID.  If it has, something has gone wrong and the test scenario isn't valid.
+		assertBranchCommitInDB(initialCommitID)
+
+		// Second push: runs to completion while the first push is stalled.
+		require.NoError(t, pushCommit(secondCommitID))
+		assertBranchCommitInDB(secondCommitID)
+
+		// Allow the first push's post-receive to complete; it must not revert the branch to firstCommitID.
+		finishFirstPush()
+		assertBranchCommitInDB(secondCommitID)
+	})
+}
+
+func TestGitPushAGit(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		owner := forgery.CreateUser(t, nil)
+		repo := forgery.CreateRepository(t, owner, &forgery.CreateRepositoryOptions{
+			Files: forgery.FilesInit{},
+		})
+
+		prRegex := regexp.MustCompile(`refs/pull/(\d+)/head`)
+
+		newAgitPR := func(repoPath string) (string, error) {
+			branchName := "agit-pr"
+			doGitCreateBranch(repoPath, branchName)(t)
+			doGitAddSomeCommits(repoPath, branchName)(t)
+			_, stdErr, err := git.NewCommand(git.DefaultContext, "push", "origin").
+				AddDynamicArguments(fmt.Sprintf("%s:refs/for/main/%s", branchName, branchName)).RunStdString(&git.RunOpts{Dir: repoPath})
+			if err != nil {
+				return "", err
+			}
+			require.NoError(t, err)
+			return prRegex.FindStringSubmatch(stdErr)[1], nil
+		}
+		fetchAgitPR := func(repoPath, branchName, prIndex string) error {
+			return git.NewCommand(git.DefaultContext, "fetch", "origin").
+				AddDynamicArguments(fmt.Sprintf("refs/pull/%s/head:%s", prIndex, branchName)).
+				Run(&git.RunOpts{Dir: repoPath})
+		}
+		pushAgitPR := func(repoPath, branchName, prIndex string) error {
+			_, stdErr, err := git.NewCommand(git.DefaultContext, "push", "origin").
+				AddDynamicArguments(fmt.Sprintf("%s:refs/pull/%s/head", branchName, prIndex)).
+				RunStdString(&git.RunOpts{Dir: repoPath})
+			if err != nil {
+				return fmt.Errorf("%s: %w", stdErr, err)
+			}
+			return nil
+		}
+
+		ownerPath := t.TempDir()
+		u.Path = repo.FullName() + ".git"
+		u.User = url.UserPassword(owner.LowerName, userPassword)
+		doGitClone(ownerPath, u)(t)
+
+		ownerPR, err := newAgitPR(ownerPath)
+		require.NoError(t, err)
+
+		// Fork the base repo
+		contributor := forgery.CreateUser(t, nil)
+		contributorPath := t.TempDir()
+		u.Path = repo.FullName() + ".git"
+		u.User = url.UserPassword(contributor.LowerName, userPassword)
+		doGitClone(contributorPath, u)(t)
+
+		// contributor PR
+		contributorPR, err := newAgitPR(contributorPath)
+		require.NoError(t, err)
+
+		t.Run("owner", func(t *testing.T) {
+			// pushing to any agit PR is fine
+			require.NoError(t, fetchAgitPR(ownerPath, "owner-pr", ownerPR))
+			doGitAddSomeCommits(ownerPath, "owner-pr")(t)
+			require.NoError(t, pushAgitPR(ownerPath, "owner-pr", ownerPR))
+
+			require.NoError(t, fetchAgitPR(ownerPath, "contributor-pr", contributorPR))
+			doGitAddSomeCommits(ownerPath, "contributor-pr")(t)
+			require.NoError(t, pushAgitPR(ownerPath, "contributor-pr", contributorPR))
+		})
+		t.Run("contributor", func(t *testing.T) {
+			// pushing to other agit PR fails
+			require.NoError(t, fetchAgitPR(contributorPath, "owner-pr", ownerPR))
+			doGitAddSomeCommits(contributorPath, "owner-pr")(t)
+			require.ErrorContains(t, pushAgitPR(contributorPath, "owner-pr", ownerPR), "not allowed to push to pull request")
+
+			// pushing to own PR is fine
+			require.NoError(t, fetchAgitPR(contributorPath, "contributor-pr", contributorPR))
+			doGitAddSomeCommits(contributorPath, "contributor-pr")(t)
+			require.NoError(t, pushAgitPR(contributorPath, "contributor-pr", contributorPR))
+		})
 	})
 }

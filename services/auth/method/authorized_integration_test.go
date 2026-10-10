@@ -19,6 +19,7 @@ import (
 	"forgejo.org/modules/jwtx"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/test"
+	"forgejo.org/modules/timeutil"
 	"forgejo.org/services/auth"
 
 	mc "code.forgejo.org/go-chi/cache"
@@ -41,11 +42,25 @@ func TestCheckClaims(t *testing.T) {
 			Value:      value,
 		}
 	}
+	in := func(claim string, values []string) auth_model.ClaimRule {
+		return auth_model.ClaimRule{
+			Claim:      claim,
+			Comparison: auth_model.ClaimIn,
+			Values:     values,
+		}
+	}
 	glob := func(claim, value string) auth_model.ClaimRule {
 		return auth_model.ClaimRule{
 			Claim:      claim,
 			Comparison: auth_model.ClaimGlob,
 			Value:      value,
+		}
+	}
+	globIn := func(claim string, values []string) auth_model.ClaimRule {
+		return auth_model.ClaimRule{
+			Claim:      claim,
+			Comparison: auth_model.ClaimGlobIn,
+			Values:     values,
 		}
 	}
 	nest := func(claim string, inner ...auth_model.ClaimRule) auth_model.ClaimRule {
@@ -160,6 +175,32 @@ func TestCheckClaims(t *testing.T) {
 		require.ErrorContains(t, ai.checkClaims(c, rules), "claim \"arbitrary\" must be a string, but was int")
 	})
 
+	t.Run("comparison ClaimIn", func(t *testing.T) {
+		c := map[string]any{}
+		rules := rules(in("arbitrary", []string{"abc", "def"}))
+
+		c["arbitrary"] = "abc"
+		require.NoError(t, ai.checkClaims(c, rules))
+		c["arbitrary"] = "def"
+		require.NoError(t, ai.checkClaims(c, rules))
+
+		c["arbitrary"] = "123"
+		require.ErrorContains(t, ai.checkClaims(c, rules), "claim \"arbitrary\" must be one of [\"abc\" \"def\"], but was \"123\"")
+
+		c["arbitrary"] = 123
+		require.ErrorContains(t, ai.checkClaims(c, rules), "claim \"arbitrary\" must be a string, but was int")
+	})
+
+	t.Run("comparison ClaimIn empty", func(t *testing.T) {
+		c := map[string]any{}
+		rules := rules(in("arbitrary", []string{}))
+
+		require.ErrorContains(t, ai.checkClaims(c, rules), "claim rule on \"arbitrary\" couldn't be satisfied: claim not found")
+
+		c["arbitrary"] = "abc"
+		require.ErrorContains(t, ai.checkClaims(c, rules), "claim \"arbitrary\" must be one of [], but was \"abc\"")
+	})
+
 	t.Run("comparison ClaimGlob", func(t *testing.T) {
 		c := map[string]any{}
 		r := rules(glob("arbitrary", "*c"))
@@ -179,6 +220,39 @@ func TestCheckClaims(t *testing.T) {
 		r = rules(glob("arbitrary", "[abc"))
 		c["arbitrary"] = "abc"
 		require.ErrorContains(t, ai.checkClaims(c, r), "unable to parse glob for claim rule on \"arbitrary\"; glob = \"[abc\", err = unexpected end of input")
+	})
+
+	t.Run("comparison ClaimGlobIn", func(t *testing.T) {
+		c := map[string]any{}
+		r := rules(globIn("arbitrary", []string{"*c", "*def*"}))
+
+		c["arbitrary"] = "abc"
+		require.NoError(t, ai.checkClaims(c, r))
+		c["arbitrary"] = "abcdef"
+		require.NoError(t, ai.checkClaims(c, r))
+
+		c["arbitrary"] = "123"
+		require.ErrorContains(t, ai.checkClaims(c, r), "claim \"arbitrary\" must glob match one of [\"*c\" \"*def*\"], but value \"123\" did not match")
+
+		c["arbitrary"] = "this string contains a c or two but doesn't end with one" // ensure glob isn't OK w/ a partial match
+		require.ErrorContains(t, ai.checkClaims(c, r), "claim \"arbitrary\" must glob match one of [\"*c\" \"*def*\"], but value \"this string contains a c or two but doesn't end with one\" did not match")
+
+		c["arbitrary"] = 123
+		require.ErrorContains(t, ai.checkClaims(c, r), "claim \"arbitrary\" must be a string, but was int")
+
+		r = rules(globIn("arbitrary", []string{"[abc"}))
+		c["arbitrary"] = "abc"
+		require.ErrorContains(t, ai.checkClaims(c, r), "unable to parse glob for claim rule on \"arbitrary\"; glob = \"[abc\", err = unexpected end of input")
+	})
+
+	t.Run("comparison ClaimGlobIn empty", func(t *testing.T) {
+		c := map[string]any{}
+		rules := rules(globIn("arbitrary", []string{}))
+
+		require.ErrorContains(t, ai.checkClaims(c, rules), "claim rule on \"arbitrary\" couldn't be satisfied: claim not found")
+
+		c["arbitrary"] = "abc"
+		require.ErrorContains(t, ai.checkClaims(c, rules), "claim \"arbitrary\" must glob match one of [], but value \"abc\" did not match")
 	})
 
 	t.Run("comparison ClaimNested", func(t *testing.T) {
@@ -255,6 +329,8 @@ func TestAuthorizedIntegration(t *testing.T) {
 		assert.True(t, hasScope)
 		assert.Equal(t, auth_model.AccessTokenScopeAll, scope)
 		assert.NotNil(t, res.Reducer())
+		hasExpiry, _ := res.ExpiresAt().Get()
+		assert.False(t, hasExpiry)
 	})
 
 	t.Run("valid Basic JWT", func(t *testing.T) {
@@ -280,14 +356,30 @@ func TestAuthorizedIntegration(t *testing.T) {
 	})
 
 	t.Run("JWT expiry", func(t *testing.T) {
-		ait := newAITester(t,
-			claimTweak(func(rc *flexibleClaims) {
-				rc.ExpiresAt = jwt.NewNumericDate(time.Date(2026, time.January, 1, 12, 0, 0, 0, time.Local))
-			}))
-		defer ait.close()
-		output := ait.bearerRequest()
-		err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
-		require.ErrorContains(t, err, "token is expired")
+		t.Run("JWT expired", func(t *testing.T) {
+			ait := newAITester(t,
+				claimTweak(func(rc *flexibleClaims) {
+					rc.ExpiresAt = jwt.NewNumericDate(time.Date(2026, time.January, 1, 12, 0, 0, 0, time.Local))
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "token is expired")
+		})
+
+		t.Run("JWT will expire", func(t *testing.T) {
+			ait := newAITester(t,
+				claimTweak(func(rc *flexibleClaims) {
+					rc.ExpiresAt = jwt.NewNumericDate(time.Date(2026, time.January, 1, 20, 0, 0, 0, time.UTC))
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			success := requireOutput[*auth.AuthenticationSuccess](t, output)
+			res := success.Result
+			hasExpiry, expiry := res.ExpiresAt().Get()
+			assert.True(t, hasExpiry)
+			assert.Equal(t, timeutil.TimeStamp(1767297600), expiry)
+		})
 	})
 
 	t.Run("JWT issued at", func(t *testing.T) {
@@ -337,7 +429,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("mismatch openid metadata", func(t *testing.T) {
 			ait := newAITester(t,
-				openIDTweak(func(oidc *openIDConfiguration, _ *AuthorizedIntegrationTester) {
+				openIDTweak(func(oidc *auth.AuthorizedIntegrationOpenIDConfiguration, _ *AuthorizedIntegrationTester) {
 					oidc.Issuer = "https://whoops.example.org"
 				}))
 			defer ait.close()
@@ -359,7 +451,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("signing alg values supported doesn't include in-use alg", func(t *testing.T) {
 			ait := newAITester(t,
-				openIDTweak(func(oidc *openIDConfiguration, _ *AuthorizedIntegrationTester) {
+				openIDTweak(func(oidc *auth.AuthorizedIntegrationOpenIDConfiguration, _ *AuthorizedIntegrationTester) {
 					oidc.IDTokenSigningAlgValuesSupported = []string{"WEIRD"}
 				}))
 			defer ait.close()
@@ -425,7 +517,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 						require.NoError(t, err)
 						return jwtSigningKey
 					}),
-					openIDTweak(func(oidc *openIDConfiguration, _ *AuthorizedIntegrationTester) {
+					openIDTweak(func(oidc *auth.AuthorizedIntegrationOpenIDConfiguration, _ *AuthorizedIntegrationTester) {
 						oidc.IDTokenSigningAlgValuesSupported = []string{alg}
 					}),
 				)
@@ -439,7 +531,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 	t.Run("JWKS", func(t *testing.T) {
 		t.Run("jwks_uri host mismatch", func(t *testing.T) {
 			ait := newAITester(t,
-				openIDTweak(func(oidc *openIDConfiguration, ait *AuthorizedIntegrationTester) {
+				openIDTweak(func(oidc *auth.AuthorizedIntegrationOpenIDConfiguration, ait *AuthorizedIntegrationTester) {
 					oidc.JwksURI = "https://whoops.example.org/.keys"
 				}))
 			defer ait.close()
@@ -450,7 +542,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("non-HTTPS JWKS address", func(t *testing.T) {
 			ait := newAITester(t,
-				openIDTweak(func(oidc *openIDConfiguration, ait *AuthorizedIntegrationTester) {
+				openIDTweak(func(oidc *auth.AuthorizedIntegrationOpenIDConfiguration, ait *AuthorizedIntegrationTester) {
 					oidc.JwksURI = strings.ReplaceAll(ait.testServer.URL, "https://", "http://")
 				}))
 			defer ait.close()
@@ -461,7 +553,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("missing key", func(t *testing.T) {
 			ait := newAITester(t,
-				jwksTweak(func(keys *openIDKeys) {
+				jwksTweak(func(keys *auth.AuthorizedIntegrationOpenIDKeys) {
 					keys.Keys = []map[string]any{}
 				}))
 			defer ait.close()
@@ -472,7 +564,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("alg missing", func(t *testing.T) {
 			ait := newAITester(t,
-				jwksTweak(func(keys *openIDKeys) {
+				jwksTweak(func(keys *auth.AuthorizedIntegrationOpenIDKeys) {
 					for k := range keys.Keys {
 						delete(keys.Keys[k], "alg")
 					}
@@ -485,7 +577,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("alg mismatch", func(t *testing.T) {
 			ait := newAITester(t,
-				jwksTweak(func(keys *openIDKeys) {
+				jwksTweak(func(keys *auth.AuthorizedIntegrationOpenIDKeys) {
 					for k := range keys.Keys {
 						keys.Keys[k]["alg"] = "WEIRD"
 					}
@@ -498,7 +590,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("use missing", func(t *testing.T) {
 			ait := newAITester(t,
-				jwksTweak(func(keys *openIDKeys) {
+				jwksTweak(func(keys *auth.AuthorizedIntegrationOpenIDKeys) {
 					for k := range keys.Keys {
 						delete(keys.Keys[k], "use")
 					}
@@ -511,7 +603,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("use isn't 'sig'", func(t *testing.T) {
 			ait := newAITester(t,
-				jwksTweak(func(keys *openIDKeys) {
+				jwksTweak(func(keys *auth.AuthorizedIntegrationOpenIDKeys) {
 					for k := range keys.Keys {
 						keys.Keys[k]["use"] = "enc"
 					}
@@ -524,7 +616,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 		t.Run("large JWKS document", func(t *testing.T) {
 			ait := newAITester(t,
-				jwksTweak(func(keys *openIDKeys) {
+				jwksTweak(func(keys *auth.AuthorizedIntegrationOpenIDKeys) {
 					var keyContents map[string]any
 					for _, v := range keys.Keys {
 						keyContents = v
@@ -565,7 +657,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 	t.Run("cache", func(t *testing.T) {
 		t.Run("miss and store", func(t *testing.T) {
 			c := cache.NewMockCache(t)
-			defer test.MockVariableValue(&getCache, func() mc.Cache { return c })()
+			defer test.MockVariableValue(&auth.GetAuthorizedIntegrationCache, func() mc.Cache { return c })()
 			defer test.MockVariableValue(&setting.AuthorizedIntegration.CacheTTL, 10*time.Minute)()
 
 			var cacheKey string
@@ -606,12 +698,12 @@ func TestAuthorizedIntegration(t *testing.T) {
 			var oidcMetadata []byte
 			var jwksData []byte
 			ait := newAITester(t,
-				openIDTweak(func(oi *openIDConfiguration, ait *AuthorizedIntegrationTester) {
+				openIDTweak(func(oi *auth.AuthorizedIntegrationOpenIDConfiguration, ait *AuthorizedIntegrationTester) {
 					var err error
 					oidcMetadata, err = json.Marshal(oi)
 					require.NoError(t, err)
 				}),
-				jwksTweak(func(oi *openIDKeys) {
+				jwksTweak(func(oi *auth.AuthorizedIntegrationOpenIDKeys) {
 					var err error
 					jwksData, err = json.Marshal(oi)
 					require.NoError(t, err)
@@ -622,7 +714,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 			t.Run("cache returns []byte", func(t *testing.T) {
 				c := cache.NewMockCache(t)
-				defer test.MockVariableValue(&getCache, func() mc.Cache { return c })()
+				defer test.MockVariableValue(&auth.GetAuthorizedIntegrationCache, func() mc.Cache { return c })()
 
 				c.On("Get",
 					mock.MatchedBy(func(key string) bool {
@@ -640,7 +732,7 @@ func TestAuthorizedIntegration(t *testing.T) {
 
 			t.Run("cache returns string", func(t *testing.T) {
 				c := cache.NewMockCache(t)
-				defer test.MockVariableValue(&getCache, func() mc.Cache { return c })()
+				defer test.MockVariableValue(&auth.GetAuthorizedIntegrationCache, func() mc.Cache { return c })()
 
 				c.On("Get",
 					mock.MatchedBy(func(key string) bool {
@@ -657,6 +749,89 @@ func TestAuthorizedIntegration(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("internal issuer", func(t *testing.T) {
+		t.Run("success", func(t *testing.T) {
+			ait := newInternalIssuerAITester(t)
+			defer ait.close()
+			output := ait.bearerRequest()
+			requireOutput[*auth.AuthenticationSuccess](t, output)
+		})
+
+		t.Run("mismatched issuer app URL", func(t *testing.T) {
+			ait := newInternalIssuerAITester(t,
+				claimTweak(func(rc *flexibleClaims) {
+					rc.Issuer = "https://example.org/fake-jwt-issuer" // correct suffix, incorrect prefix
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "matching authorized_integration not found")
+			ait.ii.ExpectedCalls = nil // InternalIssuer should have zero calls
+		})
+
+		t.Run("mismatched issuer URL suffix", func(t *testing.T) {
+			ait := newInternalIssuerAITester(t,
+				claimTweak(func(rc *flexibleClaims) {
+					rc.Issuer = setting.AppURL + "/fake-jwt-issuer-123" // correct prefix, incorrect suffix
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "matching authorized_integration not found")
+			ait.ii.ExpectedCalls = nil // InternalIssuer should have zero calls
+		})
+
+		t.Run("mismatched DB issuer placeholder", func(t *testing.T) {
+			ait := newInternalIssuerAITester(t,
+				aiDBTweak(func(ai *auth_model.AuthorizedIntegration) {
+					ai.Issuer = "urn:forgejo:authorized-issuer:internal:bad-choice-here"
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "matching authorized_integration not found")
+			ait.ii.ExpectedCalls = nil // InternalIssuer should have zero calls
+		})
+
+		t.Run("checks claim rules", func(t *testing.T) {
+			ait := newInternalIssuerAITester(t,
+				claimTweak(func(rc *flexibleClaims) {
+					rc.other["custom-claim"] = "oops wrong claim"
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "claim \"custom-claim\" must be \"custom-claim-value\"")
+			ait.ii.ExpectedCalls = []*mock.Call{ait.ii.ExpectedCalls[0]} // drop call to SigningKey() -- won't occur due to claim mismatch
+		})
+
+		t.Run("JWT times checked", func(t *testing.T) {
+			ait := newInternalIssuerAITester(t,
+				claimTweak(func(rc *flexibleClaims) {
+					rc.ExpiresAt = jwt.NewNumericDate(time.Date(2026, time.January, 1, 12, 0, 0, 0, time.Local))
+				}))
+			defer ait.close()
+			output := ait.bearerRequest()
+			err := requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "token is expired")
+		})
+
+		t.Run("signed by incorrect JWT key", func(t *testing.T) {
+			keyPath := filepath.Join(t.TempDir(), "jwt-rsa-2048-bad-key.priv")
+			badSigningKey, err := jwtx.InitAsymmetricSigningKey(keyPath, "RS256")
+			require.NoError(t, err)
+
+			ait := newInternalIssuerAITester(t, jwtClientSignatureTweak(func() jwtx.SigningKey {
+				return badSigningKey
+			}))
+			defer ait.close()
+
+			output := ait.bearerRequest()
+			err = requireOutput[*auth.AuthenticationAttemptedIncorrectCredential](t, output).Error
+			require.ErrorContains(t, err, "crypto/rsa: verification error")
+		})
+	})
 }
 
 type AuthorizedIntegrationTester struct {
@@ -667,6 +842,7 @@ type AuthorizedIntegrationTester struct {
 	testServer      *httptest.Server
 	resetHTTPClient func()
 	tweaks          []tweak
+	ii              *auth.MockInternalIssuer
 }
 
 func newAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
@@ -698,9 +874,10 @@ func newAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
 	}
 	ait.jwtSigningKey = jwtSigningKey
 
+	uniqueTest := gouuid.New().String()
 	ait.testServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/actions/.well-known/openid-configuration" {
-			retval := &openIDConfiguration{
+		if r.URL.Path == fmt.Sprintf("/api/actions/%s/.well-known/openid-configuration", uniqueTest) {
+			retval := &auth.AuthorizedIntegrationOpenIDConfiguration{
 				Issuer:                           ait.dbAI.Issuer,
 				IDTokenSigningAlgValuesSupported: []string{"RS256"},
 				JwksURI:                          fmt.Sprintf("%s/.keys", ait.dbAI.Issuer),
@@ -714,7 +891,7 @@ func newAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
 			require.NoError(t, err)
 			return
 		}
-		if r.URL.Path == "/api/actions/.keys" {
+		if r.URL.Path == fmt.Sprintf("/api/actions/%s/.keys", uniqueTest) {
 			jwk, err := ait.jwtSigningKey.ToJWK()
 			require.NoError(t, err)
 			jwk["use"] = "sig"
@@ -722,7 +899,7 @@ func newAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
 			for k, v := range jwk {
 				jwkMapAny[k] = v // convert map[string]string -> map[string]any
 			}
-			retval := &openIDKeys{
+			retval := &auth.AuthorizedIntegrationOpenIDKeys{
 				Keys: []map[string]any{jwkMapAny},
 			}
 			for _, tweak := range ait.tweaks {
@@ -737,16 +914,17 @@ func newAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
 	}))
 
 	// trust TLS cert of our mock client by inserting the test client for our test server into the global aiHTTPClient
-	ait.resetHTTPClient = test.MockVariableValue(&aiHTTPClient, ait.testServer.Client())
-	// prevent self-initialization of the HTTP client during unit testing -- this means that a real client cant' be
-	// created and aiHTTPClient will always be nil (other than when mocked), but that's fine because we don't want to do
-	// external HTTP traffic in these tests
-	initHTTPClient.Do(func() {})
+	ait.resetHTTPClient = test.MockVariableValue(
+		&auth.GetAuthorizedIntegrationHTTPClient,
+		func() *http.Client {
+			return ait.testServer.Client()
+		},
+	)
 
 	ait.dbAI = &auth_model.AuthorizedIntegration{
 		UserID:   2,
 		Scope:    auth_model.AccessTokenScopeAll,
-		Issuer:   fmt.Sprintf("%s/api/actions", ait.testServer.URL),
+		Issuer:   fmt.Sprintf("%s/api/actions/%s", ait.testServer.URL, uniqueTest),
 		Audience: fmt.Sprintf("https://forgejo.example.org/-/coolguy/authorized-integration/%s", gouuid.New().String()),
 		ClaimRules: &auth_model.ClaimRules{
 			Rules: []auth_model.ClaimRule{
@@ -769,6 +947,25 @@ func newAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
 	return ait
 }
 
+func newInternalIssuerAITester(t *testing.T, tweaks ...tweak) *AuthorizedIntegrationTester {
+	innerTweaks := []tweak{
+		claimTweak(func(rc *flexibleClaims) {
+			rc.Issuer = setting.AppURL + "/fake-jwt-issuer"
+		}),
+		aiDBTweak(func(ai *auth_model.AuthorizedIntegration) {
+			ai.Issuer = "urn:forgejo:authorized-issuer:internal:test1"
+		}),
+	}
+	innerTweaks = append(innerTweaks, tweaks...)
+	ait := newAITester(t, innerTweaks...)
+	ii := auth.NewMockInternalIssuer(t)
+	auth.RegisterInternalIssuerForTesting(t, "/fake-jwt-issuer", ii)
+	ii.On("IssuerPlaceholder").Return("urn:forgejo:authorized-issuer:internal:test1")
+	ii.On("SigningKey").Return(ait.jwtSigningKey)
+	ait.ii = ii
+	return ait
+}
+
 func (ait *AuthorizedIntegrationTester) signedJWT() string {
 	claims := flexibleClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -784,7 +981,13 @@ func (ait *AuthorizedIntegrationTester) signedJWT() string {
 			tweak(&claims)
 		}
 	}
-	signedToken, err := ait.jwtSigningKey.JWT(claims)
+	clientSigningKey := ait.jwtSigningKey
+	for _, tweak := range ait.tweaks {
+		if tweak, is := tweak.(jwtClientSignatureTweak); is {
+			clientSigningKey = tweak()
+		}
+	}
+	signedToken, err := clientSigningKey.JWT(claims)
 	require.NoError(ait.t, err)
 	return signedToken
 }
@@ -814,10 +1017,12 @@ type claimTweak func(*flexibleClaims)
 
 type aiTweak func(*AuthorizedIntegration)
 
-type openIDTweak func(*openIDConfiguration, *AuthorizedIntegrationTester)
+type openIDTweak func(*auth.AuthorizedIntegrationOpenIDConfiguration, *AuthorizedIntegrationTester)
 
-type jwksTweak func(*openIDKeys)
+type jwksTweak func(*auth.AuthorizedIntegrationOpenIDKeys)
 
 type aiDBTweak func(*auth_model.AuthorizedIntegration)
 
 type jwtxKeyTweak func() jwtx.SigningKey
+
+type jwtClientSignatureTweak func() jwtx.SigningKey

@@ -6,6 +6,7 @@ package setting
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,14 +79,13 @@ key = 123
 }
 
 func TestNewConfigProviderFromFile(t *testing.T) {
-	cfg, err := NewConfigProviderFromFile("no-such.ini")
+	_, err := NewConfigProviderFromFile("no-such.ini")
 	require.NoError(t, err)
-	assert.True(t, cfg.IsLoadedFromEmpty())
 
 	// load non-existing file and save
 	testFile := t.TempDir() + "/test.ini"
 	testFile1 := t.TempDir() + "/test1.ini"
-	cfg, err = NewConfigProviderFromFile(testFile)
+	cfg, err := NewConfigProviderFromFile(testFile)
 	require.NoError(t, err)
 
 	sec, _ := cfg.NewSection("foo")
@@ -112,6 +112,48 @@ func TestNewConfigProviderFromFile(t *testing.T) {
 	bs, err = os.ReadFile(testFile)
 	require.NoError(t, err)
 	assert.Equal(t, "[foo]\nk1 = a\n\n[bar]\nk1 = b\n", string(bs))
+}
+
+// basically a copy of TestNewConfigProviderFromFile without the file
+func TestNewVolatileConfigProvider(t *testing.T) {
+	cfg, err := NewVolatileConfigProvider(NewConfigProviderFromData(""))
+	require.NoError(t, err)
+
+	sec, _ := cfg.NewSection("foo")
+	_, _ = sec.NewKey("k1", "a")
+	s, err := cfg.String()
+	require.NoError(t, err)
+	assert.Equal(t, "[foo]\nk1 = a\n", s)
+
+	_, _ = sec.NewKey("k2", "b")
+	s, err = cfg.String()
+	require.NoError(t, err)
+	assert.Equal(t, "[foo]\nk1 = a\nk2 = b\n", s)
+
+	// parse string again as new config and modify
+	cfg, err = NewVolatileConfigProvider(NewConfigProviderFromData(s))
+	require.NoError(t, err)
+
+	assert.Equal(t, "a", cfg.Section("foo").Key("k1").String())
+	sec, _ = cfg.NewSection("bar")
+	_, _ = sec.NewKey("k1", "b")
+	s, err = cfg.String()
+	require.NoError(t, err)
+	assert.Equal(t, "[foo]\nk1 = a\nk2 = b\n\n[bar]\nk1 = b\n", s)
+
+	// coverage: exercise the other wrappers
+	// 3: DEFAULT, foo, bar
+	assert.Len(t, cfg.Sections(), 3)
+	getSec, err := cfg.GetSection("bar")
+	require.NoError(t, err)
+	assert.Equal(t, sec, getSec)
+	require.NoError(t, cfg.Save())
+	require.NoError(t, cfg.SaveTo("bogus.ini"))
+	assert.Empty(t, cfg.GetFile())
+	cfg.DisableSaving()
+	tcfg, err := cfg.PrepareSaving()
+	require.NoError(t, err)
+	assert.Equal(t, cfg, tcfg)
 }
 
 func TestNewConfigProviderForLocale(t *testing.T) {
@@ -175,4 +217,31 @@ func TestMustBytes(t *testing.T) {
 	assert.EqualValues(t, 1048576, test("1mib"))
 	assert.EqualValues(t, 1782579, test("1.7mib"))
 	assert.EqualValues(t, -1, test("1 yib")) // too large
+}
+
+func TestMustDuration(t *testing.T) {
+	test := func(value string, defaultValue time.Duration) (time.Duration, error) {
+		cfg, err := NewConfigProviderFromData("[test]")
+		require.NoError(t, err)
+		sec := cfg.Section("test")
+		sec.NewKey("VALUE", value)
+
+		return sec.Key("VALUE").MustDuration(defaultValue)
+	}
+
+	val, err := test("", time.Hour)
+	assert.Equal(t, time.Hour, val)
+	require.NoError(t, err)
+
+	val, err = test("1h", time.Hour)
+	assert.Equal(t, time.Hour, val)
+	require.NoError(t, err)
+
+	val, err = test("1.5d", time.Hour)
+	assert.Equal(t, 36*time.Hour, val)
+	require.NoError(t, err)
+
+	val, err = test("eep", time.Hour)
+	require.Error(t, err)
+	assert.Equal(t, 0*time.Nanosecond, val)
 }

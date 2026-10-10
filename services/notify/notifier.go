@@ -16,6 +16,8 @@ import (
 )
 
 // Notifier defines an interface to notify receiver
+//
+//mockery:generate: true
 type Notifier interface {
 	Run()
 
@@ -29,7 +31,7 @@ type Notifier interface {
 	RepoPendingTransfer(ctx context.Context, doer, newOwner *user_model.User, repo *repo_model.Repository)
 
 	NewIssue(ctx context.Context, issue *issues_model.Issue, mentions []*user_model.User)
-	IssueChangeStatus(ctx context.Context, doer *user_model.User, commitID string, issue *issues_model.Issue, actionComment *issues_model.Comment, closeOrReopen bool)
+	IssueChangeStatus(ctx context.Context, doer *user_model.User, prInfo *issues_model.PRNotificationInfo, issue *issues_model.Issue, actionComment *issues_model.Comment, closeOrReopen bool)
 	DeleteIssue(ctx context.Context, doer *user_model.User, issue *issues_model.Issue)
 	IssueChangeMilestone(ctx context.Context, doer *user_model.User, issue *issues_model.Issue, oldMilestoneID int64)
 	IssueChangeAssignee(ctx context.Context, doer *user_model.User, issue *issues_model.Issue, assignee *user_model.User, removed bool, comment *issues_model.Comment)
@@ -40,6 +42,9 @@ type Notifier interface {
 	IssueChangeRef(ctx context.Context, doer *user_model.User, issue *issues_model.Issue, oldRef string)
 	IssueChangeLabels(ctx context.Context, doer *user_model.User, issue *issues_model.Issue,
 		addedLabels, removedLabels []*issues_model.Label)
+
+	NewReaction(ctx context.Context, reaction *issues_model.Reaction)
+	DeleteReaction(ctx context.Context, reaction *issues_model.Reaction)
 
 	NewPullRequest(ctx context.Context, pr *issues_model.PullRequest, mentions []*user_model.User)
 	MergePullRequest(ctx context.Context, doer *user_model.User, pr *issues_model.PullRequest)
@@ -78,5 +83,11 @@ type Notifier interface {
 
 	ChangeDefaultBranch(ctx context.Context, repo *repo_model.Repository)
 
-	ActionRunNowDone(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status, lastRun *actions_model.ActionRun)
+	NewWorkflowRunAttempt(ctx context.Context, run *actions_model.ActionRun)
+	WorkflowRunStatusChanged(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status)
+	WorkflowRunCompleted(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status)
+
+	NewWorkflowJobAttempt(ctx context.Context, job *actions_model.ActionRunJob)
+	WorkflowJobStatusChanged(ctx context.Context, job *actions_model.ActionRunJob, priorStatus actions_model.Status)
+	WorkflowJobCompleted(ctx context.Context, job *actions_model.ActionRunJob, priorStatus actions_model.Status)
 }

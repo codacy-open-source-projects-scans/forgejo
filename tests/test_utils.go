@@ -12,27 +12,23 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"forgejo.org/cmd"
 	"forgejo.org/models/db"
 	packages_model "forgejo.org/models/packages"
-	repo_model "forgejo.org/models/repo"
-	unit_model "forgejo.org/models/unit"
 	"forgejo.org/models/unittest"
-	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/base"
 	"forgejo.org/modules/git"
-	"forgejo.org/modules/gitrepo"
 	"forgejo.org/modules/graceful"
 	"forgejo.org/modules/log"
-	"forgejo.org/modules/optional"
 	"forgejo.org/modules/process"
 	repo_module "forgejo.org/modules/repository"
 	"forgejo.org/modules/setting"
@@ -40,14 +36,9 @@ import (
 	"forgejo.org/modules/testlogger"
 	"forgejo.org/modules/util"
 	"forgejo.org/routers"
-	repo_service "forgejo.org/services/repository"
-	files_service "forgejo.org/services/repository/files"
-	wiki_service "forgejo.org/services/wiki"
+	"forgejo.org/tests/internaltest"
 
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"xorm.io/xorm/convert"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Import pgx driver
 )
@@ -59,44 +50,77 @@ func exitf(format string, args ...any) {
 
 var preparedDir string
 
-func InitTest(requireGitea bool) {
+// DelegateToMainApp must be the first call in TestMain.
+// If the call must be delegated to the main, it will exit upon completion.
+func DelegateToMainApp() {
+	// inspired by https://abhinavg.net/2022/05/15/hijack-testmain/
+
+	_, isGitHook := os.LookupEnv("GIT_DIR")      // set when called from a hook or as subprocess
+	_, isSSHServ := os.LookupEnv("GIT_PROTOCOL") // set when called from ssh (for key lookup)
+
+	if isGitHook || isSSHServ {
+		app := cmd.NewMainApp("test-version", "integration-test")
+		if err := cmd.RunMainApp(app, os.Args...); err != nil {
+			panic(err) // should never happen since RunMainApp exits on error
+		}
+		os.Exit(0)
+	}
+}
+
+// RunMainAppWithStdin runs the subcommand and returns its standard output. Any returned error will usually be of type *ExitError. If c.Stderr was nil, Output populates ExitError.Stderr.
+func RunMainAppWithStdin(stdin io.Reader, subcommand string, args ...string) (string, error) {
+	// running the main app directly will very likely mess with the testing setup (logger & co.)
+	// hence we run it as a subprocess and capture its output
+	args = append([]string{"--config", setting.CustomConf, subcommand}, args...)
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(),
+		"GIT_DIR=", // signal DelegateToMainApp that we want to run main
+	)
+	cmd.Stdin = stdin
+	out, err := cmd.Output()
+	if ee, ok := err.(*exec.ExitError); ok {
+		log.Error("%s %v exit on error %s", os.Args[0], args, ee.Stderr)
+	}
+	return string(out), err
+}
+
+func InitTest() {
 	log.RegisterEventWriter("test", testlogger.NewTestLoggerWriter)
 
-	giteaRoot := base.SetupGiteaRoot()
-	if giteaRoot == "" {
-		exitf("Environment variable $GITEA_ROOT not set")
+	projectRoot := base.SetupProjectRoot()
+	if projectRoot == "" {
+		exitf("Environment variable $PROJECT_ROOT not set")
 	}
 
 	// TODO: Speedup tests that rely on the event source ticker, confirm whether there is any bug or failure.
 	// setting.UI.Notification.EventSourceUpdateTime = time.Second
 
 	setting.IsInTesting = true
-	setting.AppWorkPath = giteaRoot
+	setting.AppWorkPath = projectRoot
 	setting.CustomPath = filepath.Join(setting.AppWorkPath, "custom")
-	if requireGitea {
-		giteaBinary := "gitea"
-		setting.AppPath = path.Join(giteaRoot, giteaBinary)
-		if _, err := os.Stat(setting.AppPath); err != nil {
-			exitf("Could not find gitea binary at %s", setting.AppPath)
-		}
-	}
-	giteaConf := os.Getenv("GITEA_CONF")
-	if giteaConf == "" {
+	projectConf := os.Getenv("PROJECT_CONF")
+	if projectConf == "" {
 		// By default, use sqlite.ini for testing, then IDE like GoLand can start the test process with debugger.
 		// It's easier for developers to debug bugs step by step with a debugger.
-		// Notice: when doing "ssh push", Gitea executes sub processes, debugger won't work for the sub processes.
-		giteaConf = "tests/sqlite.ini"
-		_ = os.Setenv("GITEA_CONF", giteaConf)
-		fmt.Printf("Environment variable $GITEA_CONF not set, use default: %s\n", giteaConf)
+		// Notice: when doing "ssh push", Forgejo executes sub processes, debugger won't work for the sub processes.
+		projectConf = "tests/sqlite.ini"
+		_ = os.Setenv("PROJECT_CONF", projectConf)
+		fmt.Printf("Environment variable $PROJECT_CONF not set, use default: %s\n", projectConf)
 		if !setting.EnableSQLite3 {
 			exitf(`sqlite3 requires: import _ "github.com/mattn/go-sqlite3" or -tags sqlite,sqlite_unlock_notify`)
 		}
 	}
-	if !path.IsAbs(giteaConf) {
-		setting.CustomConf = filepath.Join(giteaRoot, giteaConf)
+	if !path.IsAbs(projectConf) {
+		setting.CustomConf = filepath.Join(projectRoot, projectConf)
 	} else {
-		setting.CustomConf = giteaConf
+		setting.CustomConf = projectConf
 	}
+
+	executablePath, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		exitf("could not determine absolute path: %w", err)
+	}
+	setting.AppPath = executablePath
 
 	unittest.InitSettings()
 	setting.Repository.DefaultBranch = "master" // many test code still assume that default branch is called "master"
@@ -200,8 +224,8 @@ func InitTest(requireGitea bool) {
 		log.Fatal("os.MkdirTemp: %v", err)
 	}
 
-	if err := unittest.CopyDir(path.Join(filepath.Dir(setting.AppPath), "tests/gitea-repositories-meta"), dir); err != nil {
-		log.Fatal("os.RemoveAll: %v", err)
+	if err := unittest.CopyDir(path.Join(setting.AppWorkPath, "tests/gitea-repositories-meta"), dir); err != nil {
+		log.Fatal("os.CopyDir: %v", err)
 	}
 	ownerDirs, err := os.ReadDir(dir)
 	if err != nil {
@@ -233,7 +257,7 @@ func PrepareAttachmentsStorage(t testing.TB) {
 	require.NoError(t, storage.Clean(storage.Attachments))
 
 	s, err := storage.NewStorage(setting.LocalStorageType, &setting.Storage{
-		Path: filepath.Join(filepath.Dir(setting.AppPath), "tests", "testdata", "data", "attachments"),
+		Path: filepath.Join(setting.AppWorkPath, "tests", "testdata", "data", "attachments"),
 	})
 	require.NoError(t, err)
 	require.NoError(t, s.IterateObjects("", func(p string, obj storage.Object) error {
@@ -260,12 +284,14 @@ func cancelProcesses(t testing.TB, delay time.Duration) {
 	processes, _ = processManager.Processes(true, true)
 	for len(processes) > 0 {
 		if time.Since(start) > delay {
-			t.Errorf("ERROR PrepareTestEnv: could not cancel all processes within %s", delay)
+			// `println` is used for output here -- exitf doesn't return control to the testing process and so test logs
+			// are not output to the console
+			fmt.Printf("ERROR PrepareTestEnv: could not cancel all processes within %s", delay)
 			for _, p := range processes {
 				t.Logf("PrepareTestEnv:Remaining Process: %q", p.Description)
 			}
 			stacks := allGoroutineStacks()
-			t.Errorf("All goroutine stacks during process cancellation failure:\n%s", string(stacks))
+			fmt.Printf("All goroutine stacks during process cancellation failure:\n%s", string(stacks))
 			// exit so that we don't spin in a loop executing `delay` wait over and over again when we won't be able to
 			// complete tests correctly due to the environmental issue present.
 			exitf("terminating test run due to unrecoverable failure")
@@ -299,7 +325,7 @@ func PrepareArtifactsStorage(t testing.TB) {
 	require.NoError(t, storage.Clean(storage.ActionsArtifacts))
 
 	s, err := storage.NewStorage(setting.LocalStorageType, &setting.Storage{
-		Path: filepath.Join(filepath.Dir(setting.AppPath), "tests", "testdata", "data", "artifacts"),
+		Path: filepath.Join(setting.AppWorkPath, "tests", "testdata", "data", "artifacts"),
 	})
 	require.NoError(t, err)
 	require.NoError(t, s.IterateObjects("", func(p string, obj storage.Object) error {
@@ -312,7 +338,7 @@ func PrepareLFSStorage(t testing.TB) {
 	// load LFS object fixtures
 	// (LFS storage can be on any of several backends, including remote servers, so init it with the storage API)
 	lfsFixtures, err := storage.NewStorage(setting.LocalStorageType, &setting.Storage{
-		Path: filepath.Join(filepath.Dir(setting.AppPath), "tests/gitea-lfs-meta"),
+		Path: filepath.Join(setting.AppWorkPath, "tests/gitea-lfs-meta"),
 	})
 	require.NoError(t, err)
 	require.NoError(t, storage.Clean(storage.LFS))
@@ -344,6 +370,11 @@ var inTestEnv atomic.Bool
 func PrepareTestEnv(t testing.TB, skip ...int) func() {
 	deferFn := PrepareTestEnvWithPackageData(t, skip...)
 	PrepareCleanPackageData(t)
+	internaltest.NewInternalTestServer(t, nil)
+
+	projectRoot := base.SetupProjectRoot()
+	setting.AppWorkPath = projectRoot
+
 	return deferFn
 }
 
@@ -384,171 +415,6 @@ func PrintCurrentTest(t testing.TB, skip ...int) func() {
 // Printf takes a format and args and prints the string to os.Stdout
 func Printf(format string, args ...any) {
 	testlogger.Printf(format, args...)
-}
-
-type DeclarativeRepoOptions struct {
-	Name          optional.Option[string]
-	EnabledUnits  optional.Option[[]unit_model.Type]
-	DisabledUnits optional.Option[[]unit_model.Type]
-	UnitConfig    optional.Option[map[unit_model.Type]convert.Conversion]
-	Files         optional.Option[[]*files_service.ChangeRepoFile]
-	WikiBranch    optional.Option[string]
-	AutoInit      optional.Option[bool]
-	IsTemplate    optional.Option[bool]
-	ObjectFormat  optional.Option[string]
-	IsPrivate     optional.Option[bool]
-}
-
-func CreateDeclarativeRepoWithOptions(t *testing.T, owner *user_model.User, opts DeclarativeRepoOptions) (*repo_model.Repository, string, func()) {
-	t.Helper()
-
-	// Not using opts.Name.ValueOrDefault() here to avoid unnecessarily
-	// generating an UUID when a name is specified.
-	var repoName string
-	if has, value := opts.Name.Get(); has {
-		repoName = value
-	} else {
-		repoName = uuid.NewString()
-	}
-
-	var autoInit bool
-	if has, value := opts.AutoInit.Get(); has {
-		autoInit = value
-	} else {
-		autoInit = true
-	}
-
-	// Create the repository
-	repo, err := repo_service.CreateRepository(db.DefaultContext, owner, owner, repo_service.CreateRepoOptions{
-		Name:             repoName,
-		Description:      "Temporary Repo",
-		AutoInit:         autoInit,
-		Gitignores:       "",
-		License:          "WTFPL",
-		Readme:           "Default",
-		DefaultBranch:    "main",
-		IsTemplate:       opts.IsTemplate.ValueOrZeroValue(),
-		ObjectFormatName: opts.ObjectFormat.ValueOrZeroValue(),
-		IsPrivate:        opts.IsPrivate.ValueOrZeroValue(),
-	})
-	require.NoError(t, err)
-	assert.NotEmpty(t, repo)
-
-	// Populate `enabledUnits` if we have any enabled.
-	var enabledUnits []repo_model.RepoUnit
-	if has, units := opts.EnabledUnits.Get(); has {
-		enabledUnits = make([]repo_model.RepoUnit, len(units))
-
-		for i, unitType := range units {
-			var config convert.Conversion
-			if cfg, ok := opts.UnitConfig.ValueOrZeroValue()[unitType]; ok {
-				config = cfg
-			}
-			enabledUnits[i] = repo_model.RepoUnit{
-				RepoID: repo.ID,
-				Type:   unitType,
-				Config: config,
-			}
-		}
-	}
-
-	// Adjust the repo units according to our parameters.
-	if opts.EnabledUnits.Has() || opts.DisabledUnits.Has() {
-		err := repo_service.UpdateRepositoryUnits(db.DefaultContext, repo, enabledUnits, opts.DisabledUnits.ValueOrDefault(nil))
-		require.NoError(t, err)
-	}
-
-	// Add files, if any.
-	var sha string
-	if has, files := opts.Files.Get(); has {
-		assert.True(t, autoInit, "Files cannot be specified if AutoInit is disabled")
-
-		commitID, err := gitrepo.GetBranchCommitID(git.DefaultContext, repo, "main")
-		require.NoError(t, err)
-
-		resp, err := files_service.ChangeRepoFiles(git.DefaultContext, repo, owner, &files_service.ChangeRepoFilesOptions{
-			Files:     files,
-			Message:   "add files",
-			OldBranch: "main",
-			NewBranch: "main",
-			Author: &files_service.IdentityOptions{
-				Name:  owner.Name,
-				Email: owner.Email,
-			},
-			Committer: &files_service.IdentityOptions{
-				Name:  owner.Name,
-				Email: owner.Email,
-			},
-			Dates: &files_service.CommitDateOptions{
-				Author:    time.Now(),
-				Committer: time.Now(),
-			},
-			LastCommitID: commitID,
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, resp)
-
-		sha = resp.Commit.SHA
-	}
-
-	// If there's a Wiki branch specified, create a wiki, and a default wiki page.
-	if has, value := opts.WikiBranch.Get(); has {
-		// Set the wiki branch in the database first
-		repo.WikiBranch = value
-		err := repo_model.UpdateRepositoryCols(db.DefaultContext, repo, "wiki_branch")
-		require.NoError(t, err)
-
-		// Initialize the wiki
-		err = wiki_service.InitWiki(db.DefaultContext, repo)
-		require.NoError(t, err)
-
-		// Add a new wiki page
-		err = wiki_service.AddWikiPage(db.DefaultContext, owner, repo, "Home", "Welcome to the wiki!", "Add a Home page")
-		require.NoError(t, err)
-	}
-
-	// Return the repo, the top commit, and a defer-able function to delete the
-	// repo.
-	return repo, sha, func() {
-		_ = repo_service.DeleteRepository(db.DefaultContext, owner, repo, false)
-	}
-}
-
-func CreateDeclarativeRepo(t *testing.T, owner *user_model.User, name string, enabledUnits, disabledUnits []unit_model.Type, files []*files_service.ChangeRepoFile) (*repo_model.Repository, string, func()) {
-	t.Helper()
-
-	var opts DeclarativeRepoOptions
-
-	if name != "" {
-		opts.Name = optional.Some(name)
-	}
-	if enabledUnits != nil {
-		opts.EnabledUnits = optional.Some(enabledUnits)
-
-		if slices.Contains(enabledUnits, unit_model.TypePullRequests) {
-			opts.UnitConfig = optional.Some(map[unit_model.Type]convert.Conversion{
-				unit_model.TypePullRequests: &repo_model.PullRequestsConfig{
-					AllowMerge:           true,
-					AllowRebase:          true,
-					AllowRebaseMerge:     true,
-					AllowSquash:          true,
-					AllowFastForwardOnly: true,
-					AllowManualMerge:     true,
-					AllowRebaseUpdate:    true,
-					DefaultMergeStyle:    repo_model.MergeStyleMerge,
-					DefaultUpdateStyle:   repo_model.UpdateStyleMerge,
-				},
-			})
-		}
-	}
-	if disabledUnits != nil {
-		opts.DisabledUnits = optional.Some(disabledUnits)
-	}
-	if files != nil {
-		opts.Files = optional.Some(files)
-	}
-
-	return CreateDeclarativeRepoWithOptions(t, owner, opts)
 }
 
 func WriteImageBody(t *testing.T, buff bytes.Buffer, filename string, body *bytes.Buffer) string {

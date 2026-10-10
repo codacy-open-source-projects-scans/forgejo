@@ -10,6 +10,7 @@ import (
 
 	"forgejo.org/models/db"
 	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
 	"forgejo.org/models/unittest"
 	"forgejo.org/models/user"
 	"forgejo.org/modules/optional"
@@ -142,12 +143,12 @@ func getTestCases() []struct {
 		{
 			name:  "AllPublic/PublicRepositoriesOfUserIncludingCollaborative",
 			opts:  &repo_model.SearchRepoOptions{ListOptions: db.ListOptions{Page: 1, PageSize: 10}, OwnerID: 15, AllPublic: true, Template: optional.Some(false)},
-			count: 36,
+			count: 37,
 		},
 		{
 			name:  "AllPublic/PublicAndPrivateRepositoriesOfUserIncludingCollaborative",
 			opts:  &repo_model.SearchRepoOptions{ListOptions: db.ListOptions{Page: 1, PageSize: 10}, OwnerID: 15, Private: true, AllPublic: true, AllLimited: true, Template: optional.Some(false)},
-			count: 41,
+			count: 42,
 		},
 		{
 			name:  "AllPublic/PublicAndPrivateRepositoriesOfUserIncludingCollaborativeByName",
@@ -162,7 +163,7 @@ func getTestCases() []struct {
 		{
 			name:  "AllPublic/PublicRepositoriesOfOrganization",
 			opts:  &repo_model.SearchRepoOptions{ListOptions: db.ListOptions{Page: 1, PageSize: 10}, OwnerID: 17, AllPublic: true, Collaborate: optional.Some(false), Template: optional.Some(false)},
-			count: 36,
+			count: 37,
 		},
 		{
 			name:  "AllTemplates",
@@ -198,6 +199,11 @@ func getTestCases() []struct {
 			name:  "OwnerAndName Empty",
 			opts:  &repo_model.SearchRepoOptions{ListOptions: db.ListOptions{Page: 1, PageSize: 10}, OwnerAndName: [][2]string{}},
 			count: 0,
+		},
+		{
+			name:  "ActionsEnabled",
+			opts:  &repo_model.SearchRepoOptions{ListOptions: db.ListOptions{Page: 1, PageSize: 10}, EnabledUnit: optional.Some(unit.TypeActions)},
+			count: 3,
 		},
 	}
 
@@ -440,15 +446,15 @@ func TestSearchRepositoryIDsByCondition(t *testing.T) {
 	}{
 		{
 			user:    nil,
-			repoIDs: []int64{1, 4, 8, 9, 10, 11, 12, 14, 17, 18, 21, 23, 25, 27, 29, 32, 33, 34, 35, 36, 37, 42, 44, 45, 46, 47, 48, 49, 50, 51, 53, 57, 58, 60, 61, 62, 66, 1059},
+			repoIDs: []int64{1, 4, 8, 9, 10, 11, 12, 14, 17, 18, 21, 23, 25, 27, 29, 32, 33, 34, 35, 36, 37, 42, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 60, 61, 62, 66, 1059},
 		},
 		{
 			user:    unittest.AssertExistsAndLoadBean(t, &user.User{ID: 4}),
-			repoIDs: []int64{1, 3, 4, 8, 9, 10, 11, 12, 14, 17, 18, 21, 23, 25, 27, 29, 32, 33, 34, 35, 36, 37, 38, 40, 42, 44, 45, 46, 47, 48, 49, 50, 51, 53, 57, 58, 60, 61, 62, 66, 1001, 1059},
+			repoIDs: []int64{1, 3, 4, 8, 9, 10, 11, 12, 14, 17, 18, 21, 23, 25, 27, 29, 32, 33, 34, 35, 36, 37, 38, 40, 42, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 60, 61, 62, 66, 1001, 1059},
 		},
 		{
 			user:    unittest.AssertExistsAndLoadBean(t, &user.User{ID: 5}),
-			repoIDs: []int64{1, 4, 8, 9, 10, 11, 12, 14, 17, 18, 21, 23, 25, 27, 29, 32, 33, 34, 35, 36, 37, 38, 40, 42, 44, 45, 46, 47, 48, 49, 50, 51, 53, 57, 58, 60, 61, 62, 66, 1001, 1059},
+			repoIDs: []int64{1, 4, 8, 9, 10, 11, 12, 14, 17, 18, 21, 23, 25, 27, 29, 32, 33, 34, 35, 36, 37, 38, 40, 42, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 60, 61, 62, 66, 1001, 1059},
 		},
 	}
 

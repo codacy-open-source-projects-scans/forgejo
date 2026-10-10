@@ -64,6 +64,32 @@ func GetOrganizationByParams(ctx *Context) {
 	}
 }
 
+func ensureIsOrg(ctx *Context) bool {
+	switch {
+	// Getting Organization from params
+	case ctx.ContextUser == nil:
+		if ctx.Org.Organization == nil {
+			GetOrganizationByParams(ctx)
+		}
+		return !ctx.Written()
+	// Getting Organization from ContextUser
+	case ctx.ContextUser.IsOrganization():
+		if ctx.Org == nil {
+			ctx.Org = &Organization{}
+		}
+		ctx.Org.Organization = (*organization.Organization)(ctx.ContextUser)
+		return true
+	}
+	// ContextUser is an individual User
+	return false
+}
+
+func EnsureOrg() func(*Context) {
+	return func(ctx *Context) {
+		ensureIsOrg(ctx)
+	}
+}
+
 // HandleOrgAssignment handles organization assignment
 func HandleOrgAssignment(ctx *Context, args ...bool) {
 	var (
@@ -87,24 +113,9 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 
 	var err error
 
-	if ctx.ContextUser == nil {
-		// if Organization is not defined, get it from params
-		if ctx.Org.Organization == nil {
-			GetOrganizationByParams(ctx)
-			if ctx.Written() {
-				return
-			}
-		}
-	} else if ctx.ContextUser.IsOrganization() {
-		if ctx.Org == nil {
-			ctx.Org = &Organization{}
-		}
-		ctx.Org.Organization = (*organization.Organization)(ctx.ContextUser)
-	} else {
-		// ContextUser is an individual User
+	if !ensureIsOrg(ctx) {
 		return
 	}
-
 	org := ctx.Org.Organization
 
 	// Handle Visibility
@@ -190,8 +201,8 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 	}
 
 	// Team.
+	shouldSeeAllTeams := false
 	if ctx.Org.IsMember {
-		shouldSeeAllTeams := false
 		if ctx.Org.IsOwner {
 			shouldSeeAllTeams = true
 		} else {
@@ -207,18 +218,10 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 				}
 			}
 		}
-		if shouldSeeAllTeams {
-			ctx.Org.Teams, err = org.LoadTeams(ctx)
-			if err != nil {
-				ctx.ServerError("LoadTeams", err)
-				return
-			}
-		} else {
-			ctx.Org.Teams, err = org.GetUserTeams(ctx, ctx.Doer.ID)
-			if err != nil {
-				ctx.ServerError("GetUserTeams", err)
-				return
-			}
+		ctx.Org.Teams, err = org.LoadTeams(ctx)
+		if err != nil {
+			ctx.ServerError("LoadTeams", err)
+			return
 		}
 		ctx.Data["NumTeams"] = len(ctx.Org.Teams)
 	}
@@ -230,7 +233,7 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 			if team.LowerName == strings.ToLower(teamName) {
 				teamExists = true
 				ctx.Org.Team = team
-				ctx.Org.IsTeamMember = true
+				ctx.Org.IsTeamMember = team.IsMember(ctx, ctx.Doer.ID)
 				ctx.Data["Team"] = ctx.Org.Team
 				break
 			}
@@ -242,7 +245,7 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 		}
 
 		ctx.Data["IsTeamMember"] = ctx.Org.IsTeamMember
-		if requireTeamMember && !ctx.Org.IsTeamMember {
+		if requireTeamMember && !ctx.Org.IsTeamMember && !shouldSeeAllTeams {
 			ctx.NotFound("OrgAssignment", err)
 			return
 		}

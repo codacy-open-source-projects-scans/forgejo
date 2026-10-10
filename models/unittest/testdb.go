@@ -1,3 +1,4 @@
+// Copyright 2026 The Forgejo Authors. All rights reserved.
 // Copyright 2021 The Gitea Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
@@ -24,14 +25,14 @@ import (
 	"forgejo.org/modules/util"
 	"forgejo.org/services/stats"
 
+	"code.forgejo.org/xorm/xorm"
+	"code.forgejo.org/xorm/xorm/names"
 	"github.com/stretchr/testify/require"
-	"xorm.io/xorm"
-	"xorm.io/xorm/names"
 )
 
-// giteaRoot a path to the gitea root
+// projectRoot is the path to the repository root
 var (
-	giteaRoot   string
+	projectRoot string
 	fixturesDir string
 )
 
@@ -51,11 +52,10 @@ func InitSettings() {
 }
 
 func InitCustomSettings(confFileName string) {
-	root := base.SetupGiteaRoot()
+	root := base.SetupProjectRoot()
 	if root == "" {
-		fatalTestError("Environment variable $GITEA_ROOT not set")
+		fatalTestError("Environment variable $PROJECT_ROOT not set")
 	}
-	setting.AppPath = filepath.Join(root, "gitea")
 	if setting.CustomConf == "" {
 		templateFile := confFileName + ".tmpl"
 		content, err := os.ReadFile(filepath.Join(root, "tests", templateFile))
@@ -68,7 +68,7 @@ func InitCustomSettings(confFileName string) {
 		}
 		setting.CustomConf = filepath.Join(root, "tests", confFileName)
 	}
-	os.Setenv("GITEA_CONF", setting.CustomConf)
+	os.Setenv("PROJECT_CONF", setting.CustomConf)
 
 	setting.InitCfgProvider(setting.CustomConf)
 	setting.LoadCommonSettings()
@@ -80,7 +80,7 @@ func InitCustomSettings(confFileName string) {
 	_ = hash.Register("dummy", hash.NewDummyHasher)
 
 	setting.PasswordHashAlgo, _ = hash.SetDefaultPasswordHashAlgorithm("dummy")
-	setting.InitGiteaEnvVars()
+	setting.InitEnvVars()
 
 	// Avoid loading the git's system config.
 	// On macOS, system config sets the osxkeychain credential helper, which will cause tests to freeze with a dialog.
@@ -100,10 +100,19 @@ type TestOptions struct {
 // MainTest a reusable TestMain(..) function for unit tests that need to use a
 // test database. Creates the test database, and sets necessary settings.
 func MainTest(m *testing.M, testOpts ...*TestOptions) {
+	if _, ok := os.LookupEnv("GIT_DIR"); ok {
+		// The wiki tests require perform git operations.
+		// It worked before dropping the need for the gitea binary because in case of wiki push,
+		// the git hooks do not perform http requests (access permission is checked before git invocation).
+		log.Println("Fake git hook which accepts everything (GIT_DIR is set).")
+		log.Println("Forgejo with proper http hooks is available in integration tests.")
+		os.Exit(0)
+	}
+
 	searchDir, _ := os.Getwd()
 	for searchDir != "" {
 		if _, err := os.Stat(filepath.Join(searchDir, "go.mod")); err == nil {
-			break // The "go.mod" should be the one for Gitea repository
+			break // The "go.mod" should be the one for source repository
 		}
 		if dir := filepath.Dir(searchDir); dir == searchDir {
 			searchDir = "" // reaches the root of filesystem
@@ -112,18 +121,18 @@ func MainTest(m *testing.M, testOpts ...*TestOptions) {
 		}
 	}
 	if searchDir == "" {
-		panic("The tests should run in a Gitea repository, there should be a 'go.mod' in the root")
+		panic("The tests should run in the source repository, there should be a 'go.mod' in the root")
 	}
 
-	giteaRoot = searchDir
-	setting.CustomPath = filepath.Join(giteaRoot, "custom")
+	projectRoot = searchDir
+	setting.CustomPath = filepath.Join(projectRoot, "custom")
 	if len(testOpts) == 0 || testOpts[0].IniFileOverride == "" {
 		InitSettings()
 	} else {
 		InitCustomSettings(testOpts[0].IniFileOverride)
 	}
 
-	fixturesDir = filepath.Join(giteaRoot, "models", "fixtures")
+	fixturesDir = filepath.Join(projectRoot, "models", "fixtures")
 	var opts FixturesOptions
 	if len(testOpts) == 0 || len(testOpts[0].FixtureFiles) == 0 {
 		opts.Dir = fixturesDir
@@ -157,8 +166,8 @@ func MainTest(m *testing.M, testOpts ...*TestOptions) {
 		fatalTestError("TempDir: %v\n", err)
 	}
 	setting.AppDataPath = appDataPath
-	setting.AppWorkPath = giteaRoot
-	setting.StaticRootPath = giteaRoot
+	setting.AppWorkPath = projectRoot
+	setting.StaticRootPath = projectRoot
 	setting.GravatarSource = "https://secure.gravatar.com/avatar/"
 
 	setting.Attachment.Storage.Path = filepath.Join(setting.AppDataPath, "attachments")
@@ -188,7 +197,7 @@ func MainTest(m *testing.M, testOpts ...*TestOptions) {
 	if err = util.RemoveAll(repoRootPath); err != nil {
 		fatalTestError("util.RemoveAll: %v\n", err)
 	}
-	if err = CopyDir(filepath.Join(giteaRoot, "tests", "gitea-repositories-meta"), setting.RepoRootPath); err != nil {
+	if err = CopyDir(filepath.Join(projectRoot, "tests", "gitea-repositories-meta"), setting.RepoRootPath); err != nil {
 		fatalTestError("util.CopyDir: %v\n", err)
 	}
 
@@ -299,7 +308,8 @@ func PrepareTestDatabase() error {
 func PrepareTestEnv(t testing.TB) {
 	require.NoError(t, PrepareTestDatabase())
 	require.NoError(t, util.RemoveAll(setting.RepoRootPath))
-	metaPath := filepath.Join(giteaRoot, "tests", "gitea-repositories-meta")
+	projectRoot = base.SetupProjectRoot() // Makes sure PROJECT_ROOT is set
+	metaPath := filepath.Join(projectRoot, "tests", "gitea-repositories-meta")
 	require.NoError(t, CopyDir(metaPath, setting.RepoRootPath))
 	ownerDirs, err := os.ReadDir(setting.RepoRootPath)
 	require.NoError(t, err)
@@ -316,6 +326,4 @@ func PrepareTestEnv(t testing.TB) {
 			_ = os.MkdirAll(filepath.Join(setting.RepoRootPath, ownerDir.Name(), repoDir.Name(), "refs", "tag"), 0o755)
 		}
 	}
-
-	base.SetupGiteaRoot() // Makes sure GITEA_ROOT is set
 }

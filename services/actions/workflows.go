@@ -23,8 +23,8 @@ import (
 	"forgejo.org/modules/webhook"
 	"forgejo.org/services/convert"
 
-	"code.forgejo.org/forgejo/runner/v12/act/jobparser"
-	act_model "code.forgejo.org/forgejo/runner/v12/act/model"
+	"code.forgejo.org/forgejo/runner/v13/act/jobparser"
+	act_model "code.forgejo.org/forgejo/runner/v13/act/model"
 )
 
 type InputRequiredErr struct {
@@ -97,6 +97,8 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 		title = fullWorkflowID
 	}
 
+	// Runner expects a `map[string]string` for inputs in in the payload dispatch, but newer code in the Runner's
+	// jobparser library takes a map[string]any which is more directly actionable for parsing:
 	inputs := make(map[string]string)
 	inputsAny := make(map[string]any)
 	if workflowDispatch := wf.WorkflowDispatchConfig(); workflowDispatch != nil {
@@ -109,6 +111,12 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 			}
 			inputs[key] = value
 			inputsAny[key] = value
+			// To match the behaviour of the runner when parsing map[string]string into map[string]any, check for
+			// boolean type inputs and convert them to booleans for expression evaluation:
+			// https://code.forgejo.org/forgejo/runner/src/commit/d5693e379c034a3afcb920087570d9a6e179e86e/act/runner/expression.go#L435-L439
+			if input.Type == "boolean" {
+				inputsAny[key] = value == "true"
+			}
 		}
 	}
 
@@ -183,12 +191,18 @@ func (entry *Workflow) Dispatch(ctx context.Context, inputGetter InputValueGette
 		jobparser.SupportIncompleteRunsOn(),
 		jobparser.ExpandLocalReusableWorkflows(expandLocalReusableWorkflows(entry.Commit)),
 		jobparser.ExpandInstanceReusableWorkflows(expandInstanceReusableWorkflows(ctx)),
+		jobparser.WithGitContext(generateGiteaContextForRun(run)),
+		jobparser.EnableNamespaces(),
 	)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if err := actions_model.InsertRun(ctx, run, jobs); err != nil {
+	if err := ConfigureActionRunTitle(jobs, run); err != nil {
+		return nil, nil, err
+	}
+
+	if err := InsertRun(ctx, run, jobs); err != nil {
 		return run, jobNames, err
 	}
 
@@ -203,6 +217,9 @@ func GetWorkflowFromCommit(gitRepo *git.Repository, ref, workflowID string) (*Wo
 
 	commit, err := gitRepo.GetCommit(ref)
 	if err != nil {
+		if errors.Is(err, util.ErrNotExist) {
+			return nil, util.NewInvalidArgumentErrorf("reference '%s' does not exist", ref)
+		}
 		return nil, err
 	}
 
@@ -219,7 +236,7 @@ func GetWorkflowFromCommit(gitRepo *git.Repository, ref, workflowID string) (*Wo
 		}
 	}
 	if workflowEntry == nil {
-		return nil, errors.New("workflow not found")
+		return nil, util.NewNotExistErrorf("workflow not found")
 	}
 
 	return &Workflow{
@@ -231,11 +248,29 @@ func GetWorkflowFromCommit(gitRepo *git.Repository, ref, workflowID string) (*Wo
 	}, nil
 }
 
+// Sets Title of a workflow run to the value of the workflow's `run-name` field, if present.
+// Keeps the existing default title when run-name is absent or when run-name evaluates to "".
+func ConfigureActionRunTitle(workflows []*jobparser.SingleWorkflow, run *actions_model.ActionRun) error {
+	if len(workflows) == 0 {
+		return nil
+	}
+	// run-name is workflow-level, so each job's SingleWorkflow has the same run-name.
+	runName, err := workflows[0].EvaluateRunName()
+	if err != nil {
+		return fmt.Errorf("unable to evaluate workflow `run-name`: %w", err)
+	}
+	if runName != "" {
+		run.Title = runName
+	}
+	return nil
+}
+
 // Sets the ConcurrencyGroup & ConcurrencyType on the provided ActionRun based upon the Workflow's `concurrency` data,
 // or appropriate defaults if not present.
 func ConfigureActionRunConcurrency(workflow *act_model.Workflow, run *actions_model.ActionRun, vars map[string]string, inputs map[string]any) error {
 	concurrencyGroup, cancelInProgress, err := jobparser.EvaluateWorkflowConcurrency(
-		workflow.RawConcurrency, generateGiteaContextForRun(run), vars, inputs)
+		workflow.RawConcurrency, generateGiteaContextForRun(run), vars, inputs,
+	)
 	if err != nil {
 		return fmt.Errorf("unable to evaluate workflow `concurrency` block: %w", err)
 	}

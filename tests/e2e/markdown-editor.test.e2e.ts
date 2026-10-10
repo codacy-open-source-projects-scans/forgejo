@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // @watch start
+// web_src/js/modules/modal.ts
 // web_src/js/modules/tab.ts
 // web_src/css/modules/tab.css
 // web_src/js/features/comp/ComboMarkdownEditor.js
@@ -16,8 +17,8 @@ import {screenshot} from './shared/screenshots.ts';
 
 test.use({user: 'user2'});
 
+// Editing the root README.md file for image preview
 test('Markdown image preview behaviour', async ({page}) => {
-  // Editing the root README.md file for image preview
   const editPath = '/user2/repo1/src/branch/master/README.md';
 
   const response = await page.goto(editPath, {waitUntil: 'domcontentloaded'});
@@ -37,8 +38,10 @@ test('Markdown image preview behaviour', async ({page}) => {
   await page.locator('button[data-tab="preview"]').click();
 
   // Check for the image preview via the expected attribute
-  const preview = page.locator('div[data-tab="preview"] p[dir="auto"] a');
-  await expect(preview).toHaveAttribute('href', 'http://localhost:3003/user2/repo1/media/branch/master/assets/logo.svg');
+  // Note: branch master may redirect to a dyn-id- one
+  const preview = page.locator('div[data-tab="preview"] p[dir="auto"]');
+  await expect(preview.locator('a[href^="http://localhost:3003/user2/repo1/media/branch/"]')).toHaveCount(1);
+  await expect(preview.locator('a[href$="/assets/logo.svg"]')).toHaveCount(1);
   await screenshot(page);
 });
 
@@ -111,7 +114,7 @@ test('Markdown indentation via toolbar', async ({page}) => {
   await expect(textarea).toHaveValue(initText);
 });
 
-test('markdown indentation with Tab', async ({page}) => {
+test('Markdown indentation with Tab', async ({page}) => {
   const initText = `* first\n* second\n* third\n* last`;
 
   const response = await page.goto('/user2/repo1/issues/new');
@@ -206,7 +209,7 @@ test('markdown indentation with Tab', async ({page}) => {
   await expect(textarea).toHaveValue(`* first\n* second\n* third\n    * last    `);
 });
 
-test('markdown block quote indentation', async ({page}) => {
+test('Markdown block quote indentation', async ({page}) => {
   const initText = `> first\n> second\n> third\n> last`;
 
   const response = await page.goto('/user2/repo1/issues/new');
@@ -351,147 +354,214 @@ test('Markdown list continuation', async ({page}) => {
   }
 });
 
-test('Markdown insert table', async ({page}) => {
-  async function evaluateTableInsertion(page: Page, selector: string, isEditing: boolean) {
-    const area = page.locator(selector);
+function evaluateModalClosure(type: 'table' | 'link') {
+  const modalSelector = `[data-modal-name="new-markdown-${type}"]`;
+  const buttonSelector = `button[data-md-action="new-${type}"]`;
 
-    let expectedContent = '| Header  | Header  |\n|---------|---------|\n| Content | Content |\n| Content | Content |\n| Content | Content |\n';
+  test.describe('Modal closure', () => {
+    test.beforeEach(async ({page}) => {
+      const area = page.locator('#comment-form');
 
-    if (isEditing) {
-      // Preparations for evaluating comment editing
-      await area.locator('.context-dropdown').click();
-      await area.locator('.context-dropdown .edit-content').click();
-      expectedContent = `good work!${expectedContent}`;
+      const modal = page.locator(modalSelector);
+      await expect(modal).toBeHidden();
+
+      const button = area.locator(buttonSelector);
+      await button.click();
+    });
+
+    test('Esc key', async ({page}) => {
+      const modal = page.locator(modalSelector);
+      await expect(modal).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(modal).toBeHidden();
+    });
+
+    test('Click outside', async ({page}) => {
+      const modal = page.locator(modalSelector);
+      await expect(modal).toBeVisible();
+      // can't select ::backdrop directly, so manually click just outside of the bounding box for the same effect
+      const box = await modal.boundingBox();
+      await page.mouse.click(box.x + 2, box.y + 2); // clicking the modal itself does nothing
+      await expect(modal).toBeVisible();
+      await page.mouse.click(box.x - 1, box.y);
+      await expect(modal).toBeHidden();
+    });
+
+    test('Cancel button', async ({page}) => {
+      const modal = page.locator(modalSelector);
+      await expect(modal).toBeVisible();
+      await modal.getByRole('button', {name: 'Cancel'}).click();
+      await expect(modal).toBeHidden();
+    });
+  });
+}
+
+test.describe('Markdown insert table', () => {
+  test.beforeEach(async ({page}) => {
+    // Load page with editor
+    const response = await page.goto('/user2/repo1/issues/1');
+    expect(response?.status()).toBe(200);
+  });
+
+  evaluateModalClosure('table');
+
+  test('Button is enabled and functional', async ({page}) => {
+    async function evaluateTableInsertion(page: Page, selector: string, isEditing: boolean) {
+      const area = page.locator(selector);
+
+      let expectedContent = '| Header  | Header  |\n|---------|---------|\n| Content | Content |\n| Content | Content |\n| Content | Content |\n';
+
+      if (isEditing) {
+        // Preparations for evaluating comment editing
+        await area.locator('.comment-header-right.actions .dialog-dropdown .opener').click();
+        await area.locator('.comment-header-right.actions .dialog-dropdown dialog .edit-content').click();
+        expectedContent = `good work!${expectedContent}`;
+      }
+
+      const newTableButton = area.locator('button[data-md-action="new-table"]');
+      await newTableButton.click();
+
+      const newTableModal = page.locator('[data-modal-name="new-markdown-table"][open]');
+      await expect(newTableModal).toBeVisible();
+      await screenshot(page);
+
+      const rowsInput = newTableModal.locator('input[name="table-rows"]');
+      const columnsInput = newTableModal.locator('input[name="table-columns"]');
+
+      await expect(rowsInput).toBeEnabled();
+      await expect(columnsInput).toBeEnabled();
+
+      await rowsInput.fill('3');
+      await columnsInput.fill('2');
+
+      await newTableModal.locator('button[data-selector-name="ok-button"]').click();
+
+      await expect(newTableModal).toBeHidden();
+
+      const textarea = area.locator('textarea[name=content]');
+      await expect(textarea).toHaveValue(expectedContent);
+      await screenshot(page);
     }
 
-    const newTableButton = area.locator('button[data-md-action="new-table"]');
-    await newTableButton.click();
-
-    const newTableModal = page.locator('[data-modal-name="new-markdown-table"].active');
-    await expect(newTableModal).toBeVisible();
-    await screenshot(page);
-
-    const rowsInput = newTableModal.locator('input[name="table-rows"]');
-    const columnsInput = newTableModal.locator('input[name="table-columns"]');
-
-    await expect(rowsInput).not.toHaveAttribute('disabled');
-    await expect(columnsInput).not.toHaveAttribute('disabled');
-
-    await rowsInput.fill('3');
-    await columnsInput.fill('2');
-
-    await newTableModal.locator('button[data-selector-name="ok-button"]').click();
-
-    await expect(newTableModal).toBeHidden();
-
-    const textarea = area.locator('textarea[name=content]');
-    await expect(textarea).toHaveValue(expectedContent);
-    await screenshot(page);
-  }
-
-  const response = await page.goto('/user2/repo1/issues/1');
-  expect(response?.status()).toBe(200);
-
-  await expect(async () => {
-    await evaluateTableInsertion(page, '#comment-form', false);
-    await evaluateTableInsertion(page, '#issuecomment-2', true);
-  }).toPass();
+    await expect(async () => {
+      await evaluateTableInsertion(page, '#comment-form', false);
+      await evaluateTableInsertion(page, '#issuecomment-2', true);
+    }).toPass({timeout: 3000});
+  });
 });
 
-test('Markdown insert link', async ({page}) => {
-  async function evaluateLinkInsertion(page: Page, selector: string, isEditing: boolean) {
-    const url = 'https://example.com';
-    const description = 'Where does this lead?';
+test.describe('Markdown insert link', () => {
+  test.beforeEach(async ({page}) => {
+    // Load page with editor
+    const response = await page.goto('/user2/repo1/issues/1');
+    expect(response?.status()).toBe(200);
+  });
 
-    let expectedContent = `[${description}](${url})`;
+  evaluateModalClosure('link');
 
-    const area = page.locator(selector);
+  test('Button is enabled and functional', async ({page}) => {
+    async function evaluateLinkInsertion(page: Page, selector: string, isEditing: boolean) {
+      const url = 'https://example.com';
+      const description = 'Where does this lead?';
 
-    if (isEditing) {
-      // Preparations for evaluating comment editing
-      await area.locator('.context-dropdown').click();
-      await area.locator('.context-dropdown .edit-content').click();
-      expectedContent = `good work!${expectedContent}`;
+      let expectedContent = `[${description}](${url})`;
+
+      const area = page.locator(selector);
+
+      if (isEditing) {
+        // Preparations for evaluating comment editing
+        await area.locator('.comment-header-right.actions .dialog-dropdown .opener').click();
+        await area.locator('.comment-header-right.actions .dialog-dropdown dialog .edit-content').click();
+        expectedContent = `good work!${expectedContent}`;
+      }
+
+      const newLinkButton = area.locator('button[data-md-action="new-link"]');
+      await newLinkButton.click();
+
+      const newLinkModal = page.locator('[data-modal-name="new-markdown-link"][open]');
+      await expect(newLinkModal).toBeVisible();
+      await accessibilityCheck({page}, ['[data-modal-name="new-markdown-link"][open]'], [], []);
+      await screenshot(page);
+
+      const urlInput = newLinkModal.locator('input[name="link-url"]');
+      const descriptionInput = newLinkModal.locator('input[name="link-description"]');
+
+      await expect(urlInput).toBeEnabled();
+      await expect(descriptionInput).toBeEnabled();
+
+      await urlInput.fill(url);
+      await descriptionInput.fill(description);
+
+      await newLinkModal.locator('button[data-selector-name="ok-button"]').click();
+      await expect(newLinkModal).toBeHidden();
+
+      const textarea = area.locator('textarea[name=content]');
+      await expect(textarea).toHaveValue(expectedContent);
+      await screenshot(page);
     }
 
-    const newLinkButton = area.locator('button[data-md-action="new-link"]');
-    await newLinkButton.click();
+    async function evaluateLinkInsertionShortcut(page: Page, selector: string) {
+      const url = 'https://example.com';
+      const description = 'Where does this lead?';
 
-    const newLinkModal = page.locator('[data-modal-name="new-markdown-link"].active');
-    await expect(newLinkModal).toBeVisible();
-    await accessibilityCheck({page}, ['[data-modal-name="new-markdown-link"].active'], [], []);
-    await screenshot(page);
+      const expectedContent = `[${description}](${url})`;
 
-    const urlInput = newLinkModal.locator('input[name="link-url"]');
-    const descriptionInput = newLinkModal.locator('input[name="link-description"]');
+      const area = page.locator(selector);
 
-    await expect(urlInput).not.toHaveAttribute('disabled');
-    await expect(descriptionInput).not.toHaveAttribute('disabled');
+      const textarea = area.locator('textarea[name=content]');
 
-    await urlInput.fill(url);
-    await descriptionInput.fill(description);
+      await textarea.fill(description);
+      await textarea.focus();
+      await textarea.evaluate((it:HTMLTextAreaElement) => it.setSelectionRange(0, it.value.length));
 
-    await newLinkModal.locator('button[data-selector-name="ok-button"]').click();
-    await expect(newLinkModal).toBeHidden();
+      await textarea.press('ControlOrMeta+KeyK');
 
-    const textarea = area.locator('textarea[name=content]');
-    await expect(textarea).toHaveValue(expectedContent);
-    await screenshot(page);
-  }
+      const newLinkModal = page.locator('[data-modal-name="new-markdown-link"][open]');
+      await expect(newLinkModal).toBeVisible();
+      await accessibilityCheck({page}, ['[data-modal-name="new-markdown-link"][open]'], [], []);
+      await screenshot(page);
 
-  async function evaluateLinkInsertionShortcut(page: Page, selector: string) {
-    const url = 'https://example.com';
-    const description = 'Where does this lead?';
+      const urlInput = newLinkModal.locator('input[name="link-url"]');
 
-    const expectedContent = `[${description}](${url})`;
+      await expect(urlInput).toBeEnabled();
 
-    const area = page.locator(selector);
+      await urlInput.fill(url);
 
-    const textarea = area.locator('textarea[name=content]');
+      await newLinkModal.locator('button[data-selector-name="ok-button"]').click();
+      await expect(newLinkModal).toBeHidden();
 
-    await textarea.fill(description);
-    await textarea.focus();
-    await textarea.evaluate((it:HTMLTextAreaElement) => it.setSelectionRange(0, it.value.length));
+      await expect(textarea).toHaveValue(expectedContent);
+      await screenshot(page);
+    }
 
-    await textarea.press('ControlOrMeta+KeyK');
+    const response = await page.goto('/user2/repo1/issues/1');
+    expect(response?.status()).toBe(200);
 
-    const newLinkModal = page.locator('[data-modal-name="new-markdown-link"].active');
-    await expect(newLinkModal).toBeVisible();
-    await accessibilityCheck({page}, ['[data-modal-name="new-markdown-link"].active'], [], []);
-    await screenshot(page);
+    await expect(async () => {
+      await evaluateLinkInsertion(page, '#comment-form', false);
+    }).toPass({timeout: 3000});
 
-    const urlInput = newLinkModal.locator('input[name="link-url"]');
+    await expect(async () => {
+      await evaluateLinkInsertion(page, '#issuecomment-2', true);
+    }).toPass({timeout: 3000});
 
-    await expect(urlInput).not.toHaveAttribute('disabled');
+    await expect(async () => {
+      await evaluateLinkInsertionShortcut(page, '#comment-form');
+    }).toPass({timeout: 3000});
 
-    await urlInput.fill(url);
-
-    await newLinkModal.locator('button[data-selector-name="ok-button"]').click();
-    await expect(newLinkModal).toBeHidden();
-
-    await expect(textarea).toHaveValue(expectedContent);
-    await screenshot(page);
-  }
-
-  const response = await page.goto('/user2/repo1/issues/1');
-  expect(response?.status()).toBe(200);
-
-  await expect(async () => {
-    await evaluateLinkInsertion(page, '#comment-form', false);
-    await evaluateLinkInsertion(page, '#issuecomment-2', true);
-  }).toPass();
-
-  await expect(async () => {
-    await evaluateLinkInsertionShortcut(page, '#comment-form');
-    await evaluateLinkInsertionShortcut(page, '#issuecomment-2');
-  }).toPass();
+    await expect(async () => {
+      await evaluateLinkInsertionShortcut(page, '#issuecomment-2');
+    }).toPass({timeout: 3000});
+  });
 });
 
-test('text expander has higher prio then prefix continuation', async ({page}) => {
+test('Text expander has higher prio then prefix continuation', async ({page}) => {
   const response = await page.goto('/user2/repo1/issues/new');
   expect(response?.status()).toBe(200);
 
   const textarea = page.locator('textarea[name=content]');
+  const suggestionList = page.locator('[data-tab-panel="markdown-writer"] .suggestions');
+
   const initText = `* first`;
   await textarea.fill(initText);
   await textarea.evaluate((it:HTMLTextAreaElement) => it.setSelectionRange(it.value.indexOf('rst'), it.value.indexOf('rst')));
@@ -509,8 +579,38 @@ test('text expander has higher prio then prefix continuation', async ({page}) =>
   await textarea.press('Enter');
   await expect(textarea).toHaveValue(`* first\n* 😸\n* @user2 `);
 
+  // Test issue completion
   await textarea.press('Enter');
-  await expect(textarea).toHaveValue(`* first\n* 😸\n* @user2 \n* `);
+  await textarea.pressSequentially('#issue1');
+  // Because the issue completion is async, we need to wait for it
+  await suggestionList.waitFor();
+  await expect(suggestionList).toBeVisible();
+  await textarea.press('Enter');
+  await expect(textarea).toHaveValue(`* first\n* 😸\n* @user2 \n* #1`);
+
+  // Test pull request completion via '#'
+  await textarea.press('Enter');
+  await textarea.pressSequentially('#pull');
+  await suggestionList.waitFor();
+  await expect(suggestionList).toBeVisible();
+  await textarea.press('Enter');
+  await expect(textarea).toHaveValue(`* first\n* 😸\n* @user2 \n* #1\n* !5`);
+
+  // Test pull request completion via '!'
+  await textarea.press('Enter');
+  await textarea.pressSequentially('!issue');
+  await suggestionList.waitFor();
+  await expect(suggestionList).toBeVisible();
+
+  // Only pull requests should be suggested, not issues
+  await expect(suggestionList.locator('[class*="octicon-issue"]')).toHaveCount(0);
+  await expect(suggestionList.locator('[class*="octicon-git-pull-request"]')).not.toHaveCount(0);
+
+  await textarea.press('Enter');
+  await expect(textarea).toHaveValue(`* first\n* 😸\n* @user2 \n* #1\n* !5\n* !2`);
+
+  await textarea.press('Enter');
+  await expect(textarea).toHaveValue(`* first\n* 😸\n* @user2 \n* #1\n* !5\n* !2\n* `);
 });
 
 test('Combo Markdown: preview mode switch', async ({page}) => {
@@ -557,6 +657,35 @@ test('Combo Markdown: preview mode switch', async ({page}) => {
   await screenshot(page);
 });
 
+test('Issue suggestions', async ({page}) => {
+  const response = await page.goto('/user2/repo1/issues/1');
+  expect(response?.status()).toBe(200);
+
+  const textarea = page.locator('#comment-form textarea[name=content]');
+
+  await textarea.focus();
+  await textarea.pressSequentially('#');
+
+  const suggestionList = page.locator('#comment-form .suggestions');
+  await expect(suggestionList).toBeVisible();
+
+  const expectedSuggestions = [
+    {number: '5', label: 'pull5', iconClass: 'octicon-git-pull-request', colorClass: 'text green'},
+    {number: '4', label: 'issue5', iconClass: 'octicon-issue-closed', colorClass: 'text red'},
+    {number: '3', label: 'issue3', iconClass: 'octicon-git-pull-request', colorClass: 'text green'},
+    {number: '2', label: 'issue2', iconClass: 'octicon-git-pull-request', colorClass: 'text purple'},
+  ];
+
+  for (const {number, label, iconClass, colorClass} of expectedSuggestions) {
+    const item = suggestionList.locator(`li:has-text("${label}")`);
+    await expect(item).toContainText(number);
+    await expect(item).toContainText(label);
+
+    const svg = item.locator(`svg.${iconClass}`);
+    await expect(svg).toHaveClass(new RegExp(`\\b${colorClass.replace(' ', '\\b.*\\b')}\\b`));
+  }
+});
+
 test('Multiple combo markdown: insert table', async ({page}) => {
   const response = await page.goto('/user2/multiple-combo-boxes/issues/new?template=.forgejo%2fissue_template%2fmulti-combo-boxes.yaml');
   expect(response?.status()).toBe(200);
@@ -579,7 +708,7 @@ test('Multiple combo markdown: insert table', async ({page}) => {
   const newTableButtonOne = page.locator('[for="_combo_markdown_editor_0"] button[data-md-action="new-table"]');
   await newTableButtonOne.click();
 
-  const newTableModalOne = page.locator('div[data-markdown-table-modal-id="0"]');
+  const newTableModalOne = page.locator('dialog[data-markdown-table-modal-id="0"]');
   await expect(newTableModalOne).toBeVisible();
 
   await newTableModalOne.locator('input[name="table-rows"]').fill('3');
@@ -601,7 +730,7 @@ test('Multiple combo markdown: insert table', async ({page}) => {
   const newTableButtonTwo = page.locator('[for="_combo_markdown_editor_1"] button[data-md-action="new-table"]');
   await newTableButtonTwo.click();
 
-  const newTableModalTwo = page.locator('div[data-markdown-table-modal-id="1"]');
+  const newTableModalTwo = page.locator('dialog[data-markdown-table-modal-id="1"]');
   await expect(newTableModalTwo).toBeVisible();
 
   await newTableModalTwo.locator('input[name="table-rows"]').fill('2');
@@ -673,4 +802,42 @@ test('Monospace button aria-label', async ({page}) => {
 
   await monospaceButton.click();
   await assertAriaLabel(enabled);
+});
+
+test('Persistent monospace preference across multiple editors', async ({page}) => {
+  // Load page with editor
+  const response = await page.goto('/user2/repo1/issues/1');
+  expect(response?.status()).toBe(200);
+
+  // Toggle monospace preference ON in case it is not
+  const monospaceButton = page.locator('.markdown-switch-monospace').first();
+  const isMonospaceButtonChecked = await monospaceButton.getAttribute('aria-checked') === 'true';
+  if (!isMonospaceButtonChecked) {
+    await monospaceButton.click();
+  }
+
+  // Open a second editor (by clicking "Edit" in the context menu of a message)
+  const openSecondEditor = async () => {
+    const contextMenu = page.locator('.timeline-item .dialog-dropdown:has(.opener[aria-label="Comment menu"]):has(.edit-content)').first();
+    const editButton = contextMenu.locator('dialog').getByText('Edit').first();
+    await contextMenu.click();
+    await editButton.click();
+  };
+  await openSecondEditor();
+
+  // Check if monospaced class is applied to all visible editors
+  const checkMonospacePreferenceAcrossEditors = async () => {
+    const editors = page.locator('.markdown-text-editor');
+    for (const editor of await editors.all()) {
+      await expect(editor).toHaveClass(/tw-font-mono/);
+    }
+  };
+  await checkMonospacePreferenceAcrossEditors();
+
+  // Reloads page to check persitance of monospace preference
+  const response2 = await page.goto('/user2/repo1/issues/1');
+  expect(response2?.status()).toBe(200);
+
+  await openSecondEditor();
+  await checkMonospacePreferenceAcrossEditors();
 });

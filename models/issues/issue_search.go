@@ -17,8 +17,8 @@ import (
 	"forgejo.org/modules/container"
 	"forgejo.org/modules/optional"
 
+	"code.forgejo.org/xorm/xorm"
 	"xorm.io/builder"
-	"xorm.io/xorm"
 )
 
 // IssuesOptions represents options of an issue.
@@ -212,7 +212,19 @@ func applyRepoConditions(sess *xorm.Session, opts *IssuesOptions) {
 		if opts.RepoCond == nil {
 			opts.RepoCond = builder.NewCond()
 		}
-		opts.RepoCond = opts.RepoCond.Or(builder.In("issue.repo_id", builder.Select("id").From("repository").Where(builder.Eq{"is_private": false})))
+
+		subQuery := builder.Select("`repository`.id").From("repository").
+			Where(builder.Eq{"is_private": false})
+		units := []unit.Type{unit.TypeIssues, unit.TypePullRequests}
+		if has, value := opts.IsPull.Get(); has {
+			if value {
+				units = []unit.Type{unit.TypePullRequests}
+			} else {
+				units = []unit.Type{unit.TypeIssues}
+			}
+		}
+		subQuery = repo_model.JoinRepoType(subQuery, units...)
+		opts.RepoCond = opts.RepoCond.Or(builder.In("issue.repo_id", subQuery))
 	}
 	if opts.RepoCond != nil {
 		sess.And(opts.RepoCond)
@@ -315,11 +327,13 @@ func teamUnitsRepoCond(id string, userID, orgID, teamID int64, units ...unit.Typ
 								builder.Eq{
 									"org_id":     orgID,
 									"lower_name": strings.ToLower(organization.OwnerTeamName),
-								}),
+								},
+							),
 							"uid": userID,
 						}),
 					),
-				)).And(
+				),
+			).And(
 				builder.In(
 					"team_id", builder.Select("team_id").From("team_unit").Where(
 						builder.Eq{
@@ -350,7 +364,8 @@ func issuePullAccessibleRepoCond(repoIDstr string, userID int64, org *organizati
 					repo_model.UserOrgPublicUnitRepoCond(userID, org.ID),                // user org public non-member repos, TODO: check repo has issues
 					builder.And(
 						builder.In("issue.repo_id", builder.Select("id").From("repository").Where(builder.Eq{"owner_id": org.ID})),
-						repo_model.UserAccessRepoCond(repoIDstr, userID)), // user can access org repo in a unit independent way
+						repo_model.UserAccessRepoCond(repoIDstr, userID),
+					), // user can access org repo in a unit independent way
 				),
 			)
 		}
@@ -463,7 +478,7 @@ func applySubscribedCondition(sess *xorm.Session, subscriberID int64) {
 				Select("repo_id").
 				From("watch").
 				Where(builder.And(builder.Eq{"user_id": subscriberID},
-					builder.In("mode", repo_model.WatchModeNormal, repo_model.WatchModeAuto))),
+					builder.Eq{"`watch`.watch_selection_issues": true})),
 			),
 		),
 	)

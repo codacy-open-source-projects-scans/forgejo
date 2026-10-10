@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"forgejo.org/models/forgefed"
@@ -111,10 +112,20 @@ func SendLikeActivities(ctx context.Context, doer user.User, repoID int64) error
 		return err
 	}
 
+	if len(followingRepos) == 0 {
+		return nil
+	}
+
 	likeActivityList := make([]fm.ForgeLike, 0)
+	var hosts []*url.URL
 	for _, followingRepo := range followingRepos {
 		log.Trace("Found following repo: %#v", followingRepo)
 		target := followingRepo.URI
+		hostURL, err := url.Parse(target)
+		if err != nil {
+			return fmt.Errorf("invalid repository URL: %w", err)
+		}
+		hosts = append(hosts, hostURL)
 		likeActivity, err := fm.NewForgeLike(doer.APActorID(), target, time.Now())
 		if err != nil {
 			return err
@@ -126,7 +137,7 @@ func SendLikeActivities(ctx context.Context, doer user.User, repoID int64) error
 	if err != nil {
 		return err
 	}
-	apclient, err := apclientFactory.WithKeys(ctx, &doer, doer.APActorID()+"#main-key")
+	apclient, err := apclientFactory.WithKeys(ctx, &doer, doer.APActorID()+"#main-key", hosts)
 	if err != nil {
 		return err
 	}

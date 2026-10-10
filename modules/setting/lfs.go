@@ -71,21 +71,21 @@ func loadLFSFrom(rootCfg ConfigProvider) error {
 		LFSClient.BatchOperationConcurrency = 8
 	}
 
-	LFS.HTTPAuthExpiry = sec.Key("LFS_HTTP_AUTH_EXPIRY").MustDuration(24 * time.Hour)
+	LFS.HTTPAuthExpiry, err = sec.Key("LFS_HTTP_AUTH_EXPIRY").MustDuration(24 * time.Hour)
+	if err != nil {
+		return fmt.Errorf("failed to parse duration for [server].LFS_HTTP_AUTH_EXPIRY: %w", err)
+	}
 
 	if !LFS.StartServer || !InstallLock {
 		return nil
 	}
 
-	// TODO: #11024 check nil because settings loaded twice
-	if LFS.SigningKey == nil {
-		keyCfg, err := loadKeyCfg(rootCfg, "server", "LFS_JWT_", "HS256", "lfs/private.pem")
-		if err == nil {
-			LFS.SigningKey, err = jwtx.InitSigningKey(&keyCfg.Signing)
-		}
-		if err != nil {
-			return fmt.Errorf("lfs key initialization failed: %v", err)
-		}
+	keyCfg, err := loadKeyCfg(rootCfg, "server", "LFS_JWT_", "HS256", "lfs/private.pem")
+	if err == nil {
+		LFS.SigningKey, err = jwtx.InitSigningKey(&keyCfg.Signing)
+	}
+	if err != nil {
+		return fmt.Errorf("lfs key initialization failed: %v", err)
 	}
 
 	return nil

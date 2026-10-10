@@ -48,8 +48,10 @@ async function assertCopy(page: Page, startWith: string) {
   const copyLink = preview.locator('.octicon-copy').locator('..');
   await copyLink.click();
 
-  const clipboardContent = await page.evaluate(() => navigator.clipboard.readText());
-  expect(clipboardContent).toContain(startWith);
+  await expect(async () => {
+    const clipboardContent = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboardContent).toContain(startWith);
+  }).toPass();
 }
 
 test('Paste image in new comment', async ({page}) => {
@@ -85,11 +87,11 @@ test('Re-add images to dropzone on edit', async ({page}) => {
   await page.getByRole('button', {name: 'Create issue'}).click();
 
   await expect(page).toHaveURL(/\/user2\/repo1\/issues\/\d+$/);
-  await page.click('.comment-container .context-menu');
+  await page.click('.comment-container .dialog-dropdown .opener');
   const waitForAttachmentsLoad = page.waitForResponse((response) => {
     return response.request().method() === 'GET' && response.url().endsWith('/attachments');
   });
-  await page.click('.comment-container .menu > .edit-content');
+  await page.click('.comment-container .dialog-dropdown dialog .edit-content');
   await waitForAttachmentsLoad;
 
   const dropzone = page.locator('.dropzone');

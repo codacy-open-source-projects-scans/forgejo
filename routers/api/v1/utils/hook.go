@@ -129,7 +129,7 @@ func AddOwnerHook(ctx *context.APIContext, owner *user_model.User, form *api.Cre
 
 // AddRepoHook add a hook to a repo. Writes to `ctx` accordingly
 func AddRepoHook(ctx *context.APIContext, form *api.CreateHookOption) {
-	repo := ctx.Repo
+	repo := ctx.Repo()
 	hook, ok := addHook(ctx, form, 0, repo.Repository.ID)
 	if !ok {
 		return
@@ -212,8 +212,21 @@ func addHook(ctx *context.APIContext, form *api.CreateHookOption, ownerID, repoI
 				Release:                  util.SliceContainsString(form.Events, string(webhook_module.HookEventRelease), true),
 				Package:                  util.SliceContainsString(form.Events, string(webhook_module.HookEventPackage), true),
 				ActionRunFailure:         util.SliceContainsString(form.Events, string(webhook_module.HookEventActionRunFailure), true),
-				ActionRunRecover:         util.SliceContainsString(form.Events, string(webhook_module.HookEventActionRunRecover), true),
 				ActionRunSuccess:         util.SliceContainsString(form.Events, string(webhook_module.HookEventActionRunSuccess), true),
+				WorkflowRunBlocked:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunBlocked), true),
+				WorkflowRunCancelled:     util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunCancelled), true),
+				WorkflowRunFailure:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunFailure), true),
+				WorkflowRunRunning:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunRunning), true),
+				WorkflowRunSkipped:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunSkipped), true),
+				WorkflowRunSuccess:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunSuccess), true),
+				WorkflowRunWaiting:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowRunWaiting), true),
+				WorkflowJobBlocked:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobBlocked), true),
+				WorkflowJobCancelled:     util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobCancelled), true),
+				WorkflowJobFailure:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobFailure), true),
+				WorkflowJobRunning:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobRunning), true),
+				WorkflowJobSkipped:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobSkipped), true),
+				WorkflowJobSuccess:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobSuccess), true),
+				WorkflowJobWaiting:       util.SliceContainsString(form.Events, string(webhook_module.HookEventWorkflowJobWaiting), true),
 			},
 			BranchFilter: form.BranchFilter,
 		},
@@ -304,7 +317,7 @@ func EditOwnerHook(ctx *context.APIContext, owner *user_model.User, form *api.Ed
 
 // EditRepoHook edit webhook `w` according to `form`. Writes to `ctx` accordingly
 func EditRepoHook(ctx *context.APIContext, form *api.EditHookOption, hookID int64) {
-	repo := ctx.Repo
+	repo := ctx.Repo()
 	hook, err := GetRepoHook(ctx, repo.Repository.ID, hookID)
 	if err != nil {
 		return

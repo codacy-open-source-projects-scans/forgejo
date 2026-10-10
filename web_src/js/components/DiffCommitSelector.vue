@@ -1,6 +1,6 @@
 <script>
-import {SvgIcon} from '../svg.js';
-import {GET} from '../modules/fetch.js';
+import {SvgIcon} from '../svg.ts';
+import {GET} from '../modules/fetch.ts';
 
 export default {
   components: {SvgIcon},
@@ -275,7 +275,7 @@ export default {
   }
 
   #diff-commit-selector-menu {
-    overflow-x: hidden;
+    overflow-inline: hidden;
     max-height: 450px;
   }
 

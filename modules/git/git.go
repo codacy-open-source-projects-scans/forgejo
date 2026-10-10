@@ -111,15 +111,7 @@ func VersionInfo() string {
 	if GitVersion == nil {
 		return "(git not found)"
 	}
-	format := "%s"
-	args := []any{GitVersion.Original()}
-	// Since git wire protocol has been released from git v2.18
-	if setting.Git.EnableAutoGitWireProtocol {
-		format += ", Wire Protocol %s Enabled"
-		args = append(args, "Version 2") // for focus color
-	}
-
-	return fmt.Sprintf(format, args...)
+	return GitVersion.Original()
 }
 
 func checkInit() error {
@@ -173,10 +165,6 @@ func InitFull(ctx context.Context) (err error) {
 		_ = os.Setenv("GNUPGHOME", filepath.Join(HomeDir(), ".gnupg"))
 	}
 
-	if setting.Git.EnableAutoGitWireProtocol {
-		globalCommandArgs = append(globalCommandArgs, "-c", "protocol.version=2")
-	}
-
 	// Explicitly disable credential helper, otherwise Git credentials might leak
 	globalCommandArgs = append(globalCommandArgs, "-c", "credential.helper=")
 
@@ -203,7 +191,7 @@ func InitFull(ctx context.Context) (err error) {
 
 	err = InitDelegateHooks(HomeDir())
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return syncGitConfig()
@@ -224,11 +212,10 @@ func syncGitConfig() (err error) {
 	}
 
 	// Git requires setting user.name and user.email in order to commit changes - old comment: "if they're not set just add some defaults"
-	// TODO: need to confirm whether users really need to change these values manually. It seems that these values are dummy only and not really used.
-	// If these values are not really used, then they can be set (overwritten) directly without considering about existence.
+	// They're used in a few uncommon places, such as when creating a release and tag via the web interface.
 	for configKey, defaultValue := range map[string]string{
-		"user.name":  "Gitea",
-		"user.email": "gitea@fake.local",
+		"user.name":  "Forgejo",
+		"user.email": "forgejo@fake.local",
 	} {
 		if err := configSetNonExist(configKey, defaultValue); err != nil {
 			return err
@@ -260,6 +247,9 @@ func syncGitConfig() (err error) {
 
 	// set support for AGit flow
 	if err := configAddNonExist("receive.procReceiveRefs", "refs/for"); err != nil {
+		return err
+	}
+	if err := configAddNonExist("receive.procReceiveRefs", "refs/pull/"); err != nil {
 		return err
 	}
 
@@ -315,7 +305,8 @@ func syncGitConfig() (err error) {
 		}
 	}
 
-	if err = configSet("receive.hideRefs", "refs/pull/"); err != nil {
+	// refs/pull/ were previously hidden
+	if err = configSet("receive.hideRefs", ""); err != nil {
 		return err
 	}
 

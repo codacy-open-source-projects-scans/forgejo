@@ -16,10 +16,10 @@ import (
 	unit_model "forgejo.org/models/unit"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
-	"forgejo.org/modules/optional"
 	api "forgejo.org/modules/structs"
 	repo_service "forgejo.org/services/repository"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,6 +87,52 @@ func TestAPIGetWikiPage(t *testing.T) {
 		},
 		ContentBase64: base64.RawStdEncoding.EncodeToString(
 			[]byte("# Home page\n\nThis is the home page!\n"),
+		),
+		CommitCount: 1,
+		Sidebar:     "",
+		Footer:      "",
+	}, page)
+}
+
+func TestAPIGetWikiPageUnescapedFilename(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	username := "user2"
+	// The page has unescaped special chars on the filesystem, we should still be
+	// able to fetch it.
+	urlStr := fmt.Sprintf("/api/v1/repos/%s/%s/wiki/page/Page-With-Unescaped-Special-Chars%%3A-%%281%%29", username, "repo1")
+
+	req := NewRequest(t, "GET", urlStr)
+	resp := MakeRequest(t, req, http.StatusOK)
+	var page *api.WikiPage
+	DecodeJSON(t, resp, &page)
+
+	assert.Equal(t, &api.WikiPage{
+		WikiPageMetaData: &api.WikiPageMetaData{
+			Title:   "Page With Unescaped Special Chars: (1)",
+			HTMLURL: page.HTMLURL,
+			SubURL:  "Page-With-Unescaped-Special-Chars%3A-%281%29",
+			LastCommit: &api.WikiCommit{
+				ID: "914af66433c9f4d1f7ae5159211869ed05277bf0",
+				Author: &api.CommitUser{
+					Identity: api.Identity{
+						Name:  "B Tasker",
+						Email: "github@bentasker.co.uk",
+					},
+					Date: "2026-08-04T06:17:17Z",
+				},
+				Committer: &api.CommitUser{
+					Identity: api.Identity{
+						Name:  "B Tasker",
+						Email: "github@bentasker.co.uk",
+					},
+					Date: "2026-08-04T07:00:48Z",
+				},
+				Message: "add page with unescaped special chars in filename\n",
+			},
+		},
+		ContentBase64: base64.StdEncoding.EncodeToString(
+			[]byte("# Page With Unescaped Special Chars: (1)\n\nThis is a page with unescaped special chars in the name - it should still be loadable\n"),
 		),
 		CommitCount: 1,
 		Sidebar:     "",
@@ -201,8 +247,31 @@ func TestAPIListWikiPages(t *testing.T) {
 			},
 		},
 		{
-			Title:   "Unescaped File",
+			Title:   "Page With Unescaped Special Chars: (1)",
 			HTMLURL: meta[4].HTMLURL,
+			SubURL:  "Page-With-Unescaped-Special-Chars%3A-%281%29",
+			LastCommit: &api.WikiCommit{
+				ID: "914af66433c9f4d1f7ae5159211869ed05277bf0",
+				Author: &api.CommitUser{
+					Identity: api.Identity{
+						Name:  "B Tasker",
+						Email: "github@bentasker.co.uk",
+					},
+					Date: "2026-08-04T06:17:17Z",
+				},
+				Committer: &api.CommitUser{
+					Identity: api.Identity{
+						Name:  "B Tasker",
+						Email: "github@bentasker.co.uk",
+					},
+					Date: "2026-08-04T07:00:48Z",
+				},
+				Message: "add page with unescaped special chars in filename\n",
+			},
+		},
+		{
+			Title:   "Unescaped File",
+			HTMLURL: meta[5].HTMLURL,
 			SubURL:  "Unescaped-File",
 			LastCommit: &api.WikiCommit{
 				ID: "0dca5bd9b5d7ef937710e056f575e86c0184ba85",
@@ -221,29 +290,6 @@ func TestAPIListWikiPages(t *testing.T) {
 					Date: "2021-07-19T16:42:46Z",
 				},
 				Message: "add unescaped file\n",
-			},
-		},
-		{
-			Title:   "XSS",
-			HTMLURL: meta[5].HTMLURL,
-			SubURL:  "XSS",
-			LastCommit: &api.WikiCommit{
-				ID: "f54f5a6b7c4f83b606600e43186165854f189530",
-				Author: &api.CommitUser{
-					Identity: api.Identity{
-						Name:  "Gusted<script class=\"evil\">alert('Oh no!');</script>",
-						Email: "valid@example.org",
-					},
-					Date: "2024-01-31T00:00:00Z",
-				},
-				Committer: &api.CommitUser{
-					Identity: api.Identity{
-						Name:  "Gusted<script class=\"evil\">alert('Oh no!');</script>",
-						Email: "valid@example.org",
-					},
-					Date: "2024-01-31T00:00:00Z",
-				},
-				Message: "Yay XSS",
 			},
 		},
 	}
@@ -342,11 +388,7 @@ func TestAPISetWikiGlobalEditability(t *testing.T) {
 	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
 
 	// Create a new repository for testing purposes
-	repo, _, f := tests.CreateDeclarativeRepo(t, user, "", []unit_model.Type{
-		unit_model.TypeCode,
-		unit_model.TypeWiki,
-	}, nil, nil)
-	defer f()
+	repo := forgery.CreateRepository(t, user, nil)
 	urlStr := fmt.Sprintf("/api/v1/repos/%s", repo.FullName())
 
 	assertGlobalEditability := func(t *testing.T, editability bool) {
@@ -433,11 +475,8 @@ func TestAPIListPageRevisions(t *testing.T) {
 
 func TestAPIWikiNonMasterBranch(t *testing.T) {
 	onApplicationRun(t, func(t *testing.T, _ *url.URL) {
-		user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
-		repo, _, f := tests.CreateDeclarativeRepoWithOptions(t, user, tests.DeclarativeRepoOptions{
-			WikiBranch: optional.Some("main"),
-		})
-		defer f()
+		repo := forgery.CreateRepository(t, nil, nil)
+		forgery.InitWiki(t, repo, "main")
 
 		uris := []string{
 			"revisions/Home",

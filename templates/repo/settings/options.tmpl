@@ -9,7 +9,7 @@
 				<input type="hidden" name="action" value="update">
 				<div class="required field {{if .Err_RepoName}}error{{end}}">
 					<label>{{ctx.Locale.Tr "repo.repo_name"}}</label>
-					<input name="repo_name" value="{{.Repository.Name}}" data-repo-name="{{.Repository.Name}}" autofocus required>
+					<input name="repo_name" value="{{.Repository.Name}}" data-repo-name="{{.Repository.Name}}" required autocorrect="off" autocapitalize="none" spellcheck="false">
 				</div>
 				<div class="inline field">
 					<label>{{ctx.Locale.Tr "repo.repo_size"}}</label>
@@ -42,7 +42,8 @@
 				</div>
 				<div class="field {{if .Err_Website}}error{{end}}">
 					<label for="website">{{ctx.Locale.Tr "repo.settings.site"}}</label>
-					<input id="website" name="website" type="url" maxlength="1024" value="{{.Repository.Website}}">
+					<input id="website" name="website" type="url" maxlength="1024" pattern="{{.ValidSiteURLPattern}}" value="{{.Repository.Website}}">
+					<span class="help">{{ctx.Locale.Tr "form.website.valid_url_schemes" (StringUtils.Join .ValidSiteURLSchemes ", ")}}</span>
 				</div>
 				<div class="field">
 					<button class="ui primary button">{{ctx.Locale.Tr "repo.settings.update_settings"}}</button>
@@ -52,9 +53,9 @@
 			<div class="divider"></div>
 			<form class="ui form" action="{{.Link}}/avatar" method="post" enctype="multipart/form-data">
 				<div class="inline field">
-					<label for="avatar">{{ctx.Locale.Tr "settings.choose_new_avatar"}}</label>
-					<input name="avatar" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
-					<br/><span class=help>{{ctx.Locale.Tr "avatar.constraints_hint" (ctx.Locale.TrSize .MaxAvatarFileSize) .MaxAvatarWidth .MaxAvatarHeight}}</span>
+					<label for="new-avatar">{{ctx.Locale.Tr "settings.choose_new_avatar"}}</label>
+					<input id="new-avatar" name="avatar" aria-describedby="new-avatar-description" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+					<br/><span id="new-avatar-description" class=help>{{ctx.Locale.Tr "avatar.constraints_hint" (ctx.Locale.TrSize .MaxAvatarFileSize) .MaxAvatarWidth .MaxAvatarHeight}}</span>
 				</div>
 				<div class="field button-sequence">
 					<button class="primary button">{{ctx.Locale.Tr "settings.update_avatar"}}</button>
@@ -97,7 +98,7 @@
 
 		{{if $showMirrorSettings}}
 			<h4 class="ui top attached header">
-				{{ctx.Locale.Tr "repo.settings.mirror_settings"}}
+				{{ctx.Locale.Tr "mirror_settings.header"}}
 			</h4>
 			<div class="ui attached segment">
 				{{if .Repository.IsArchived}}
@@ -106,34 +107,34 @@
 					</div>
 				{{else}}
 					{{if $newMirrorsEntirelyEnabled}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs"}}
-						<a target="_blank" rel="noopener noreferrer" href="https://forgejo.org/docs/latest/user/repo-mirror#pushing-to-a-remote-repository">{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.doc_link_title"}}</a><br><br>
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.pull_mirror_instructions"}}
-						<a target="_blank" rel="noopener noreferrer" href="https://forgejo.org/docs/latest/user/repo-mirror#pulling-from-a-remote-repository">{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.doc_link_pull_section"}}</a><br>
+						{{ctx.Locale.Tr "mirror_settings.docs.summary"}}
+						<a target="_blank" rel="noopener noreferrer" href="{{AppDocsURL "user/repo-mirror/#pushing-to-a-remote-repository"}}">{{ctx.Locale.Tr "mirror_settings.docs.doc_link_title"}}</a><br><br>
+						{{ctx.Locale.Tr "mirror_settings.docs.pull_mirror_instructions"}}
+						<a target="_blank" rel="noopener noreferrer" href="{{AppDocsURL "user/repo-mirror/#pulling-from-a-remote-repository"}}">{{ctx.Locale.Tr "mirror_settings.docs.doc_link_pull_section"}}</a><br>
 					{{else if $onlyNewPushMirrorsEnabled}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.disabled_pull_mirror.instructions"}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.more_information_if_disabled"}}
-						<a target="_blank" rel="noopener noreferrer" href="https://forgejo.org/docs/latest/user/repo-mirror#pulling-from-a-remote-repository">{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.doc_link_title"}}</a><br>
+						{{ctx.Locale.Tr "mirror_settings.docs.disabled_pull_mirror.instructions"}}
+						{{ctx.Locale.Tr "mirror_settings.docs.more_information_if_disabled"}}
+						<a target="_blank" rel="noopener noreferrer" href="{{AppDocsURL "user/repo-mirror/#pulling-from-a-remote-repository"}}">{{ctx.Locale.Tr "mirror_settings.docs.doc_link_title"}}</a><br>
 					{{else if $onlyNewPullMirrorsEnabled}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.disabled_push_mirror.instructions"}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.disabled_push_mirror.pull_mirror_warning"}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.more_information_if_disabled"}}
-						<a target="_blank" rel="noopener noreferrer" href="https://forgejo.org/docs/latest/user/repo-mirror#pulling-from-a-remote-repository">{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.doc_link_title"}}</a><br><br>
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.disabled_push_mirror.info"}}
+						{{ctx.Locale.Tr "mirror_settings.docs.disabled_push_mirror.instructions"}}
+						{{ctx.Locale.Tr "mirror_settings.docs.disabled_push_mirror.pull_mirror_warning"}}
+						{{ctx.Locale.Tr "mirror_settings.docs.more_information_if_disabled"}}
+						<a target="_blank" rel="noopener noreferrer" href="{{AppDocsURL "user/repo-mirror/#pulling-from-a-remote-repository"}}">{{ctx.Locale.Tr "mirror_settings.docs.doc_link_title"}}</a><br><br>
+						{{ctx.Locale.Tr "mirror_settings.docs.disabled_push_mirror.info"}}
 						{{if $existingPushMirror}}
-							{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.can_still_use"}}
+							{{ctx.Locale.Tr "mirror_settings.docs.can_still_use"}}
 						{{end}}
 					{{else}}
-						{{ctx.Locale.Tr "repo.settings.mirror_settings.docs.no_new_mirrors"}} {{ctx.Locale.Tr "repo.settings.mirror_settings.docs.can_still_use"}}<br>
+						{{ctx.Locale.Tr "mirror_settings.docs.no_new_mirrors"}} {{ctx.Locale.Tr "mirror_settings.docs.can_still_use"}}<br>
 					{{end}}
 
 					{{if .Repository.IsMirror}}
 					<table class="ui table">
 						<thead>
 							<tr>
-								<th class="tw-w-2/5">{{ctx.Locale.Tr "repo.settings.mirror_settings.mirrored_repository"}}</th>
-								<th>{{ctx.Locale.Tr "repo.settings.mirror_settings.direction"}}</th>
-								<th>{{ctx.Locale.Tr "repo.settings.mirror_settings.last_update"}}</th>
+								<th class="tw-w-2/5">{{ctx.Locale.Tr "mirror_settings.mirrored_repository"}}</th>
+								<th>{{ctx.Locale.Tr "mirror_settings.direction.header"}}</th>
+								<th>{{ctx.Locale.Tr "mirror_settings.last_update"}}</th>
 								<th>{{ctx.Locale.Tr "repo.mirror_public_key"}}</th>
 								<th></th>
 							</tr>
@@ -143,7 +144,7 @@
 							<tbody>
 								<tr>
 									<td colspan="4">
-										<div class="text red tw-py-4">{{ctx.Locale.Tr "repo.settings.mirror_settings.direction.pull"}}: {{ctx.Locale.Tr "error.occurred"}}</div>
+										<div class="text red tw-py-4">{{ctx.Locale.Tr "mirror_settings.direction.pull"}}: {{ctx.Locale.Tr "error.occurred"}}</div>
 									</td>
 								</tr>
 							</tbody>
@@ -152,7 +153,7 @@
 						<tbody>
 							<tr>
 								<td>{{$address.Address}}</td>
-								<td>{{ctx.Locale.Tr "repo.settings.mirror_settings.direction.pull"}}</td>
+								<td>{{ctx.Locale.Tr "mirror_settings.direction.pull"}}</td>
 								<td>{{DateUtils.FullTime .PullMirror.UpdatedUnix}}</td>
 								<td class="right aligned">
 									<form method="post" class="tw-inline-block">
@@ -227,9 +228,9 @@
 					<table class="ui table">
 						<thead>
 							<tr>
-								<th class="tw-w-2/5">{{ctx.Locale.Tr "repo.settings.mirror_settings.pushed_repository"}}</th>
-								<th>{{ctx.Locale.Tr "repo.settings.mirror_settings.direction"}}</th>
-								<th>{{ctx.Locale.Tr "repo.settings.mirror_settings.last_update"}}</th>
+								<th class="tw-w-2/5">{{ctx.Locale.Tr "mirror_settings.pushed_repository"}}</th>
+								<th>{{ctx.Locale.Tr "mirror_settings.direction.header"}}</th>
+								<th>{{ctx.Locale.Tr "mirror_settings.last_update"}}</th>
 								<th>{{ctx.Locale.Tr "repo.mirror_public_key"}}</th>
 								<th></th>
 							</tr>
@@ -238,14 +239,14 @@
 							{{range .PushMirrors}}
 							<tr>
 								<td class="tw-break-anywhere">{{.RemoteAddress}}</td>
-								<td>{{ctx.Locale.Tr "repo.settings.mirror_settings.direction.push"}}</td>
+								<td>{{ctx.Locale.Tr "mirror_settings.direction.push"}}</td>
 								<td>{{if .LastUpdateUnix}}{{DateUtils.FullTime .LastUpdateUnix}}{{else}}{{ctx.Locale.Tr "never"}}{{end}} {{if .LastError}}<div class="ui red label" data-tooltip-content="{{.LastError}}">{{ctx.Locale.Tr "error"}}</div>{{end}}</td>
-								<td>{{if not (eq (len .GetPublicKey) 0)}}<a data-clipboard-text="{{.GetPublicKey}}">{{ctx.Locale.Tr "repo.settings.mirror_settings.push_mirror.copy_public_key"}}</a>{{else}}{{ctx.Locale.Tr "repo.settings.mirror_settings.push_mirror.none_ssh"}}{{end}}</td>
+								<td>{{if not (eq (len .GetPublicKey) 0)}}<a data-clipboard-text="{{.GetPublicKey}}">{{ctx.Locale.Tr "mirror_settings.push_mirror.copy_public_key"}}</a>{{else}}{{ctx.Locale.Tr "mirror_settings.push_mirror.none_ssh"}}{{end}}</td>
 								<td class="right aligned">
 									<button
 										class="ui tiny button show-modal"
 										data-modal="#push-mirror-edit-modal"
-										data-tooltip-content="{{ctx.Locale.Tr "repo.settings.mirror_settings.push_mirror.edit_sync_time"}}"
+										data-tooltip-content="{{ctx.Locale.Tr "mirror_settings.push_mirror.edit_sync_time"}}"
 										data-modal-push-mirror-edit-id="{{.ID}}"
 										data-modal-push-mirror-edit-interval="{{.Interval}}"
 										data-modal-push-mirror-edit-address="{{.RemoteAddress}}"
@@ -267,7 +268,7 @@
 							</tr>
 							{{else}}
 							<tr>
-								<td>{{ctx.Locale.Tr "repo.settings.mirror_settings.push_mirror.none"}}</td>
+								<td>{{ctx.Locale.Tr "mirror_settings.push_mirror.none"}}</td>
 							</tr>
 							{{end}}
 							{{if (not .DisableNewPushMirrors)}}
@@ -277,14 +278,14 @@
 											{{template "base/disable_form_autofill"}}
 											<input type="hidden" name="action" value="push-mirror-add">
 											<div class="field {{if .Err_PushMirrorAddress}}error{{end}}">
-												<label for="push_mirror_address">{{ctx.Locale.Tr "repo.settings.mirror_settings.push_mirror.remote_url"}}</label>
+												<label for="push_mirror_address">{{ctx.Locale.Tr "mirror_settings.push_mirror.remote_url"}}</label>
 												<input id="push_mirror_address" name="push_mirror_address" value="{{.push_mirror_address}}" required>
 												<p class="help">{{ctx.Locale.Tr "repo.mirror_address_desc"}}</p>
 											</div>
 											<div class="field {{if .Err_PushMirrorBranchFilter}}error{{end}}">
 												<label for="push_mirror_branch_filter">{{ctx.Locale.Tr "repo.settings.push_mirror.branch_filter.label"}}</label>
 												<input id="push_mirror_branch_filter" name="push_mirror_branch_filter" value="{{.push_mirror_branch_filter}}" maxlength="2048">
-												<p class="help">{{ctx.Locale.Tr "repo.settings.push_mirror.branch_filter.description" "https://forgejo.org/docs/latest/user/repo-mirror/#branch-filter" "Forgejo"}}</p>
+												<p class="help">{{ctx.Locale.Tr "repo.settings.push_mirror.branch_filter.description" (AppDocsURL "user/repo-mirror/#branch-filter") "Forgejo"}}</p>
 											</div>
 											<details class="ui optional field" {{if or .Err_PushMirrorAuth .push_mirror_username}}open{{end}}>
 												<summary class="tw-p-1">
@@ -321,7 +322,7 @@
 												<input id="push_mirror_interval" name="push_mirror_interval" value="{{if .push_mirror_interval}}{{.push_mirror_interval}}{{else}}{{.DefaultMirrorInterval}}{{end}}">
 											</div>
 											<div class="field">
-												<button class="ui primary button">{{ctx.Locale.Tr "repo.settings.mirror_settings.push_mirror.add"}}</button>
+												<button class="ui primary button">{{ctx.Locale.Tr "mirror_settings.push_mirror.add"}}</button>
 											</div>
 										</form>
 									</td>
@@ -559,46 +560,80 @@
 
 {{if .Permission.IsOwner}}
 	{{if .Repository.IsMirror}}
-		<div class="ui small modal" id="convert-mirror-repo-modal">
-			<div class="header">
-				{{ctx.Locale.Tr "repo.settings.convert"}}
-			</div>
-			<div class="content">
-				<div class="ui warning message">
-					{{ctx.Locale.Tr "repo.settings.convert_notices_1"}}
+		<dialog class="modal" id="convert-mirror-repo-modal">
+			<article>
+				<header>{{ctx.Locale.Tr "repo.settings.convert"}}</header>
+				<div class="content">
+					<div class="ui warning message">
+						{{ctx.Locale.Tr "repo.settings.convert_notices_1"}}
+					</div>
 				</div>
 				<form class="ui form" action="{{.Link}}" method="post">
-					<input type="hidden" name="action" value="convert">
-					<div class="field">
-						<label>
-							{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
-							<span class="text red">{{.Repository.FullName}}</span>
-						</label>
+					<div class="content">
+						<input type="hidden" name="action" value="convert">
+						<div class="field">
+							<label>
+								{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
+								<span class="text red">{{.Repository.FullName}}</span>
+							</label>
+						</div>
+						<div class="required field">
+							<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
+							<input name="repo_name" required maxlength="100" autocorrect="off" autocapitalize="none" spellcheck="false">
+						</div>
 					</div>
-					<div class="required field">
-						<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
-						<input name="repo_name" required maxlength="100">
-					</div>
-
-					<div class="text right actions">
-						<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-						<button class="ui red button">{{ctx.Locale.Tr "repo.settings.convert_confirm"}}</button>
+					<div class="actions">
+						<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+						<button type="submit" class="ui red button">{{ctx.Locale.Tr "repo.settings.convert_confirm"}}</button>
 					</div>
 				</form>
-			</div>
-		</div>
+			</article>
+		</dialog>
 	{{end}}
 	{{if and .Repository.IsFork .Repository.Owner.CanCreateRepo}}
-		<div class="ui small modal" id="convert-fork-repo-modal">
-			<div class="header">
-				{{ctx.Locale.Tr "repo.settings.convert_fork"}}
-			</div>
-			<div class="content">
-				<div class="ui warning message">
-					{{ctx.Locale.Tr "repo.settings.convert_fork_notices_1"}}
+		<dialog class="modal" id="convert-fork-repo-modal">
+			<article>
+				<header>{{ctx.Locale.Tr "repo.settings.convert_fork"}}</header>
+				<div class="content">
+					<div class="ui warning message">
+						{{ctx.Locale.Tr "repo.settings.convert_fork_notices_1"}}
+					</div>
 				</div>
 				<form class="ui form" action="{{.Link}}" method="post">
-					<input type="hidden" name="action" value="convert_fork">
+					<div class="content">
+						<input type="hidden" name="action" value="convert_fork">
+						<div class="field">
+							<label>
+								{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
+								<span class="text red">{{.Repository.FullName}}</span>
+							</label>
+						</div>
+						<div class="required field">
+							<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
+							<input name="repo_name" required autocorrect="off" autocapitalize="none" spellcheck="false">
+						</div>
+					</div>
+					<div class="actions">
+						<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+						<button type="submit" class="ui red button">{{ctx.Locale.Tr "repo.settings.convert_fork_confirm"}}</button>
+					</div>
+				</form>
+			</article>
+		</dialog>
+	{{end}}
+	<dialog class="modal" id="transfer-repo-modal">
+		<article>
+			<header>{{ctx.Locale.Tr "repo.settings.transfer.modal.title"}}</header>
+			<div class="content">
+				<div class="ui warning message">
+					{{ctx.Locale.Tr "repo.settings.transfer_notices_1"}} <br>
+					{{ctx.Locale.Tr "repo.settings.transfer_notices_2"}} <br>
+					{{ctx.Locale.Tr "repo.settings.transfer_notices_3"}}
+				</div>
+			</div>
+			<form class="ui form" action="{{.Link}}" method="post">
+				<div class="content">
+					<input type="hidden" name="action" value="transfer">
 					<div class="field">
 						<label>
 							{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
@@ -607,129 +642,68 @@
 					</div>
 					<div class="required field">
 						<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
-						<input name="repo_name" required>
+						<input name="repo_name" required autocorrect="off" autocapitalize="none" spellcheck="false">
 					</div>
-
-					<div class="text right actions">
-						<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-						<button class="ui red button">{{ctx.Locale.Tr "repo.settings.convert_fork_confirm"}}</button>
+					<div class="required field">
+						<label for="new_owner_name">{{ctx.Locale.Tr "repo.settings.transfer_owner"}}</label>
+						<input id="new_owner_name" name="new_owner_name" required>
 					</div>
-				</form>
-			</div>
-		</div>
-	{{end}}
-	<div class="ui small modal" id="transfer-repo-modal">
-		<div class="header">
-			{{ctx.Locale.Tr "repo.settings.transfer.modal.title"}}
-		</div>
-		<div class="content">
-			<div class="ui warning message">
-				{{ctx.Locale.Tr "repo.settings.transfer_notices_1"}} <br>
-				{{ctx.Locale.Tr "repo.settings.transfer_notices_2"}} <br>
-				{{ctx.Locale.Tr "repo.settings.transfer_notices_3"}}
-			</div>
-			<form class="ui form" action="{{.Link}}" method="post">
-				<input type="hidden" name="action" value="transfer">
-				<div class="field">
-					<label>
-						{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
-						<span class="text red">{{.Repository.FullName}}</span>
-					</label>
 				</div>
-				<div class="required field">
-					<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
-					<input name="repo_name" required>
-				</div>
-				<div class="required field">
-					<label for="new_owner_name">{{ctx.Locale.Tr "repo.settings.transfer_owner"}}</label>
-					<input id="new_owner_name" name="new_owner_name" required>
-				</div>
-
-				<div class="text right actions">
-					<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-					<button class="ui red button">{{ctx.Locale.Tr "repo.settings.transfer_perform"}}</button>
+				<div class="actions">
+					<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+					<button type="submit" class="ui red button">{{ctx.Locale.Tr "repo.settings.transfer_perform"}}</button>
 				</div>
 			</form>
-		</div>
-	</div>
+		</article>
+	</dialog>
 
-	<div class="ui small modal" id="delete-repo-modal">
-		<div class="header">
-			{{ctx.Locale.Tr "repo.settings.delete"}}
-		</div>
-		<div class="content">
-			<div class="ui warning message">
-				{{ctx.Locale.Tr "repo.settings.delete_notices_1"}}<br>
-				{{ctx.Locale.Tr "repo.settings.delete_notices_2" .Repository.FullName}}
-				{{if .Repository.NumForks}}<br>
-				{{ctx.Locale.Tr "repo.settings.delete_notices_fork_1"}}
-				{{end}}
+	<dialog class="modal" id="delete-repo-modal">
+		<article>
+			<header>{{ctx.Locale.Tr "repo.settings.delete"}}</header>
+			<div class="content">
+				<div class="ui warning message">
+					{{ctx.Locale.Tr "repo.settings.delete_notices_1"}}<br>
+					{{ctx.Locale.Tr "repo.settings.delete_notices_2" .Repository.FullName}}
+					{{if .Repository.NumForks}}<br>
+					{{ctx.Locale.Tr "repo.settings.delete_notices_fork_1"}}
+					{{end}}
+				</div>
 			</div>
 			<form class="ui form" action="{{.Link}}" method="post">
-				<input type="hidden" name="action" value="delete">
-				<div class="field">
-					<label>
-						{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
-						<span class="text red">{{.Repository.FullName}}</span>
-					</label>
+				<div class="content">
+					<input type="hidden" name="action" value="delete">
+					<div class="field">
+						<label>
+							{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
+							<span class="text red">{{.Repository.FullName}}</span>
+						</label>
+					</div>
+					<div class="required field">
+						<label for="repo_name_to_delete">{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
+						<input id="repo_name_to_delete" name="repo_name" autocorrect="off" autocapitalize="none" spellcheck="false" required>
+					</div>
 				</div>
-				<div class="required field">
-					<label for="repo_name_to_delete">{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
-					<input id="repo_name_to_delete" name="repo_name" required>
-				</div>
-
-				<div class="text right actions">
-					<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-					<button class="ui red button">{{ctx.Locale.Tr "repo.settings.confirm_delete"}}</button>
+				<div class="actions">
+					<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+					<button type="submit" class="ui red button">{{ctx.Locale.Tr "repo.settings.confirm_delete"}}</button>
 				</div>
 			</form>
-		</div>
-	</div>
+		</article>
+	</dialog>
 
 	{{if .Repository.UnitEnabled $.Context $.UnitTypeWiki}}
-	<div class="ui small modal" id="delete-wiki-modal">
-		<div class="header">
-			{{ctx.Locale.Tr "repo.settings.wiki_delete"}}
-		</div>
-		<div class="content">
-			<div class="ui warning message">
-				{{ctx.Locale.Tr "repo.settings.delete_notices_1"}}<br>
-				{{ctx.Locale.Tr "repo.settings.wiki_delete_notices_1" .Repository.Name}}
-			</div>
-			<form class="ui form" action="{{.Link}}" method="post">
-				<input type="hidden" name="action" value="delete-wiki">
-				<div class="field">
-					<label>
-						{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
-						<span class="text red">{{.Repository.FullName}}</span>
-					</label>
-				</div>
-				<div class="required field">
-					<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
-					<input name="repo_name" required>
-				</div>
-
-				<div class="text right actions">
-					<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-					<button class="ui red button">{{ctx.Locale.Tr "repo.settings.confirm_wiki_delete"}}</button>
-				</div>
-			</form>
-		</div>
-	</div>
-	{{if ne $.Repository.GetWikiBranchName .DefaultWikiBranchName}}
-		<div class="ui small modal" id="rename-wiki-branch-modal">
-			<div class="header">
-				{{ctx.Locale.Tr "repo.settings.wiki_rename_branch_main"}}
-			</div>
+	<dialog class="modal" id="delete-wiki-modal">
+		<article>
+			<header>{{ctx.Locale.Tr "repo.settings.wiki_delete"}}</header>
 			<div class="content">
 				<div class="ui warning message">
-					<ul>
-						<li>{{ctx.Locale.Tr "repo.settings.wiki_rename_branch_main_notices_1"}}</li>
-						<li>{{ctx.Locale.Tr "repo.settings.wiki_rename_branch_main_notices_2" .Repository.Name}}</li>
-					</ul>
+					{{ctx.Locale.Tr "repo.settings.delete_notices_1"}}<br>
+					{{ctx.Locale.Tr "repo.settings.wiki_delete_notices_1" .Repository.Name}}
 				</div>
-				<form class="ui form" action="{{.Link}}" method="post">
-					<input type="hidden" name="action" value="rename-wiki-branch">
+			</div>
+			<form class="ui form" action="{{.Link}}" method="post">
+				<div class="content">
+					<input type="hidden" name="action" value="delete-wiki">
 					<div class="field">
 						<label>
 							{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
@@ -738,42 +712,77 @@
 					</div>
 					<div class="required field">
 						<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
-						<input name="repo_name" required>
+						<input name="repo_name" required autocorrect="off" autocapitalize="none" spellcheck="false">
 					</div>
-
-					<div class="text right actions">
-						<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-						<button class="ui red button">{{ctx.Locale.Tr "repo.settings.confirm_wiki_branch_rename"}}</button>
+				</div>
+				<div class="actions">
+					<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+					<button type="submit" class="ui red button">{{ctx.Locale.Tr "repo.settings.confirm_wiki_delete"}}</button>
+				</div>
+			</form>
+		</article>
+	</dialog>
+	{{if ne $.Repository.GetWikiBranchName .DefaultWikiBranchName}}
+		<dialog class="modal" id="rename-wiki-branch-modal">
+			<article>
+				<header>{{ctx.Locale.Tr "repo.settings.wiki_rename_branch_main"}}</header>
+				<div class="content">
+					<div class="ui warning message">
+						<ul>
+							<li>{{ctx.Locale.Tr "repo.settings.wiki_rename_branch_main_notices_1"}}</li>
+							<li>{{ctx.Locale.Tr "repo.settings.wiki_rename_branch_main_notices_2" .Repository.Name}}</li>
+						</ul>
+					</div>
+				</div>
+				<form class="ui form" action="{{.Link}}" method="post">
+					<div class="content">
+						<input type="hidden" name="action" value="rename-wiki-branch">
+						<div class="field">
+							<label>
+								{{ctx.Locale.Tr "repo.settings.enter_repo_name"}}
+								<span class="text red">{{.Repository.FullName}}</span>
+							</label>
+						</div>
+						<div class="required field">
+							<label>{{ctx.Locale.Tr "repo.settings.confirmation_string"}}</label>
+							<input name="repo_name" required autocorrect="off" autocapitalize="none" spellcheck="false">
+						</div>
+					</div>
+					<div class="actions">
+						<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+						<button type="submit" class="ui red button">{{ctx.Locale.Tr "repo.settings.confirm_wiki_branch_rename"}}</button>
 					</div>
 				</form>
-			</div>
-		</div>
+			</article>
+		</dialog>
 	{{end}}
 	{{end}}
 
 	{{if not .Repository.IsMirror}}
-		<div class="ui g-modal-confirm modal" id="archive-repo-modal">
-			<div class="header">
-				{{if .Repository.IsArchived}}
-					{{ctx.Locale.Tr "repo.settings.unarchive.header"}}
-				{{else}}
-					{{ctx.Locale.Tr "repo.settings.archive.header"}}
-				{{end}}
-			</div>
-			<div class="content">
-				<div class="ui warning message">
+		<dialog class="modal" id="archive-repo-modal">
+			<article>
+				<header>
 					{{if .Repository.IsArchived}}
-						{{ctx.Locale.Tr "repo.settings.unarchive.text"}}
+						{{ctx.Locale.Tr "repo.settings.unarchive.header"}}
 					{{else}}
-						{{ctx.Locale.Tr "repo.settings.archive.text"}}
+						{{ctx.Locale.Tr "repo.settings.archive.header"}}
 					{{end}}
+				</header>
+				<div class="content">
+					<div class="ui warning message">
+						{{if .Repository.IsArchived}}
+							{{ctx.Locale.Tr "repo.settings.unarchive.text"}}
+						{{else}}
+							{{ctx.Locale.Tr "repo.settings.archive.text"}}
+						{{end}}
+					</div>
 				</div>
 				<form action="{{.Link}}" method="post">
 					<input type="hidden" name="action" value="{{if .Repository.IsArchived}}unarchive{{else}}archive{{end}}">
 					<input type="hidden" name="repo_id" value="{{.Repository.ID}}">
 					<div class="text right actions">
-						<button class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
-						<button class="ui red button">
+						<button type="button" class="ui cancel button">{{ctx.Locale.Tr "settings.cancel"}}</button>
+						<button type="submit" class="ui red button">
 							{{if .Repository.IsArchived}}
 								{{ctx.Locale.Tr "repo.settings.unarchive.button"}}
 							{{else}}
@@ -781,9 +790,9 @@
 							{{end}}
 						</button>
 					</div>
-			</form>
-			</div>
-		</div>
+				</form>
+			</article>
+		</dialog>
 	{{end}}
 {{end}}
 

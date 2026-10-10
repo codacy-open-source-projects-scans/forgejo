@@ -1,4 +1,5 @@
 // Copyright 2017 The Gitea Authors. All rights reserved.
+// Copyright 2026 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package markup
@@ -7,7 +8,10 @@ import (
 	"fmt"
 	"html"
 	"io"
+	golog "log"
+	"strconv"
 	"strings"
+	"sync"
 
 	"forgejo.org/modules/highlight"
 	"forgejo.org/modules/log"
@@ -46,6 +50,17 @@ func (Renderer) Extensions() []string {
 func (Renderer) SanitizerRules() []setting.MarkupSanitizerRule {
 	return []setting.MarkupSanitizerRule{}
 }
+
+var orgConf = sync.OnceValue(func() *org.Configuration {
+	conf := org.New()
+	// Disables logging.
+	conf.Log = golog.New(io.Discard, "", 0)
+	// SECURITY: Don't allow org-mode to read any external files.
+	conf.ReadFile = func(string) ([]byte, error) {
+		return nil, nil
+	}
+	return conf
+})
 
 // Render renders orgmode rawbytes to HTML
 func Render(ctx *markup.RenderContext, input io.Reader, output io.Writer) error {
@@ -105,7 +120,7 @@ func Render(ctx *markup.RenderContext, input io.Reader, output io.Writer) error 
 
 	htmlWriter.ExtendingWriter = w
 
-	res, err := org.New().Silent().Parse(input, "").Write(w)
+	res, err := orgConf().Parse(input, "").Write(w)
 	if err != nil {
 		return fmt.Errorf("orgmode.Render failed: %w", err)
 	}
@@ -147,18 +162,34 @@ func (r *Writer) resolveLink(node org.Node) string {
 	}
 	if len(link) > 0 && !markup.IsLinkStr(link) &&
 		link[0] != '#' && !strings.HasPrefix(link, mailto) {
-		var base string
-		if r.Ctx.IsWiki {
-			base = r.Ctx.Links.WikiLink()
-		} else if r.Ctx.Links.HasBranchInfo() {
-			base = r.Ctx.Links.SrcLink()
-		} else {
-			base = r.Ctx.Links.Base
+		isRootRelative := strings.HasPrefix(link, "/")
+		isRepoFile := r.Ctx.IsRepoFile()
+		if isRootRelative && (r.Ctx.IsWiki || isRepoFile) {
+			link = strings.TrimLeft(link, "/")
 		}
 
+		var base string
 		switch l.Kind() {
 		case "image", "video":
-			base = r.Ctx.Links.ResolveMediaLink(r.Ctx.IsWiki)
+			base = r.Ctx.Links.ResolveMediaLink(r.Ctx.IsWiki, isRootRelative && isRepoFile)
+		case "regular":
+			if r.Ctx.IsWiki {
+				base = r.Ctx.Links.WikiLink()
+			} else if isRootRelative && isRepoFile {
+				base = r.Ctx.Links.SrcLinkBase()
+			} else if r.Ctx.Links.HasBranchInfo() {
+				base = r.Ctx.Links.SrcLink()
+			} else {
+				base = r.Ctx.Links.Base
+			}
+			target, search, found := strings.Cut(link, "::")
+			if found {
+				if _, err := strconv.Atoi(search); err == nil {
+					link = target + "#L" + search
+				} else {
+					link = target
+				}
+			}
 		}
 
 		link = util.URLJoin(base, link)

@@ -9,7 +9,10 @@ import {initViewedCheckboxListenerFor, countAndUpdateViewedFiles, initExpandAndC
 import {initImageDiff} from './imagediff.js';
 import {showErrorToast} from '../modules/toast.js';
 import {submitEventSubmitter, queryElemSiblings, hideElem, showElem} from '../utils/dom.js';
-import {POST, GET} from '../modules/fetch.js';
+import {POST, GET} from '../modules/fetch.ts';
+import {clearMultiLineSelection, refreshMultiLineCommentHighlights} from './repo-issue.js';
+import {renderSuggestions} from '../markup/suggestion.js';
+import {syncSuggestionBatchUI} from './repo-suggestion.js';
 
 const {pageData, i18n} = window.config;
 
@@ -76,10 +79,45 @@ function initRepoDiffConversationForm() {
       }
 
       const response = await POST(e.target.getAttribute('action'), {data: formData});
+      if (!response.ok) {
+        // Validation handlers (e.g. "a review comment may contain at most one suggestion" or the
+        // line-range limit) respond with a plain-text message and a 4xx; surface it instead of trying
+        // to parse the error as the conversation HTML. Avoid dumping a 5xx error page into the toast.
+        const text = (await response.text()).trim();
+        showErrorToast(response.status >= 400 && response.status < 500 && text ? text : i18n.network_error);
+        return;
+      }
       const $newConversationHolder = $(await response.text());
       const {path, side, idx} = $newConversationHolder.data();
 
       $form.closest('.conversation-holder').replaceWith($newConversationHolder);
+      // The backend may store the comment on the other side than it was drawn (e.g. a "previous" selection over
+      // unchanged lines becomes a "proposed" comment). Move the rendered box into its final side's cell.
+      const holderEl = $newConversationHolder[0];
+      const currentTd = holderEl?.nodeType === 1 ? holderEl.closest('td') : null;
+      const addCommentRow = currentTd?.closest('tr.add-comment');
+      let movedSides = false;
+      if (currentTd && addCommentRow && side) {
+        const wantClass = side === 'left' ? 'add-comment-left' : 'add-comment-right';
+        if (!currentTd.classList.contains(wantClass)) {
+          const targetTd = addCommentRow.querySelector(`.${wantClass}`);
+          if (targetTd && targetTd !== currentTd) {
+            targetTd.append(holderEl);
+            movedSides = true;
+          }
+        }
+      }
+      clearMultiLineSelection(); // Clear line selection
+      refreshMultiLineCommentHighlights(); // refresh highlighted on all multilines comments without a page reload
+      // When the comment moved to the other side, hide the add-code-comment button at the range's display
+      // line (last line) on the final side too, so no leftover '+' button sits next to the moved box.
+      if (movedSides) {
+        const extra = parseInt(holderEl.getAttribute('data-extra-lines-count')) || 0;
+        const displayIdx = parseInt(idx) + extra;
+        for (const el of document.querySelectorAll(`[data-path="${path}"] .add-code-comment[data-side="${side}"][data-idx="${displayIdx}"]`)) {
+          el.classList.add('tw-invisible');
+        }
+      }
       let selector;
       if ($form.closest('tr').data('line-type') === 'same') {
         selector = `[data-path="${path}"] .add-code-comment[data-idx="${idx}"]`;
@@ -89,8 +127,10 @@ function initRepoDiffConversationForm() {
       for (const el of document.querySelectorAll(selector)) {
         el.classList.add('tw-invisible');
       }
-      $newConversationHolder.find('.dropdown').dropdown();
+      $newConversationHolder.find('.ui.dropdown').dropdown();
       initCompReactionSelector($newConversationHolder);
+      renderSuggestions(holderEl); // render ```suggestion blocks in the freshly injected conversation
+      syncSuggestionBatchUI(); // re-apply batch state to the re-rendered buttons
     } catch { // here the caught error might be a jQuery AJAX error (thrown by await $.post), which is not good to use for error message handling
       console.error('error when submitting conversation', e);
       showErrorToast(i18n.network_error);
@@ -113,8 +153,10 @@ function initRepoDiffConversationForm() {
       if ($(this).closest('.conversation-holder').length) {
         const $conversation = $(data);
         $(this).closest('.conversation-holder').replaceWith($conversation);
-        $conversation.find('.dropdown').dropdown();
+        $conversation.find('.ui.dropdown').dropdown();
         initCompReactionSelector($conversation);
+        renderSuggestions($conversation[0]); // re-render ```suggestion blocks after resolve/unresolve swap
+        syncSuggestionBatchUI(); // re-apply batch state to the re-rendered buttons
       } else {
         window.location.reload();
       }
@@ -152,6 +194,8 @@ function onShowMoreFiles() {
   initViewedCheckboxListenerFor();
   countAndUpdateViewedFiles();
   initImageDiff();
+  renderSuggestions(); // render ```suggestion blocks in lazily-loaded diff files
+  syncSuggestionBatchUI(); // re-apply batch state to buttons in lazily-loaded files
   htmx.process(document.body);
 }
 
@@ -170,8 +214,16 @@ export async function loadMoreFiles(url) {
     const $resp = $(resp);
     // the response is a full HTML page, we need to extract the relevant contents:
     // 1. append the newly loaded file list items to the existing list
-    $('#diff-incomplete').replaceWith($resp.find('#diff-file-boxes').children());
-    // 2. re-execute the script to append the newly loaded items to the JS variables to refresh the DiffFileTree
+    $('#diff-file-boxes').append($resp.find('#diff-file-boxes').children());
+
+    // 2. if the response indicates the diff is incomplete show the load more button
+    $('#diff-incomplete').remove();
+    const $diffIncomplete = $resp.find('#diff-incomplete');
+    if ($diffIncomplete.length) {
+      $('#diff-content-container').append($diffIncomplete);
+    }
+
+    // 3. re-execute the script to append the newly loaded items to the JS variables to refresh the DiffFileTree
     $('body').append($resp.find('script#diff-data-script'));
 
     onShowMoreFiles();

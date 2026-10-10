@@ -1,11 +1,16 @@
 import {mount, flushPromises} from '@vue/test-utils';
-import {toAbsoluteUrl} from '../utils.js';
+import {toAbsoluteUrl} from '../utils.ts';
 import RepoActionView from './RepoActionView.vue';
+import {initMarkupContent} from '../markup/content.js';
+
+vi.mock('../markup/content.js', () => ({initMarkupContent: vi.fn()}));
 
 const testLocale = {
   approve: 'Locale Approve',
   cancel: 'Locale Cancel',
   rerun: 'Locale Re-run',
+  delete: 'Locale Delete',
+  confirmDelete: '',
   artifactsTitle: 'artifactTitleHere',
   areYouSure: '',
   confirmDeleteArtifact: '',
@@ -18,6 +23,7 @@ const testLocale = {
   viewingOutOfDateRun: 'oh no, out of date since %[1]s give or take or so',
   viewMostRecentRun: '',
   preExecutionError: 'pre-execution error',
+  preExecutionWarning: 'pre-execution warning',
   status: {
     unknown: '',
     waiting: '',
@@ -33,11 +39,13 @@ const minimalInitialJobData = {
   state: {
     run: {
       status: 'success',
+      estimatedOutcome: 'success',
       commit: {
         pusher: {},
       },
     },
     currentJob: {
+      summaries: [],
       steps: [
         {
           summary: 'Test Job',
@@ -103,11 +111,13 @@ test('load multiple steps on a finished action', async () => {
       state: {
         run: {
           status: 'success',
+          estimatedOutcome: 'success',
           commit: {
             pusher: {},
           },
         },
         currentJob: {
+          summaries: [],
           title: 'test',
           steps: [
             {
@@ -168,12 +178,15 @@ function configureForMultipleAttemptTests({viewHistorical}) {
       canApprove: true,
       canCancel: true,
       canRerun: true,
+      canDelete: false,
       status: 'success',
+      estimatedOutcome: 'success',
       commit: {
         pusher: {},
       },
     },
     currentJob: {
+      summaries: [],
       title: 'test',
       steps: [
         {
@@ -347,6 +360,7 @@ test('run approval interaction', async () => {
           run: {
             canApprove: true,
             status: 'waiting',
+            estimatedOutcome: 'unknown',
             commit: {
               pusher: {},
               branch: {
@@ -355,6 +369,7 @@ test('run approval interaction', async () => {
             },
           },
           currentJob: {
+            summaries: [],
             steps: [
               {
                 summary: 'Test Job',
@@ -413,11 +428,13 @@ test('artifacts download links', async () => {
       state: {
         run: {
           status: 'success',
+          estimatedOutcome: 'success',
           commit: {
             pusher: {},
           },
         },
         currentJob: {
+          summaries: [],
           title: 'test',
           steps: [
             {
@@ -449,8 +466,12 @@ test('artifacts download links', async () => {
   await flushPromises();
 
   expect(wrapper.get('.job-artifacts .job-artifacts-title').text()).toEqual('artifactTitleHere');
+
+  expect(wrapper.find('.job-artifacts .job-artifacts-item:nth-of-type(1) a').exists()).toBe(true);
+  // Expired artifacts should be listed, but not be linked, because they no longer exist.
+  expect(wrapper.find('.job-artifacts .job-artifacts-item:nth-of-type(2) a').exists()).toBe(false);
+
   expect(wrapper.get('.job-artifacts .job-artifacts-item:nth-of-type(1) .job-artifacts-link').attributes('href')).toEqual('https://example.com/example-org/example-repo/actions/runs/1001/artifacts/artifactname1');
-  expect(wrapper.get('.job-artifacts .job-artifacts-item:nth-of-type(2) .job-artifacts-link').attributes('href')).toEqual('https://example.com/example-org/example-repo/actions/runs/1001/artifacts/artifactname2');
 });
 
 test('initial load schedules refresh when job is not done', async () => {
@@ -528,6 +549,7 @@ test('view non-picked action run job', async () => {
           run: {
             done: false,
             status: 'waiting',
+            estimatedOutcome: 'unknown',
             commit: {
               pusher: {},
             },
@@ -556,10 +578,10 @@ test('view non-picked action run job', async () => {
             ],
           },
           currentJob: {
+            summaries: [],
             title: 'check-1',
-            details: ['waiting (locale)'], // locale-specific, not exact match to backend test
             steps: [],
-            allAttempts: null,
+            allAttempts: [{number: 1, time_since_started_html: '', status: 'Waiting', status_diagnostics: ['Waiting']}],
           },
         },
       },
@@ -567,7 +589,7 @@ test('view non-picked action run job', async () => {
   });
   await flushPromises();
 
-  expect(wrapper.get('.job-info-header-detail li:first-child').text()).toEqual('waiting (locale)');
+  expect(wrapper.get('.job-info-header-detail li:first-child').text()).toEqual('Waiting');
   expect(wrapper.get('.job-brief-list .job-brief-item:nth-of-type(1) .job-brief-name').text()).toEqual('check-1');
   expect(wrapper.get('.job-brief-list .job-brief-item:nth-of-type(2) .job-brief-name').text()).toEqual('check-2');
   expect(wrapper.get('.job-brief-list .job-brief-item:nth-of-type(3) .job-brief-name').text()).toEqual('check-3');
@@ -575,7 +597,7 @@ test('view non-picked action run job', async () => {
   // Attempt status
   expect(wrapper.get('.job-info-header h3').text()).toEqual('check-1');
   expect(wrapper.findAll('ul.job-info-header-detail li').length).toEqual(1);
-  expect(wrapper.get('ul.job-info-header-detail li:nth-child(1)').text()).toEqual('waiting (locale)');
+  expect(wrapper.get('ul.job-info-header-detail li:nth-child(1)').text()).toEqual('Waiting');
 });
 
 test('view without pre-execution error', async () => {
@@ -605,7 +627,78 @@ test('view with pre-execution error', async () => {
     },
   });
   await flushPromises();
-  const block = wrapper.find('.pre-execution-error');
+  const block = wrapper.find('.error.pre-execution-error');
   expect(block.exists()).toBe(true);
   expect(block.text()).toBe('pre-execution error Oops, I dropped it.');
+});
+
+test('view with pre-execution warning error', async () => {
+  Object.defineProperty(document.documentElement, 'lang', {value: 'en'});
+  const wrapper = mount(RepoActionView, {
+    props: {
+      ...defaultTestProps,
+      initialJobData: {
+        ...minimalInitialJobData,
+        state: {
+          ...minimalInitialJobData.state,
+          run: {
+            ...minimalInitialJobData.state.run,
+            preExecutionWarnings: [
+              'Warning 1: Action looks unstable.',
+              'Warning 1: Action looks floppy.',
+            ],
+          },
+        },
+      },
+    },
+  });
+  await flushPromises();
+  const block = wrapper.find('.warning.pre-execution-error');
+  expect(block.exists()).toBe(true);
+  expect(block.text()).toBe('pre-execution warningWarning 1: Action looks unstable.Warning 1: Action looks floppy.');
+});
+
+test('markup renderer are initialized on changes to the step-summary', async () => {
+  Object.defineProperty(document.documentElement, 'lang', {value: 'en'});
+  let summaries = ['<p>first</p>'];
+  let steps = [];
+  let runStatus = 'running';
+  vi.spyOn(global, 'fetch').mockImplementation((url) => {
+    if (url.endsWith('/artifacts')) {
+      return Promise.resolve({ok: true, json: vi.fn().mockResolvedValue({artifacts: []})});
+    }
+    return Promise.resolve({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        state: {
+          run: {status: runStatus, commit: {pusher: {}}},
+          currentJob: {title: 'test', steps, allAttempts: [], summaries},
+        },
+        logs: {stepsLog: []},
+      }),
+    });
+  });
+
+  const wrapper = mount(RepoActionView, {props: defaultTestProps});
+  await flushPromises();
+  initMarkupContent.mockClear();
+
+  wrapper.vm.loadJob();
+  await flushPromises();
+  expect(initMarkupContent).toHaveBeenCalledTimes(1);
+
+  // a poll where the job progressed but the summaries stayed the same
+  // does not re-initialize the markup renderer
+  // A new step does not magaically appear but the intent is to emphasize that initMarkupContent only invokes for changing summaries
+  steps = [{summary: 'a new step', duration: '1s', status: 'running'}];
+  runStatus = 'success';
+  wrapper.vm.loadJob();
+  await flushPromises();
+  expect(initMarkupContent).toHaveBeenCalledTimes(1);
+
+  // a grown summary does
+  summaries = ['<p>first</p>', '<p>second</p>'];
+  wrapper.vm.loadJob();
+  await flushPromises();
+  expect(initMarkupContent).toHaveBeenCalledTimes(2);
 });

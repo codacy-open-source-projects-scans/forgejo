@@ -8,9 +8,9 @@
   ],
   "baseBranchPatterns": [
     "$default",
-    "/^v11\\.\\d+/forgejo$/",
-    "/^v14\\.\\d+/forgejo$/",
-    "/^v15\\.\\d+/forgejo$/"
+    "/^v15\\.\\d+/forgejo$/",
+    "/^v16\\.\\d+/forgejo$/",
+    "/^v17\\.\\d+/forgejo$/"
   ],
   "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths", "npmDedupe"],
   "prConcurrentLimit": 10,
@@ -36,7 +36,6 @@
     {
       "description": "Schedule some deps less frequently",
       "matchPackageNames": [
-        "code.forgejo.org/f3/gof3/**",
         "github.com/google/pprof"
       ],
       "extends": ["schedule:quarterly"]
@@ -51,6 +50,7 @@
       "groupName": "devcontainer packages",
       "extends": ["schedule:quarterly"],
       "automerge": true,
+      "rebaseWhen": "conflicted",
       "matchPackageNames": [
         "ghcr.io/devcontainers/features/**",
         "ghcr.io/devcontainers-contrib/features/**"
@@ -60,6 +60,7 @@
       "description": "x/tools/* are used in the CI only and upgraded together",
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "automerge": true,
+      "rebaseWhen": "conflicted",
       "groupName": "x/tools",
       "matchPackageNames": ["golang.org/x/tools{/,}**"]
     },
@@ -94,7 +95,8 @@
         "swagger-ui-dist"
       ],
       "matchUpdateTypes": ["patch"],
-      "automerge": true
+      "automerge": true,
+      "rebaseWhen": "conflicted"
     },
     {
       "description": "Add reviewer and additional labels to renovate PRs",
@@ -137,7 +139,13 @@
         "vite-string-plugin",
         "yamllint"
       ],
-      "automerge": true
+      "automerge": true,
+      "rebaseWhen": "conflicted"
+    },
+    {
+      "description": "Run end-to-end tests for some dependencies",
+      "matchPackageNames": ["code.forgejo.org/forgejo/runner/**"],
+      "addLabels": ["run-end-to-end-tests"]
     },
     {
       "description": "Disable indirect updates for stable branches",
@@ -155,9 +163,17 @@
     },
     {
       "description": "Disable updates for old stable branches but still allow security updates",
-      "matchBaseBranches": ["v11.0/forgejo", "v14.0/forgejo"],
+      "matchBaseBranches": ["v11.0/forgejo"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "enabled": false
+    },
+    {
+      "description": "Enable go toolchain patch updates, they're usually security updates",
+      "matchDepNames": ["go"],
+      "matchDepTypes": ["toolchain"],
+      "matchUpdateTypes": ["patch"],
+      "dependencyDashboardApproval": false,
+      "enabled": true
     },
     {
       "description": "Require approval for stable branches (must be last rule to override all others)",

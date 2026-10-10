@@ -70,9 +70,9 @@ func NewIssue(ctx context.Context, issue *issues_model.Issue, mentions []*user_m
 }
 
 // IssueChangeStatus notifies close or reopen issue to notifiers
-func IssueChangeStatus(ctx context.Context, doer *user_model.User, commitID string, issue *issues_model.Issue, actionComment *issues_model.Comment, closeOrReopen bool) {
+func IssueChangeStatus(ctx context.Context, doer *user_model.User, prInfo *issues_model.PRNotificationInfo, issue *issues_model.Issue, actionComment *issues_model.Comment, closeOrReopen bool) {
 	for _, notifier := range notifiers {
-		notifier.IssueChangeStatus(ctx, doer, commitID, issue, actionComment, closeOrReopen)
+		notifier.IssueChangeStatus(ctx, doer, prInfo, issue, actionComment, closeOrReopen)
 	}
 }
 
@@ -258,6 +258,18 @@ func IssueChangeLabels(ctx context.Context, doer *user_model.User, issue *issues
 	}
 }
 
+func NewReaction(ctx context.Context, reaction *issues_model.Reaction) {
+	for _, notifier := range notifiers {
+		notifier.NewReaction(ctx, reaction)
+	}
+}
+
+func DeleteReaction(ctx context.Context, reaction *issues_model.Reaction) {
+	for _, notifier := range notifiers {
+		notifier.DeleteReaction(ctx, reaction)
+	}
+}
+
 // CreateRepository notifies create repository to notifiers
 func CreateRepository(ctx context.Context, doer, u *user_model.User, repo *repo_model.Repository) {
 	for _, notifier := range notifiers {
@@ -384,14 +396,38 @@ func ChangeDefaultBranch(ctx context.Context, repo *repo_model.Repository) {
 	}
 }
 
-// ActionRunNowDone notifies that the old status priorStatus with (priorStatus.isDone() == false) of an ActionRun changed to run.Status with (run.Status.isDone() == true)
-// run represents the new state of the ActionRun.
-// lastRun represents the ActionRun of the same workflow that finished before run.
-// lastRun might be nil (e.g. when the run is the first for this workflow). It is the last run of the same workflow for the same repo.
-// It can be used to figure out if a successful run follows a failed one.
-// Both run and lastRun need their attributes loaded.
-func ActionRunNowDone(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status, lastRun *actions_model.ActionRun) {
+func NewWorkflowRunAttempt(ctx context.Context, run *actions_model.ActionRun) {
 	for _, notifier := range notifiers {
-		notifier.ActionRunNowDone(ctx, run, priorStatus, lastRun)
+		notifier.NewWorkflowRunAttempt(ctx, run)
+	}
+}
+
+func WorkflowRunStatusChanged(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status) {
+	for _, notifier := range notifiers {
+		notifier.WorkflowRunStatusChanged(ctx, run, priorStatus)
+	}
+}
+
+func WorkflowRunCompleted(ctx context.Context, run *actions_model.ActionRun, priorStatus actions_model.Status) {
+	for _, notifier := range notifiers {
+		notifier.WorkflowRunCompleted(ctx, run, priorStatus)
+	}
+}
+
+func NewWorkflowJobAttempt(ctx context.Context, job *actions_model.ActionRunJob) {
+	for _, notifier := range notifiers {
+		notifier.NewWorkflowJobAttempt(ctx, job)
+	}
+}
+
+func WorkflowJobStatusChanged(ctx context.Context, job *actions_model.ActionRunJob, priorStatus actions_model.Status) {
+	for _, notifier := range notifiers {
+		notifier.WorkflowJobStatusChanged(ctx, job, priorStatus)
+	}
+}
+
+func WorkflowJobCompleted(ctx context.Context, job *actions_model.ActionRunJob, priorStatus actions_model.Status) {
+	for _, notifier := range notifiers {
+		notifier.WorkflowJobCompleted(ctx, job, priorStatus)
 	}
 }

@@ -5,7 +5,6 @@ package actions
 
 import (
 	"context"
-	"errors"
 
 	actions_model "forgejo.org/models/actions"
 	issues_model "forgejo.org/models/issues"
@@ -13,18 +12,18 @@ import (
 	perm_model "forgejo.org/models/perm"
 	access_model "forgejo.org/models/perm/access"
 	repo_model "forgejo.org/models/repo"
+	"forgejo.org/models/unit"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/git"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/repository"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
-	"forgejo.org/modules/util"
 	webhook_module "forgejo.org/modules/webhook"
 	"forgejo.org/services/convert"
 	notify_service "forgejo.org/services/notify"
 
-	"xorm.io/builder"
+	"code.forgejo.org/forgejo/runner/v13/act/jobparser"
 )
 
 type actionsNotifier struct {
@@ -112,7 +111,7 @@ func (n *actionsNotifier) issueChange(ctx context.Context, doer *user_model.User
 }
 
 // IssueChangeStatus notifies close or reopen issue to notifiers
-func (n *actionsNotifier) IssueChangeStatus(ctx context.Context, doer *user_model.User, commitID string, issue *issues_model.Issue, _ *issues_model.Comment, isClosed bool) {
+func (n *actionsNotifier) IssueChangeStatus(ctx context.Context, doer *user_model.User, prInfo *issues_model.PRNotificationInfo, issue *issues_model.Issue, _ *issues_model.Comment, isClosed bool) {
 	ctx = withMethod(ctx, "IssueChangeStatus")
 	permission, _ := access_model.GetUserRepoPermission(ctx, issue.Repo, issue.Poster)
 	if issue.IsPull {
@@ -126,7 +125,7 @@ func (n *actionsNotifier) IssueChangeStatus(ctx context.Context, doer *user_mode
 			PullRequest: convert.ToAPIPullRequest(ctx, issue.PullRequest, nil),
 			Repository:  convert.ToRepo(ctx, issue.Repo, permission),
 			Sender:      convert.ToUser(ctx, doer, nil),
-			CommitID:    commitID,
+			CommitID:    prInfo.MergedCommitID,
 		}
 		if isClosed {
 			apiPullRequest.Action = api.HookIssueClosed
@@ -381,7 +380,11 @@ func (n *actionsNotifier) NewPullRequest(ctx context.Context, pull *issues_model
 
 	permission, _ := access_model.GetUserRepoPermission(ctx, pull.Issue.Repo, pull.Issue.Poster)
 
+	// HeadCommitID is transient and needs to be set before invoking PullRequestSynchronized. Otherwise,
+	// notifier_helper.go will rediscover the head commit when it's running. Because that happens sometime in the
+	// future, it might discover a newer commit.
 	newNotifyInputFromIssue(pull.Issue, webhook_module.HookEventPullRequest).
+		WithCommit(pull.HeadCommitID).
 		WithPayload(&api.PullRequestPayload{
 			Action:      api.HookIssueOpened,
 			Index:       pull.Issue.Index,
@@ -396,7 +399,7 @@ func (n *actionsNotifier) NewPullRequest(ctx context.Context, pull *issues_model
 func (n *actionsNotifier) CreateRepository(ctx context.Context, doer, u *user_model.User, repo *repo_model.Repository) {
 	ctx = withMethod(ctx, "CreateRepository")
 
-	newNotifyInput(repo, doer, webhook_module.HookEventRepository).WithPayload(&api.RepositoryPayload{
+	NewNotifyInput(repo, doer, webhook_module.HookEventRepository).WithPayload(&api.RepositoryPayload{
 		Action:       api.HookRepoCreated,
 		Repository:   convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeOwner}),
 		Organization: convert.ToUser(ctx, u, nil),
@@ -411,7 +414,7 @@ func (n *actionsNotifier) ForkRepository(ctx context.Context, doer *user_model.U
 	permission, _ := access_model.GetUserRepoPermission(ctx, repo, doer)
 
 	// forked webhook
-	newNotifyInput(oldRepo, doer, webhook_module.HookEventFork).WithPayload(&api.ForkPayload{
+	NewNotifyInput(oldRepo, doer, webhook_module.HookEventFork).WithPayload(&api.ForkPayload{
 		Forkee: convert.ToRepo(ctx, oldRepo, oldPermission),
 		Repo:   convert.ToRepo(ctx, repo, permission),
 		Sender: convert.ToUser(ctx, doer, nil),
@@ -421,7 +424,7 @@ func (n *actionsNotifier) ForkRepository(ctx context.Context, doer *user_model.U
 
 	// Add to hook queue for created repo after session commit.
 	if u.IsOrganization() {
-		newNotifyInput(repo, doer, webhook_module.HookEventRepository).
+		NewNotifyInput(repo, doer, webhook_module.HookEventRepository).
 			WithRef(git.RefNameFromBranch(oldRepo.DefaultBranch).String()).
 			WithPayload(&api.RepositoryPayload{
 				Action:       api.HookRepoCreated,
@@ -444,9 +447,11 @@ func (n *actionsNotifier) PullRequestReview(ctx context.Context, pr *issues_mode
 		reviewHookType = webhook_module.HookEventPullRequestReviewComment
 	case issues_model.ReviewTypeReject:
 		reviewHookType = webhook_module.HookEventPullRequestReviewRejected
+	case issues_model.ReviewTypePending, issues_model.ReviewTypeRequest, issues_model.ReviewTypeUnknown:
+		log.Trace("Ignoring review type %v", review.Type)
+		return
 	default:
-		// unsupported review webhook type here
-		log.Error("Unsupported review webhook type")
+		log.Error("Unhandled review type: %v", review.Type)
 		return
 	}
 
@@ -461,7 +466,7 @@ func (n *actionsNotifier) PullRequestReview(ctx context.Context, pr *issues_mode
 		return
 	}
 
-	newNotifyInput(review.Issue.Repo, review.Reviewer, reviewHookType).
+	NewNotifyInput(review.Issue.Repo, review.Reviewer, reviewHookType).
 		WithRef(review.CommitID).
 		WithPayload(&api.PullRequestPayload{
 			Action:      api.HookIssueReviewed,
@@ -543,7 +548,7 @@ func (*actionsNotifier) MergePullRequest(ctx context.Context, doer *user_model.U
 		Action:      api.HookIssueClosed,
 	}
 
-	newNotifyInput(pr.Issue.Repo, doer, webhook_module.HookEventPullRequest).
+	NewNotifyInput(pr.Issue.Repo, doer, webhook_module.HookEventPullRequest).
 		WithRef(pr.MergedCommitID).
 		WithPayload(apiPullRequest).
 		WithPullRequest(pr).
@@ -565,8 +570,17 @@ func (n *actionsNotifier) PushCommits(ctx context.Context, pusher *user_model.Us
 		return
 	}
 
-	newNotifyInput(repo, pusher, webhook_module.HookEventPush).
+	// In addition to the Git ref, the ID of the head commit has to be supplied to ensure that Forgejo triggers
+	// workflows for this head commit. Without the ID of the head commit, Forgejo would try to rediscover it and might
+	// end up with a newer commit if new commits were pushed simultaneously.
+	headCommit := ""
+	if commits != nil && commits.HeadCommit != nil {
+		headCommit = commits.HeadCommit.Sha1
+	}
+
+	NewNotifyInput(repo, pusher, webhook_module.HookEventPush).
 		WithRef(opts.RefFullName.String()).
+		WithCommit(headCommit).
 		WithPayload(&api.PushPayload{
 			Ref:        opts.RefFullName.String(),
 			Before:     opts.OldCommitID,
@@ -581,13 +595,23 @@ func (n *actionsNotifier) PushCommits(ctx context.Context, pusher *user_model.Us
 		Notify(ctx)
 }
 
+func (n *actionsNotifier) ChangeDefaultBranch(ctx context.Context, repo *repo_model.Repository) {
+	// Re-detect scheduled workflows when the default branch changes,
+	// since schedules are registered from workflows in the default branch.
+	if repo.UnitEnabled(ctx, unit.TypeActions) {
+		if err := DetectAndHandleSchedules(ctx, repo); err != nil {
+			log.Error("DetectAndHandleSchedules failed for change default branch repo %s/%s: %v", repo.Owner.Name, repo.Name, err)
+		}
+	}
+}
+
 func (n *actionsNotifier) CreateRef(ctx context.Context, pusher *user_model.User, repo *repo_model.Repository, refFullName git.RefName, refID string) {
 	ctx = withMethod(ctx, "CreateRef")
 
 	apiPusher := convert.ToUser(ctx, pusher, nil)
 	apiRepo := convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeNone})
 
-	newNotifyInput(repo, pusher, webhook_module.HookEventCreate).
+	NewNotifyInput(repo, pusher, webhook_module.HookEventCreate).
 		WithRef(refFullName.String()).
 		WithPayload(&api.CreatePayload{
 			Ref:     refFullName.String(),
@@ -605,7 +629,7 @@ func (n *actionsNotifier) DeleteRef(ctx context.Context, pusher *user_model.User
 	apiPusher := convert.ToUser(ctx, pusher, nil)
 	apiRepo := convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeNone})
 
-	newNotifyInput(repo, pusher, webhook_module.HookEventDelete).
+	NewNotifyInput(repo, pusher, webhook_module.HookEventDelete).
 		WithPayload(&api.DeletePayload{
 			Ref:        refFullName.String(),
 			RefType:    refFullName.RefType(),
@@ -626,8 +650,17 @@ func (n *actionsNotifier) SyncPushCommits(ctx context.Context, pusher *user_mode
 		return
 	}
 
-	newNotifyInput(repo, pusher, webhook_module.HookEventPush).
+	// In addition to the Git ref, the ID of the head commit has to be supplied to ensure that Forgejo triggers
+	// workflows for this head commit. Without the ID of the head commit, Forgejo would try to rediscover it and might
+	// end up with a newer commit if new commits were pushed simultaneously.
+	headCommit := ""
+	if commits != nil && commits.HeadCommit != nil {
+		headCommit = commits.HeadCommit.Sha1
+	}
+
+	NewNotifyInput(repo, pusher, webhook_module.HookEventPush).
 		WithRef(opts.RefFullName.String()).
+		WithCommit(headCommit).
 		WithPayload(&api.PushPayload{
 			Ref:          opts.RefFullName.String(),
 			Before:       opts.OldCommitID,
@@ -700,7 +733,11 @@ func (n *actionsNotifier) PullRequestSynchronized(ctx context.Context, doer *use
 		return
 	}
 
-	newNotifyInput(pr.Issue.Repo, doer, webhook_module.HookEventPullRequestSync).
+	// HeadCommitID is transient and needs to be set before invoking PullRequestSynchronized. Otherwise,
+	// notifier_helper.go will rediscover the head commit when it's running. Because that happens sometime in the
+	// future, it might discover a newer commit.
+	NewNotifyInput(pr.Issue.Repo, doer, webhook_module.HookEventPullRequestSync).
+		WithCommit(pr.HeadCommitID).
 		WithPayload(&api.PullRequestPayload{
 			Action:      api.HookIssueSynchronized,
 			Index:       pr.Issue.Index,
@@ -726,7 +763,7 @@ func (n *actionsNotifier) PullRequestChangeTargetBranch(ctx context.Context, doe
 	}
 
 	permission, _ := access_model.GetUserRepoPermission(ctx, pr.Issue.Repo, pr.Issue.Poster)
-	newNotifyInput(pr.Issue.Repo, doer, webhook_module.HookEventPullRequest).
+	NewNotifyInput(pr.Issue.Repo, doer, webhook_module.HookEventPullRequest).
 		WithPayload(&api.PullRequestPayload{
 			Action: api.HookIssueEdited,
 			Index:  pr.Issue.Index,
@@ -746,7 +783,7 @@ func (n *actionsNotifier) PullRequestChangeTargetBranch(ctx context.Context, doe
 func (n *actionsNotifier) NewWikiPage(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, page, comment string) {
 	ctx = withMethod(ctx, "NewWikiPage")
 
-	newNotifyInput(repo, doer, webhook_module.HookEventWiki).WithPayload(&api.WikiPayload{
+	NewNotifyInput(repo, doer, webhook_module.HookEventWiki).WithPayload(&api.WikiPayload{
 		Action:     api.HookWikiCreated,
 		Repository: convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeOwner}),
 		Sender:     convert.ToUser(ctx, doer, nil),
@@ -758,7 +795,7 @@ func (n *actionsNotifier) NewWikiPage(ctx context.Context, doer *user_model.User
 func (n *actionsNotifier) EditWikiPage(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, page, comment string) {
 	ctx = withMethod(ctx, "EditWikiPage")
 
-	newNotifyInput(repo, doer, webhook_module.HookEventWiki).WithPayload(&api.WikiPayload{
+	NewNotifyInput(repo, doer, webhook_module.HookEventWiki).WithPayload(&api.WikiPayload{
 		Action:     api.HookWikiEdited,
 		Repository: convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeOwner}),
 		Sender:     convert.ToUser(ctx, doer, nil),
@@ -770,7 +807,7 @@ func (n *actionsNotifier) EditWikiPage(ctx context.Context, doer *user_model.Use
 func (n *actionsNotifier) DeleteWikiPage(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, page string) {
 	ctx = withMethod(ctx, "DeleteWikiPage")
 
-	newNotifyInput(repo, doer, webhook_module.HookEventWiki).WithPayload(&api.WikiPayload{
+	NewNotifyInput(repo, doer, webhook_module.HookEventWiki).WithPayload(&api.WikiPayload{
 		Action:     api.HookWikiDeleted,
 		Repository: convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeOwner}),
 		Sender:     convert.ToUser(ctx, doer, nil),
@@ -782,7 +819,7 @@ func (n *actionsNotifier) DeleteWikiPage(ctx context.Context, doer *user_model.U
 func (n *actionsNotifier) MigrateRepository(ctx context.Context, doer, u *user_model.User, repo *repo_model.Repository) {
 	ctx = withMethod(ctx, "MigrateRepository")
 
-	newNotifyInput(repo, doer, webhook_module.HookEventRepository).WithPayload(&api.RepositoryPayload{
+	NewNotifyInput(repo, doer, webhook_module.HookEventRepository).WithPayload(&api.RepositoryPayload{
 		Action:       api.HookRepoCreated,
 		Repository:   convert.ToRepo(ctx, repo, access_model.Permission{AccessMode: perm_model.AccessModeOwner}),
 		Organization: convert.ToUser(ctx, u, nil),
@@ -790,75 +827,19 @@ func (n *actionsNotifier) MigrateRepository(ctx context.Context, doer, u *user_m
 	}).Notify(ctx)
 }
 
-// Call this sendActionRunNowDoneNotificationIfNeeded when there has been an update for an ActionRun.
-// priorRun and updatedRun represent the very same ActionRun, just at different times:
-// priorRun before the update and updatedRun after.
-// The parameter lastRun in the ActionRunNowDone notification represents an entirely different ActionRun:
-// the ActionRun of the same workflow that finished before priorRun/updatedRun.
-func sendActionRunNowDoneNotificationIfNeeded(ctx context.Context, priorRun, updatedRun *actions_model.ActionRun) error {
-	if !priorRun.Status.IsDone() && updatedRun.Status.IsDone() {
-		lastRun, err := actions_model.GetRunBefore(ctx, updatedRun)
-		if err != nil && !errors.Is(err, util.ErrNotExist) {
-			return err
+func calculateWarnings(run *actions_model.ActionRun, swfs []*jobparser.SingleWorkflow) {
+	warnings := []actions_model.PreExecutionWarning{}
+	warningDetails := [][]any{}
+	for _, swf := range swfs {
+		id, j := swf.Job()
+		// j != nil is a workaround for a jobparser bug -- swf.HasPermissions() doesn't nil-check the job from Job(),
+		// which occurs in an invalid workflow with no job. We need to do `.Job()` here for the job name anyway, so no
+		// harm in handling it here. (https://code.forgejo.org/forgejo/runner/issues/1579)
+		if j != nil && swf.HasPermissions() {
+			warnings = append(warnings, actions_model.WarningCodePermissions)
+			warningDetails = append(warningDetails, []any{id, setting.AppDocsURL("user/api/authorized-integrations/")})
 		}
-		// when no last run was found lastRun is nil
-		if lastRun != nil {
-			if err = lastRun.LoadAttributes(ctx); err != nil {
-				return err
-			}
-		}
-		if err = updatedRun.LoadAttributes(ctx); err != nil {
-			return err
-		}
-		notify_service.ActionRunNowDone(ctx, updatedRun, priorRun.Status, lastRun)
 	}
-	return nil
-}
-
-// wrapper of UpdateRunWithoutNotification with a call to the ActionRunNowDone notification channel
-func UpdateRun(ctx context.Context, run *actions_model.ActionRun, cols ...string) error {
-	// run.ID is the only thing that must be given
-	priorRun, err := actions_model.GetRunByID(ctx, run.ID)
-	if err != nil {
-		return err
-	}
-
-	if err = actions_model.UpdateRunWithoutNotification(ctx, run, cols...); err != nil {
-		return err
-	}
-
-	updatedRun, err := actions_model.GetRunByID(ctx, run.ID)
-	if err != nil {
-		return err
-	}
-	return sendActionRunNowDoneNotificationIfNeeded(ctx, priorRun, updatedRun)
-}
-
-// wrapper of UpdateRunJobWithoutNotification with a call to the ActionRunNowDone notification channel
-func UpdateRunJob(ctx context.Context, job *actions_model.ActionRunJob, cond builder.Cond, cols ...string) (int64, error) {
-	runID := job.RunID
-	if runID == 0 {
-		// job.ID is the only thing that must be given
-		// Don't overwrite job here, we'd loose the change we need to make.
-		oldJob, err := actions_model.GetRunJobByID(ctx, job.ID)
-		if err != nil {
-			return 0, err
-		}
-		runID = oldJob.RunID
-	}
-	priorRun, err := actions_model.GetRunByID(ctx, runID)
-	if err != nil {
-		return 0, err
-	}
-
-	affected, err := actions_model.UpdateRunJobWithoutNotification(ctx, job, cond, cols...)
-	if err != nil {
-		return affected, err
-	}
-
-	updatedRun, err := actions_model.GetRunByID(ctx, runID)
-	if err != nil {
-		return affected, err
-	}
-	return affected, sendActionRunNowDoneNotificationIfNeeded(ctx, priorRun, updatedRun)
+	run.PreExecutionWarningCodes = warnings
+	run.PreExecutionWarningDetails = warningDetails
 }

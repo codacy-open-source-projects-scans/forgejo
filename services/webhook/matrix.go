@@ -6,8 +6,8 @@ package webhook
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"html/template"
@@ -80,11 +80,8 @@ func (matrixHandler) NewRequest(ctx context.Context, w *webhook_model.Webhook, t
 		return nil, nil, err
 	}
 
-	txnID, err := getMatrixTxnID(body)
-	if err != nil {
-		return nil, nil, err
-	}
-	req, err := http.NewRequest(http.MethodPut, w.URL+"/"+txnID, bytes.NewReader(body))
+	stateKey := getMatrixStateKey(t)
+	req, err := http.NewRequest(http.MethodPut, w.URL+"/"+stateKey, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,8 +89,6 @@ func (matrixHandler) NewRequest(ctx context.Context, w *webhook_model.Webhook, t
 
 	return req, body, nil
 }
-
-const matrixPayloadSizeLimit = 1024 * 64
 
 // MatrixMeta contains the Matrix metadata
 type MatrixMeta struct {
@@ -126,6 +121,13 @@ type MatrixPayload struct {
 }
 
 var _ shared.PayloadConvertor[MatrixPayload] = matrixConvertor{}
+
+var matrixPayloadFormatter = webhookPayloadFormatter{
+	linkFormatter: htmlLinkFormatter,
+	nameFormatter: noneNameFormatter,
+	withSender:    true,
+	withRepoName:  true,
+}
 
 type matrixConvertor struct {
 	MsgType string
@@ -169,28 +171,28 @@ func (m matrixConvertor) Fork(p *api.ForkPayload) (MatrixPayload, error) {
 
 // Issue implements payloadConvertor Issue method
 func (m matrixConvertor) Issue(p *api.IssuePayload) (MatrixPayload, error) {
-	text, _, _, _ := getIssuesPayloadInfo(p, htmlLinkFormatter, noneNameFormatter, true)
+	text, _, _, _ := matrixPayloadFormatter.getIssuesPayloadInfo(p)
 
 	return m.newPayload(text)
 }
 
 // IssueComment implements payloadConvertor IssueComment method
 func (m matrixConvertor) IssueComment(p *api.IssueCommentPayload) (MatrixPayload, error) {
-	text, _, _ := getIssueCommentPayloadInfo(p, htmlLinkFormatter, noneNameFormatter, true)
+	text, _, _ := matrixPayloadFormatter.getIssueCommentPayloadInfo(p)
 
 	return m.newPayload(text)
 }
 
 // Wiki implements payloadConvertor Wiki method
 func (m matrixConvertor) Wiki(p *api.WikiPayload) (MatrixPayload, error) {
-	text, _, _ := getWikiPayloadInfo(p, htmlLinkFormatter, noneNameFormatter, true)
+	text, _, _ := matrixPayloadFormatter.getWikiPayloadInfo(p, true)
 
 	return m.newPayload(text)
 }
 
 // Release implements payloadConvertor Release method
 func (m matrixConvertor) Release(p *api.ReleasePayload) (MatrixPayload, error) {
-	text, _ := getReleasePayloadInfo(p, htmlLinkFormatter, noneNameFormatter, true)
+	text, _ := matrixPayloadFormatter.getReleasePayloadInfo(p)
 
 	return m.newPayload(text)
 }
@@ -223,7 +225,7 @@ func (m matrixConvertor) Push(p *api.PushPayload) (MatrixPayload, error) {
 
 // PullRequest implements payloadConvertor PullRequest method
 func (m matrixConvertor) PullRequest(p *api.PullRequestPayload) (MatrixPayload, error) {
-	text, _, _, _ := getPullRequestPayloadInfo(p, htmlLinkFormatter, noneNameFormatter, true)
+	text, _, _, _ := matrixPayloadFormatter.getPullRequestPayloadInfo(p)
 
 	return m.newPayload(text)
 }
@@ -275,9 +277,21 @@ func (m matrixConvertor) Package(p *api.PackagePayload) (MatrixPayload, error) {
 }
 
 func (m matrixConvertor) Action(p *api.ActionPayload) (MatrixPayload, error) {
-	text, _ := getActionPayloadInfo(p, htmlLinkFormatter)
+	text, _ := matrixPayloadFormatter.getActionPayloadInfo(p)
 
 	return m.newPayload(text)
+}
+
+func (m matrixConvertor) WorkflowRun(p *api.WorkflowRunPayload) (MatrixPayload, error) {
+	title, _, _ := feishuPayloadFormatter.getWorkflowRunPayloadInfo(p)
+	link := htmlLinkFormatter(p.Run.HTMLURL, "View details")
+	return m.newPayload(fmt.Sprintf("%s. %s.", title, link))
+}
+
+func (m matrixConvertor) WorkflowJob(p *api.WorkflowJobPayload) (MatrixPayload, error) {
+	title, _, _ := feishuPayloadFormatter.getWorkflowJobPayloadInfo(p)
+	link := htmlLinkFormatter(p.Job.HTMLURL, "View details")
+	return m.newPayload(fmt.Sprintf("%s. %s.", title, link))
 }
 
 var urlRegex = regexp.MustCompile(`<a [^>]*?href="([^">]*?)">(.*?)</a>`)
@@ -288,19 +302,12 @@ func getMessageBody(htmlText string) string {
 	return htmlText
 }
 
-// getMatrixTxnID computes the transaction ID to ensure idempotency
-func getMatrixTxnID(payload []byte) (string, error) {
-	if len(payload) >= matrixPayloadSizeLimit {
-		return "", fmt.Errorf("getMatrixTxnID: payload size %d > %d", len(payload), matrixPayloadSizeLimit)
-	}
-
-	h := sha1.New()
-	_, err := h.Write(payload)
-	if err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
+// getMatrixStateKey computes the transaction ID to ensure idempotency
+func getMatrixStateKey(t *webhook_model.HookTask) string {
+	// we hash the original payload (and not the sent text), because we want multiple matrix messages,
+	// even if the resulting text is identical (like "New comment on pull request #1234 <name> by <sender>")
+	hash := sha256.Sum256([]byte(t.PayloadContent))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 // MatrixLinkToRef Matrix-formatter link to a repo ref

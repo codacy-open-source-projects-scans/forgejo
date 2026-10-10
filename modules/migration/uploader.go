@@ -1,3 +1,4 @@
+// Copyright 2026 The Forgejo Authors. All rights reserved.
 // Copyright 2019 The Gitea Authors. All rights reserved.
 // Copyright 2018 Jonas Franz. All rights reserved.
 // SPDX-License-Identifier: MIT
@@ -15,6 +16,7 @@ type Uploader interface {
 	CreateLabels(labels ...*Label) error
 	CreateIssues(issues ...*Issue) error
 	CreateComments(comments ...*Comment) error
+	EnableCommentReplyTo()
 	CreatePullRequests(prs ...*PullRequest) error
 	CreateReviews(reviews ...*Review) error
 	Rollback() error

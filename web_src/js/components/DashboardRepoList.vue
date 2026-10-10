@@ -1,7 +1,7 @@
 <script>
 import $ from 'jquery';
-import {SvgIcon} from '../svg.js';
-import {GET} from '../modules/fetch.js';
+import {SvgIcon} from '../svg.ts';
+import {GET} from '../modules/fetch.ts';
 
 const {appSubUrl, assetUrlPrefix, pageData} = window.config;
 
@@ -9,6 +9,7 @@ const {appSubUrl, assetUrlPrefix, pageData} = window.config;
 const commitStatus = {
   pending: {name: 'octicon-dot-fill', color: 'yellow'},
   success: {name: 'octicon-check', color: 'green'},
+  skipped: {name: 'octicon-skip', color: 'grey'},
   error: {name: 'gitea-exclamation', color: 'red'},
   failure: {name: 'octicon-x', color: 'red'},
   warning: {name: 'gitea-exclamation', color: 'yellow'},
@@ -444,7 +445,17 @@ export default {
         <ul class="repo-owner-name-list">
           <li class="tw-flex tw-items-center tw-py-2" v-for="org in organizations" :key="org.name">
             <a class="repo-list-link muted" :href="subUrl + '/' + encodeURIComponent(org.name)">
-              <svg-icon name="octicon-organization" :size="16" class="repo-list-icon"/>
+              <img
+                v-if="org.avatar_url"
+                class="ui avatar repo-list-icon"
+                :src="org.avatar_url"
+                alt=""
+                width="16"
+                height="16"
+                loading="lazy"
+                @error="org.avatar_url = ''"
+              >
+              <svg-icon v-else name="octicon-organization" :size="16" class="repo-list-icon"/>
               <div class="text truncate">{{ org.name }}</div>
               <div><!-- div to prevent underline of label on hover -->
                 <span class="ui label" v-if="org.org_visibility !== 'public'">
@@ -466,7 +477,7 @@ export default {
 ul {
   list-style: none;
   margin: 0;
-  padding-left: 0;
+  padding-inline-start: 0;
 }
 
 ul li {
@@ -487,8 +498,7 @@ ul li:not(:last-child) {
 }
 
 .repos-filter .item {
-  padding-left: 6px !important;
-  padding-right: 6px !important;
+  padding-inline: 6px !important;
 }
 
 .repo-list-link {
@@ -505,15 +515,14 @@ ul li:not(:last-child) {
 
 .repo-list-icon {
   min-width: 16px;
-  margin-right: 2px;
+  margin-inline-end: 2px;
 }
 
 /* octicon-mirror has no padding inside the SVG */
 .repo-list-icon.octicon-mirror {
   width: 14px;
   min-width: 14px;
-  margin-left: 1px;
-  margin-right: 3px;
+  margin-inline: 1px 3px;
 }
 
 .repo-owner-name-list li.active {

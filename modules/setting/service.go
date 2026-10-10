@@ -82,11 +82,14 @@ var Service = struct {
 	NoReplyAddress                          string
 	UserLocationMapURL                      string
 	EnableUserHeatmap                       bool
+	AddMembersByInvitations                 bool
+	TeamInvitationExpiryDays                int64
 	AutoWatchNewRepos                       bool
 	AutoWatchOnChanges                      bool
 	DefaultOrgMemberVisible                 bool
 	UserDeleteWithCommentsMaxTime           time.Duration
 	ValidSiteURLSchemes                     []string
+	UsernamePrefix                          string
 	UsernameCooldownPeriod                  int64
 	MaxUserRedirects                        int64
 
@@ -245,6 +248,8 @@ func loadServiceFrom(rootCfg ConfigProvider) {
 	Service.NoReplyAddress = sec.Key("NO_REPLY_ADDRESS").MustString("noreply." + Domain)
 	Service.UserLocationMapURL = sec.Key("USER_LOCATION_MAP_URL").MustString("https://www.openstreetmap.org/search?query=")
 	Service.EnableUserHeatmap = sec.Key("ENABLE_USER_HEATMAP").MustBool(true)
+	Service.AddMembersByInvitations = sec.Key("ADD_MEMBERS_BY_INVITATIONS").MustBool(false)
+	Service.TeamInvitationExpiryDays = sec.Key("TEAM_INVITATION_EXPIRY_DAYS").MustInt64(14)
 	Service.AutoWatchNewRepos = sec.Key("AUTO_WATCH_NEW_REPOS").MustBool(true)
 	Service.AutoWatchOnChanges = sec.Key("AUTO_WATCH_ON_CHANGES").MustBool(false)
 	modes := sec.Key("ALLOWED_USER_VISIBILITY_MODES").Strings(",")
@@ -277,7 +282,11 @@ func loadServiceFrom(rootCfg ConfigProvider) {
 	Service.DefaultOrgVisibility = sec.Key("DEFAULT_ORG_VISIBILITY").In("public", structs.ExtractKeysFromMapString(structs.VisibilityModes))
 	Service.DefaultOrgVisibilityMode = structs.VisibilityModes[Service.DefaultOrgVisibility]
 	Service.DefaultOrgMemberVisible = sec.Key("DEFAULT_ORG_MEMBER_VISIBLE").MustBool()
-	Service.UserDeleteWithCommentsMaxTime = sec.Key("USER_DELETE_WITH_COMMENTS_MAX_TIME").MustDuration(0)
+	var err error
+	Service.UserDeleteWithCommentsMaxTime, err = sec.Key("USER_DELETE_WITH_COMMENTS_MAX_TIME").MustDuration(0)
+	if err != nil {
+		log.Fatal("Failed to parse duration for [service].USER_DELETE_WITH_COMMENTS_MAX_TIME: %v", err)
+	}
 	sec.Key("VALID_SITE_URL_SCHEMES").MustString("http,https")
 	Service.ValidSiteURLSchemes = sec.Key("VALID_SITE_URL_SCHEMES").Strings(",")
 	schemes := make([]string, 0, len(Service.ValidSiteURLSchemes))
@@ -288,6 +297,11 @@ func loadServiceFrom(rootCfg ConfigProvider) {
 		}
 	}
 	Service.ValidSiteURLSchemes = schemes
+
+	// A pattern from ValidSiteURLSchemes must be valid for use in HTML <input pattern=""> validation
+	_ = regexp.MustCompile(`^(?:` + ValidSiteURLPattern() + `)$`)
+
+	Service.UsernamePrefix = sec.Key("USERNAME_PREFIX").MustString("")
 	Service.UsernameCooldownPeriod = sec.Key("USERNAME_COOLDOWN_PERIOD").MustInt64(0)
 
 	// Only set a default if USERNAME_COOLDOWN_PERIOD's feature is active.
@@ -300,6 +314,26 @@ func loadServiceFrom(rootCfg ConfigProvider) {
 	mustMapSetting(rootCfg, "service.explore", &Service.Explore)
 
 	loadOpenIDSetting(rootCfg)
+}
+
+// Returns a regex pattern string based on the current value of
+// `Service.ValidSiteURLSchemes`.
+//
+// This pattern string is meant to be used as the value of an <input> element's
+// `pattern` attribute. As such, this function assumes that the pattern will be
+// implicitly wrapped with `^(?:` and `)$`, such that the match is required
+// against the entire input value, i.e., `^(?:<pattern>)$`.
+//
+// See [MDN] for more details.
+//
+// [MDN]: https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#pattern
+func ValidSiteURLPattern() string {
+	// While technically possible, returning a compiled Regexp from this seems heavy-handed.
+	// We could store a compiled Regexp instead of generating on the fly, but that complicates testing!
+	// Much easier to simply edit `Service.ValidSiteURLSchemes for a given test and proceed.
+	// We run the compiler against the initial config value anyway, so this string always works in production.
+	schemes := strings.Join(Service.ValidSiteURLSchemes, "|")
+	return `(` + schemes + `)://.+`
 }
 
 func loadOpenIDSetting(rootCfg ConfigProvider) {

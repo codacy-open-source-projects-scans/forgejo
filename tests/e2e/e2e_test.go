@@ -10,6 +10,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -26,32 +27,43 @@ import (
 	"forgejo.org/modules/web"
 	"forgejo.org/routers"
 	"forgejo.org/tests"
+	"forgejo.org/tests/internaltest"
 )
 
 var testE2eWebRoutes *web.Route
 
 func TestMain(m *testing.M) {
+	tests.DelegateToMainApp()
+
 	defer log.GetManager().Close()
 
 	managerCtx, cancel := context.WithCancel(context.Background())
 	graceful.InitManager(managerCtx)
 	defer cancel()
 
-	tests.InitTest(true)
+	tests.InitTest()
 	initChangedFiles()
-	testE2eWebRoutes = routers.NormalRoutes()
 
-	err := unittest.InitFixtures(
-		unittest.FixturesOptions{
-			Dir:  filepath.Join(setting.AppWorkPath, "models/fixtures/"),
-			Base: setting.AppWorkPath,
-			Dirs: []string{"tests/e2e/fixtures/"},
-		},
-	)
+	fixtureOptions := unittest.FixturesOptions{
+		Dir:  filepath.Join(setting.AppWorkPath, "models/fixtures/"),
+		Base: setting.AppWorkPath,
+		Dirs: []string{"tests/e2e/fixtures/"},
+	}
+
+	err := unittest.InitFixtures(fixtureOptions)
 	if err != nil {
 		fmt.Printf("Error initializing test database: %v\n", err)
 		os.Exit(1)
 	}
+
+	testE2eWebRoutes = routers.NormalRoutes()
+	testE2eWebRoutes.R.Patch("/_e2e/fixtures/reload", func(_ http.ResponseWriter, _ *http.Request) {
+		err := unittest.LoadFixtures()
+		if err != nil {
+			fmt.Printf("Error reloading fixtures: %s\n", err)
+			os.Exit(1)
+		}
+	})
 
 	exitVal := m.Run()
 
@@ -72,8 +84,10 @@ func TestMain(m *testing.M) {
 
 // TestE2e should be the only test e2e necessary. It will collect all "*.test.e2e.ts" files in this directory and build a test for each.
 func TestE2e(t *testing.T) {
+	internaltest.NewInternalTestServer(t, nil)
+
 	// Find the paths of all e2e test files in test directory.
-	searchGlob := filepath.Join(filepath.Dir(setting.AppPath), "tests", "e2e", "*.test.e2e.ts")
+	searchGlob := filepath.Join(setting.AppWorkPath, "tests", "e2e", "*.test.e2e.ts")
 	paths, err := filepath.Glob(searchGlob)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +117,11 @@ func TestE2e(t *testing.T) {
 		}
 
 		t.Run(testname, func(t *testing.T) {
-			if testname == "buttons.test.e2e" || testname == "dropdown.test.e2e" || testname == "modal.test.e2e" {
+			// Add test-specific fixures or config options.
+			// Note: this breaks test execution through Playwright Extension for VSCode
+			// Note: these tests only work properly via `make test-e2e-sqlite#filename`
+			if testname == "buttons.test.e2e" || testname == "dropdown.test.e2e" || testname == "modal.test.e2e" || testname == "hashbox.test.e2e" {
+				// Allow access to /-/demo/
 				defer test.MockVariableValue(&setting.IsProd, false)()
 				defer test.MockVariableValue(&testE2eWebRoutes, routers.NormalRoutes())()
 			}
@@ -120,7 +138,7 @@ func TestE2e(t *testing.T) {
 
 			// Default 2 minute timeout
 			onForgejoRun(t, func(*testing.T, *url.URL) {
-				defer DeclareGitRepos(t)()
+				DeclareGitRepos(t)
 				thisTest := runArgs
 				// when all tests are run, use unique artifacts directories per test to preserve artifacts from other tests
 				if testVisual {
@@ -130,6 +148,7 @@ func TestE2e(t *testing.T) {
 				cmd := exec.Command(runArgs[0], thisTest...)
 				cmd.Env = os.Environ()
 				cmd.Env = append(cmd.Env, fmt.Sprintf("GITEA_URL=%s", setting.AppURL))
+				cmd.Dir = setting.AppWorkPath
 
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr

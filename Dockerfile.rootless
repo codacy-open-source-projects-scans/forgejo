@@ -1,6 +1,6 @@
 FROM --platform=$BUILDPLATFORM data.forgejo.org/oci/xx AS xx
 
-FROM --platform=$BUILDPLATFORM data.forgejo.org/oci/golang:1.26-alpine3.23 AS build-env
+FROM --platform=$BUILDPLATFORM data.forgejo.org/oci/golang:1.27-alpine3.24 AS build-env
 
 ARG GOPROXY
 ENV GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}
@@ -9,6 +9,10 @@ ARG RELEASE_VERSION
 ARG TAGS="sqlite sqlite_unlock_notify"
 ENV TAGS="bindata timetzdata $TAGS"
 ARG CGO_EXTRA_CFLAGS
+
+# it's set to local by default in the base image
+# we want to use auto to let go choose the right toolchain
+ENV GOTOOLCHAIN=auto
 
 #
 # Transparently cross compile for the target platform
@@ -49,7 +53,7 @@ RUN chmod 755 /tmp/local/usr/local/bin/docker-entrypoint.sh \
               /go/src/forgejo.org/environment-to-ini
 RUN chmod 644 /go/src/forgejo.org/contrib/autocompletion/bash_autocomplete
 
-FROM data.forgejo.org/oci/alpine:3.23
+FROM data.forgejo.org/oci/alpine:3.24
 ARG RELEASE_VERSION
 LABEL maintainer="contact@forgejo.org" \
       org.opencontainers.image.authors="Forgejo" \
@@ -86,8 +90,11 @@ RUN addgroup \
     -G git \
     git
 
-RUN mkdir -p /var/lib/gitea
-RUN chown git:git /var/lib/gitea
+RUN mkdir -p /var/lib/gitea && \
+  chown git:git /var/lib/gitea
+
+RUN mkdir -p /run/forgejo && \
+  chown git:git /run/forgejo
 
 COPY --from=build-env /tmp/local /
 RUN cd /usr/local/bin ; ln -s gitea forgejo

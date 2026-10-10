@@ -52,13 +52,11 @@ After=network.target
 # Uncomment the next line if you have repos with lots of files and get a HTTP 500 error because of that
 # LimitNOFILE=524288:524288
 RestartSec=2s
-Type=simple
+Type=notify
 User=git
 Group=git
 WorkingDirectory=/var/lib/forgejo/
-# If using Unix socket: tells systemd to create the /run/forgejo folder, which will contain the forgejo.sock file
-# (manually creating /run/forgejo doesn't work, because it would not persist across reboots)
-#RuntimeDirectory=forgejo
+RuntimeDirectory=forgejo
 ExecStart=/usr/local/bin/forgejo web --config /etc/forgejo/app.ini
 Restart=always
 Environment=USER=git HOME=/home/git FORGEJO_WORK_DIR=/var/lib/forgejo

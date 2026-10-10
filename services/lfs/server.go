@@ -4,7 +4,6 @@
 package lfs
 
 import (
-	stdCtx "context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -27,15 +26,12 @@ import (
 	quota_model "forgejo.org/models/quota"
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unit"
-	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/json"
 	lfs_module "forgejo.org/modules/lfs"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/storage"
 	"forgejo.org/services/context"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
 // requestContext contain variables from the HTTP request.
@@ -43,14 +39,6 @@ type requestContext struct {
 	User          string
 	Repo          string
 	Authorization string
-}
-
-// Claims is a JWT Token Claims
-type Claims struct {
-	RepoID int64
-	Op     string
-	UserID int64
-	jwt.RegisteredClaims
 }
 
 // DownloadLink builds a URL to download the object.
@@ -183,7 +171,7 @@ func BatchHandler(ctx *context.Context) {
 	}
 
 	if isUpload {
-		ok, err := quota_model.EvaluateForUser(ctx, ctx.Doer.ID, quota_model.LimitSubjectSizeGitLFS)
+		ok, err := quota_model.EvaluateForUser(ctx, repository.OwnerID, quota_model.LimitSubjectSizeGitLFS)
 		if err != nil {
 			log.Error("quota_model.EvaluateForUser: %v", err)
 			writeStatus(ctx, http.StatusInternalServerError)
@@ -191,6 +179,7 @@ func BatchHandler(ctx *context.Context) {
 		}
 		if !ok {
 			writeStatusMessage(ctx, http.StatusRequestEntityTooLarge, "quota exceeded")
+			return
 		}
 	}
 
@@ -204,10 +193,10 @@ func BatchHandler(ctx *context.Context) {
 	var responseObjects []*lfs_module.ObjectResponse
 
 	for _, p := range br.Objects {
-		if !p.IsValid() {
+		if err := p.Validate(); err != nil {
 			responseObjects = append(responseObjects, buildObjectResponse(rc, p, false, false, &lfs_module.ObjectError{
 				Code:    http.StatusUnprocessableEntity,
-				Message: "Oid or size are invalid",
+				Message: fmt.Sprintf("Oid or size are invalid (oid: %s, size: %d)", p.Oid, p.Size),
 			}))
 			continue
 		}
@@ -220,7 +209,7 @@ func BatchHandler(ctx *context.Context) {
 		}
 
 		meta, err := git_model.GetLFSMetaObjectByOid(ctx, repository.ID, p.Oid)
-		if err != nil && err != git_model.ErrLFSObjectNotExist {
+		if err != nil && !(err == git_model.ErrLFSObjectNotExist || err == lfs_module.ErrInvalidOIDFormat) {
 			log.Error("Unable to get LFS MetaObject [%s] for %s/%s. Error: %v", p.Oid, rc.User, rc.Repo, err)
 			writeStatus(ctx, http.StatusInternalServerError)
 			return
@@ -298,9 +287,9 @@ func UploadHandler(ctx *context.Context) {
 		writeStatusMessage(ctx, http.StatusUnprocessableEntity, err.Error())
 	}
 
-	if !p.IsValid() {
+	if err = p.Validate(); err != nil {
 		log.Trace("Attempt to access invalid LFS OID[%s] in %s/%s", p.Oid, rc.User, rc.Repo)
-		writeStatus(ctx, http.StatusUnprocessableEntity)
+		writeStatusMessage(ctx, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
@@ -317,8 +306,8 @@ func UploadHandler(ctx *context.Context) {
 		return
 	}
 
-	if exists {
-		ok, err := quota_model.EvaluateForUser(ctx, ctx.Doer.ID, quota_model.LimitSubjectSizeGitLFS)
+	if !exists {
+		ok, err := quota_model.EvaluateForUser(ctx, repository.OwnerID, quota_model.LimitSubjectSizeGitLFS)
 		if err != nil {
 			log.Error("quota_model.EvaluateForUser: %v", err)
 			writeStatus(ctx, http.StatusInternalServerError)
@@ -326,6 +315,7 @@ func UploadHandler(ctx *context.Context) {
 		}
 		if !ok {
 			writeStatusMessage(ctx, http.StatusRequestEntityTooLarge, "quota exceeded")
+			return
 		}
 	}
 
@@ -389,12 +379,17 @@ func VerifyHandler(ctx *context.Context) {
 
 	rc := getRequestContext(ctx)
 
+	// Only catches invalid OIDs, but the size case is covered later.
 	meta := getAuthenticatedMeta(ctx, rc, p, true)
 	if meta == nil {
 		return
 	}
 
 	contentStore := lfs_module.NewContentStore()
+	// Implicitly catches pointers with invalid sizes (i.e. negative size, as the
+	// size of a file in the content store should never be equal to zero). Unlike
+	// in other functions, we don't care about reporting back whether the error
+	// was caused by a malformed oid or a wrong size; it's only "not found".
 	ok, err := contentStore.Verify(meta.Pointer)
 
 	status := http.StatusOK
@@ -423,9 +418,10 @@ func getRequestContext(ctx *context.Context) *requestContext {
 }
 
 func getAuthenticatedMeta(ctx *context.Context, rc *requestContext, p lfs_module.Pointer, requireWrite bool) *git_model.LFSMetaObject {
-	if !p.IsValid() {
+	// NOTE: p.Size is not necessarily valid, as the passed pointer object can simply contain the OID.
+	if !p.IsOIDValid() {
 		log.Info("Attempt to access invalid LFS OID[%s] in %s/%s", p.Oid, rc.User, rc.Repo)
-		writeStatusMessage(ctx, http.StatusUnprocessableEntity, "Oid or size are invalid")
+		writeStatusMessage(ctx, http.StatusUnprocessableEntity, lfs_module.ErrInvalidOIDFormat.Error())
 		return nil
 	}
 
@@ -436,7 +432,7 @@ func getAuthenticatedMeta(ctx *context.Context, rc *requestContext, p lfs_module
 
 	meta, err := git_model.GetLFSMetaObjectByOid(ctx, repository.ID, p.Oid)
 	if err != nil {
-		log.Error("Unable to get LFS OID[%s] Error: %v", p.Oid, err)
+		log.Error("Unable to get LFS OID[%s] in %s/%s. Error: %v", p.Oid, rc.User, rc.Repo, err)
 		writeStatus(ctx, http.StatusNotFound)
 		return nil
 	}
@@ -447,12 +443,12 @@ func getAuthenticatedMeta(ctx *context.Context, rc *requestContext, p lfs_module
 func getAuthenticatedRepository(ctx *context.Context, rc *requestContext, requireWrite bool) *repo_model.Repository {
 	repository, err := repo_model.GetRepositoryByOwnerAndName(ctx, rc.User, rc.Repo)
 	if err != nil {
-		log.Error("Unable to get repository: %s/%s Error: %v", rc.User, rc.Repo, err)
+		log.Error("Unable to get repository: %s/%s. Error: %v", rc.User, rc.Repo, err)
 		writeStatus(ctx, http.StatusNotFound)
 		return nil
 	}
 
-	if !authenticate(ctx, repository, rc.Authorization, false, requireWrite) {
+	if !authenticate(ctx, repository, false, requireWrite) {
 		requireAuth(ctx)
 		return nil
 	}
@@ -523,7 +519,10 @@ func writeStatusMessage(ctx *context.Context, status int, message string) {
 	ctx.Resp.Header().Set("Content-Type", lfs_module.MediaType)
 	ctx.Resp.WriteHeader(status)
 
-	er := lfs_module.ErrorResponse{Message: message}
+	er := lfs_module.ErrorResponse{
+		Message:          message,
+		DocumentationURL: "https://codeberg.org/forgejo/forgejo/issues",
+	}
 
 	enc := json.NewEncoder(ctx.Resp)
 	if err := enc.Encode(er); err != nil {
@@ -533,7 +532,7 @@ func writeStatusMessage(ctx *context.Context, status int, message string) {
 
 // authenticate uses the authorization string to determine whether
 // or not to proceed. This server assumes an HTTP Basic auth format.
-func authenticate(ctx *context.Context, repository *repo_model.Repository, authorization string, requireSigned, requireWrite bool) bool {
+func authenticate(ctx *context.Context, repository *repo_model.Repository, requireSigned, requireWrite bool) bool {
 	accessMode := perm.AccessModeRead
 	if requireWrite {
 		accessMode = perm.AccessModeWrite
@@ -555,78 +554,21 @@ func authenticate(ctx *context.Context, repository *repo_model.Repository, autho
 		return accessMode <= perm.AccessModeWrite
 	}
 
-	// ctx.IsSigned is unnecessary here, this will be checked in perm.CanAccess
-	perm, err := access_model.GetUserRepoPermission(ctx, repository, ctx.Doer)
+	// ctx.IsSigned is unnecessary here, this will be checked in perm.CanAccess. Usage of ctx.Authentication.Reducer()
+	// or .Scope() is also unnecessary here in `authenticate` -- context.CheckRepoScopedToken is used after
+	// authentication to provide authorization checks.
+	repoPerm, err := access_model.GetUserRepoPermission(ctx, repository, ctx.Doer)
 	if err != nil {
 		log.Error("Unable to GetUserRepoPermission for user %-v in repo %-v Error: %v", ctx.Doer, repository, err)
 		return false
 	}
 
-	canRead := perm.CanAccess(accessMode, unit.TypeCode)
+	canRead := repoPerm.CanAccess(accessMode, unit.TypeCode)
 	if canRead && (!requireSigned || ctx.IsSigned) {
 		return true
 	}
 
-	user, err := parseToken(ctx, authorization, repository, accessMode)
-	if err != nil {
-		// Most of these are Warn level - the true internal server errors are logged in parseToken already
-		log.Warn("Authentication failure for provided token with Error: %v", err)
-		return false
-	}
-	ctx.Doer = user
-	return true
-}
-
-func handleLFSToken(ctx stdCtx.Context, tokenSHA string, target *repo_model.Repository, mode perm.AccessMode) (*user_model.User, error) {
-	token, err := jwt.ParseWithClaims(tokenSHA, &Claims{}, func(t *jwt.Token) (any, error) {
-		k := setting.LFS.SigningKey
-		if t.Method != k.SigningMethod() {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return k.VerifyKey(), nil
-	})
-	if err != nil {
-		return nil, errors.New("invalid token")
-	}
-
-	claims, claimsOk := token.Claims.(*Claims)
-	if !token.Valid || !claimsOk {
-		return nil, errors.New("invalid token claim")
-	}
-
-	if claims.RepoID != target.ID {
-		return nil, errors.New("invalid token claim")
-	}
-
-	if mode == perm.AccessModeWrite && claims.Op != "upload" {
-		return nil, errors.New("invalid token claim")
-	}
-
-	u, err := user_model.GetUserByID(ctx, claims.UserID)
-	if err != nil {
-		log.Error("Unable to GetUserById[%d]: Error: %v", claims.UserID, err)
-		return nil, err
-	}
-	return u, nil
-}
-
-func parseToken(ctx stdCtx.Context, authorization string, target *repo_model.Repository, mode perm.AccessMode) (*user_model.User, error) {
-	if authorization == "" {
-		return nil, errors.New("no token")
-	}
-
-	parts := strings.SplitN(authorization, " ", 2)
-	if len(parts) != 2 {
-		return nil, errors.New("no token")
-	}
-	tokenSHA := parts[1]
-	switch strings.ToLower(parts[0]) {
-	case "bearer":
-		fallthrough
-	case "token":
-		return handleLFSToken(ctx, tokenSHA, target, mode)
-	}
-	return nil, errors.New("token not found")
+	return false
 }
 
 func requireAuth(ctx *context.Context) {

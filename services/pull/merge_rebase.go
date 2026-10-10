@@ -73,7 +73,7 @@ func doMergeRebaseFastForward(ctx *mergeContext) error {
 	}
 
 	if newMessage != "" {
-		if err := git.NewCommand(ctx, "commit", "--amend").AddOptionFormat("--message=%s", newMessage).Run(&git.RunOpts{Dir: ctx.tmpBasePath}); err != nil {
+		if err := git.NewCommand(ctx, "commit", "--amend").AddArguments("--file=-").Run(&git.RunOpts{Dir: ctx.tmpBasePath, Stdin: strings.NewReader(newMessage)}); err != nil {
 			log.Error("Unable to amend commit message: %v", err)
 			return err
 		}

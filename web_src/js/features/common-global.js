@@ -4,15 +4,16 @@ import {clippie} from 'clippie';
 import {createDropzone} from './dropzone.js';
 import {showGlobalErrorMessage} from '../bootstrap.js';
 import {handleGlobalEnterQuickSubmit} from './comp/QuickSubmit.js';
-import {svg} from '../svg.js';
+import {svg} from '../svg.ts';
 import {hideElem, showElem, toggleElem, resetForms, initSubmitEventPolyfill, submitEventSubmitter} from '../utils/dom.js';
 import {htmlEscape} from 'escape-goat';
 import {showTemporaryTooltip} from '../modules/tippy.js';
-import {confirmModal} from './comp/ConfirmModal.js';
 import {showErrorToast} from '../modules/toast.js';
-import {request, POST, GET} from '../modules/fetch.js';
-import '../htmx.js';
+import {request, POST, GET} from '../modules/fetch.ts';
+import '../htmx.ts';
 import {initTab} from '../modules/tab.ts';
+import {initGlobalShowModal} from './show-modal.ts';
+import {showModal} from '../modules/modal.ts';
 
 const {appUrl, appSubUrl, i18n} = window.config;
 
@@ -93,13 +94,19 @@ async function fetchActionDoRequest(actionElem, url, opt) {
       }
       return;
     } else if (resp.status >= 400 && resp.status < 500) {
-      const data = await resp.json();
-      // the code was quite messy, sometimes the backend uses "err", sometimes it uses "error", and even "user_error"
-      // but at the moment, as a new approach, we only use "errorMessage" here, backend can use JSONError() to respond.
-      if (data.errorMessage) {
-        showErrorToast(data.errorMessage, {useHtmlBody: data.renderFormat === 'html'});
-      } else {
-        showErrorToast(`server error: ${resp.status}`);
+      const text = await resp.text();
+      try {
+        const data = JSON.parse(text);
+        // the code was quite messy, sometimes the backend uses "err", sometimes it uses "error", and even "user_error"
+        // but at the moment, as a new approach, we only use "errorMessage" here, backend can use JSONError() to respond.
+        if (data.errorMessage) {
+          showErrorToast(data.errorMessage, {useHtmlBody: data.renderFormat === 'html'});
+        } else {
+          showErrorToast(`server error: ${resp.status}`);
+        }
+      } catch {
+        // if the response is not valid JSON (e.g. plain text "Quota exceeded."), show it directly
+        showErrorToast(text.trim() || `server error: ${resp.status}`);
       }
     } else {
       showErrorToast(`server error: ${resp.status}`);
@@ -203,6 +210,20 @@ export function initGlobalCommon() {
   initSubmitEventPolyfill();
   document.addEventListener('submit', formFetchAction);
   document.addEventListener('click', linkAction);
+
+  // Remove stale loader when navigating back using browser nav
+  window.addEventListener('pageshow', (event) => {
+    // Trigger if page is restored from cache
+    if (event.persisted) {
+      // Find all forms that use the fetch action
+      const fetchForms = document.querySelectorAll('form.form-fetch-action');
+
+      for (const form of fetchForms) {
+        // Remove form-level loading states
+        form.classList.remove('is-loading');
+      }
+    }
+  });
 }
 
 // Sometimes unrelated inputs are stored in forms for convenience, for example,
@@ -234,11 +255,13 @@ export async function initDropzone(dropzoneEl, zone = undefined) {
     input.name = 'files';
     input.type = 'hidden';
     input.value = data.uuid;
+    $(input).data('ays-orig', 'dirty'); // manually mark the field "dirty" using a dummy "original value"
     const inputPath = document.createElement('input');
     inputPath.name = `files_fullpath[${data.uuid}]`;
     inputPath.type = 'hidden';
     inputPath.value = htmlEscape(file.fullPath || file.name);
     dropzoneEl.querySelector('.files').append(input, inputPath);
+    dropzoneEl.dispatchEvent(new Event('rescan', {bubbles: true})); // re-check form inputs (we just added one, so probably "dirty")
 
     // Create a "Copy Link" element, to conveniently copy the image
     // or file link as Markdown to the clipboard
@@ -283,6 +306,7 @@ export async function initDropzone(dropzoneEl, zone = undefined) {
       this.on('removedfile', async (file) => {
         document.getElementById(file.uuid)?.remove();
         document.querySelector(`input[name="files_fullpath[${file.uuid}]"]`)?.remove();
+        dropzoneEl.dispatchEvent(new Event('checkform', {bubbles: true})); // re-check form inputs (is it still "dirty"? have we removed all file previews?)
         if (disableRemovedfileEvent) return;
         if (dropzoneEl.getAttribute('data-remove-url') && !fileUuidDict[file.uuid].submitted) {
           try {
@@ -349,7 +373,6 @@ export async function initDropzone(dropzoneEl, zone = undefined) {
 async function linkAction(e) {
   // A "link-action" can post AJAX request to its "data-url"
   // Then the browser is redirected to: the "redirect" in response, or "data-redirect" attribute, or current URL by reloading.
-  // If the "link-action" has "data-modal-confirm" attribute, a confirm modal dialog will be shown before taking action.
   const el = e.target.closest('.link-action');
   if (!el) return;
 
@@ -361,16 +384,14 @@ async function linkAction(e) {
     el.disabled = false;
   };
 
-  const modalConfirmContent = htmlEscape(el.getAttribute('data-modal-confirm') || '');
-  if (!modalConfirmContent) {
+  // If the "link-action" has "data-modal-id" attribute, a confirm modal dialog will be shown before taking action.
+  const modalID = el.getAttribute('data-modal-id');
+  if (!modalID) {
     await doRequest();
     return;
   }
 
-  const isRisky = el.classList.contains('red') || el.classList.contains('yellow') || el.classList.contains('orange') || el.classList.contains('negative');
-  if (await confirmModal({content: modalConfirmContent, buttonColor: isRisky ? 'orange' : 'primary'})) {
-    await doRequest();
-  }
+  showModal(modalID, doRequest);
 }
 
 export function initGlobalLinkActions() {
@@ -436,53 +457,6 @@ export function initGlobalLinkActions() {
     } else {
       showDeletePopup(e);
     }
-  });
-}
-
-export function initGlobalShowModal() {
-  // A ".show-modal" button will show a modal dialog defined by its "data-modal" attribute.
-  // Each "data-modal-{target}" attribute will be filled to target element's value or text-content.
-  // * First, try to query '#target'
-  // * Then, try to query '.target'
-  // * Then, try to query 'target' as HTML tag
-  // If there is a ".{attr}" part like "data-modal-form.action", then the form's "action" attribute will be set.
-  $('.show-modal').on('click', function (e) {
-    e.preventDefault();
-    const modalSelector = this.getAttribute('data-modal');
-    const $modal = $(modalSelector);
-    if (!$modal.length) {
-      throw new Error('no modal for this action');
-    }
-    const modalAttrPrefix = 'data-modal-';
-    for (const attrib of this.attributes) {
-      if (!attrib.name.startsWith(modalAttrPrefix)) {
-        continue;
-      }
-
-      const attrTargetCombo = attrib.name.substring(modalAttrPrefix.length);
-      const [attrTargetName, attrTargetAttr] = attrTargetCombo.split('.');
-      // try to find target by: "#target" -> ".target" -> "target tag"
-      let $attrTarget = $modal.find(`#${attrTargetName}`);
-      if (!$attrTarget.length) $attrTarget = $modal.find(`.${attrTargetName}`);
-      if (!$attrTarget.length) $attrTarget = $modal.find(`${attrTargetName}`);
-      if (!$attrTarget.length) continue; // TODO: show errors in dev mode to remind developers that there is a bug
-
-      if (attrTargetAttr) {
-        $attrTarget[0][attrTargetAttr] = attrib.value;
-      } else if ($attrTarget[0].matches('input, textarea')) {
-        $attrTarget.val(attrib.value); // FIXME: add more supports like checkbox
-      } else {
-        $attrTarget.text(attrib.value); // FIXME: it should be more strict here, only handle div/span/p
-      }
-    }
-
-    $modal.modal('setting', {
-      onApprove: () => {
-        // "form-fetch-action" can handle network errors gracefully,
-        // so keep the modal dialog to make users can re-submit the form if anything wrong happens.
-        if ($modal.find('.form-fetch-action').length) return false;
-      },
-    }).modal('show');
   });
 }
 

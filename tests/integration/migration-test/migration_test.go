@@ -29,19 +29,19 @@ import (
 	"forgejo.org/modules/util"
 	"forgejo.org/tests"
 
+	"code.forgejo.org/xorm/xorm"
 	_ "github.com/jackc/pgx/v5/stdlib" // Import pgx driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"xorm.io/xorm"
 )
 
 var currentEngine *xorm.Engine
 
 func getRoot(t *testing.T) string {
 	t.Helper()
-	root := base.SetupGiteaRoot()
+	root := base.SetupProjectRoot()
 	if root == "" {
-		t.Fatal("Environment variable $GITEA_ROOT not set")
+		t.Fatal("Environment variable $PROJECT_ROOT not set")
 	}
 	return root
 }
@@ -51,27 +51,24 @@ func initMigrationTest(t *testing.T) func() {
 
 	deferFn := tests.PrintCurrentTest(t, 2)
 	root := getRoot(t)
-	setting.AppPath = path.Join(root, "gitea")
-	if _, err := os.Stat(setting.AppPath); err != nil {
-		tests.Printf("Could not find gitea binary at %s\n", setting.AppPath)
-		os.Exit(1)
-	}
+	setting.AppPath = path.Join(root, "migration-test-should-not-need-a-binary") // use RunMainAppWithStdin if a binary is needed
+	setting.AppWorkPath = root
 
-	giteaConf := os.Getenv("GITEA_CONF")
-	if giteaConf == "" {
-		tests.Printf("Environment variable $GITEA_CONF not set\n")
+	projectConf := os.Getenv("PROJECT_CONF")
+	if projectConf == "" {
+		tests.Printf("Environment variable $PROJECT_CONF not set\n")
 		os.Exit(1)
-	} else if !path.IsAbs(giteaConf) {
-		setting.CustomConf = path.Join(root, giteaConf)
+	} else if !path.IsAbs(projectConf) {
+		setting.CustomConf = path.Join(root, projectConf)
 	} else {
-		setting.CustomConf = giteaConf
+		setting.CustomConf = projectConf
 	}
 
 	unittest.InitSettings()
 
 	assert.NotEmpty(t, setting.RepoRootPath)
 	require.NoError(t, util.RemoveAll(setting.RepoRootPath))
-	require.NoError(t, unittest.CopyDir(path.Join(filepath.Dir(setting.AppPath), "tests/gitea-repositories-meta"), setting.RepoRootPath))
+	require.NoError(t, unittest.CopyDir(path.Join(setting.AppWorkPath, "tests/gitea-repositories-meta"), setting.RepoRootPath))
 	ownerDirs, err := os.ReadDir(setting.RepoRootPath)
 	if err != nil {
 		require.NoError(t, err, "unable to read the new repo root: %v\n", err)
@@ -172,7 +169,7 @@ func restoreOldDB(t *testing.T, version string) bool {
 		require.NoError(t, err)
 		defer db.Close()
 
-		databaseName := strings.SplitN(setting.Database.Name, "?", 2)[0]
+		databaseName, _, _ := strings.Cut(setting.Database.Name, "?")
 
 		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
 		require.NoError(t, err)

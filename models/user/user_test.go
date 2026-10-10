@@ -14,11 +14,13 @@ import (
 
 	"forgejo.org/models/auth"
 	"forgejo.org/models/db"
+	service_message_model "forgejo.org/models/service_message"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/auth/password/hash"
 	"forgejo.org/modules/container"
 	"forgejo.org/modules/optional"
+	service_message_module "forgejo.org/modules/service_message"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/structs"
 	"forgejo.org/modules/test"
@@ -219,13 +221,13 @@ func TestSearchUsers(t *testing.T) {
 	}
 
 	testUserSuccess(&user_model.SearchUserOptions{OrderBy: "id ASC", ListOptions: db.ListOptions{Page: 1}},
-		[]int64{1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 21, 24, 27, 28, 29, 30, 32, 34, 37, 38, 39, 40, 43, 1041})
+		[]int64{1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 21, 24, 27, 28, 29, 30, 32, 34, 37, 38, 39, 40, 43, 44, 1041})
 
 	testUserSuccess(&user_model.SearchUserOptions{ListOptions: db.ListOptions{Page: 1}, IsActive: optional.Some(false)},
 		[]int64{43, 9})
 
 	testUserSuccess(&user_model.SearchUserOptions{OrderBy: "id ASC", ListOptions: db.ListOptions{Page: 1}, IsActive: optional.Some(true)},
-		[]int64{1, 2, 4, 5, 8, 10, 11, 12, 13, 14, 15, 16, 18, 20, 21, 24, 27, 28, 29, 30, 32, 34, 37, 38, 39, 40, 1041})
+		[]int64{1, 2, 4, 5, 8, 10, 11, 12, 13, 14, 15, 16, 18, 20, 21, 24, 27, 28, 29, 30, 32, 34, 37, 38, 39, 40, 44, 1041})
 
 	testUserSuccess(&user_model.SearchUserOptions{Keyword: "user1", OrderBy: "id ASC", ListOptions: db.ListOptions{Page: 1}, IsActive: optional.Some(true)},
 		[]int64{1, 10, 11, 12, 13, 14, 15, 16, 18})
@@ -495,6 +497,62 @@ func TestCreateUserPlainWithFediverseHandle(t *testing.T) {
 	// Note: We don't expect that admins are able to access any front-facing
 	// function that sets the overwrite (i.e. CreateFederatedUser), hence it
 	// has been omitted for now.
+}
+
+func TestCreateUserWithUsernamePrefix(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	defer test.MockVariableValue(&setting.Service.UsernamePrefix, "fbsd-")()
+
+	t.Run("Normal creation adds prefix", func(t *testing.T) {
+		user := &user_model.User{
+			Name:               "john",
+			Email:              "john-prefix@example.com",
+			Passwd:             "password123!",
+			MustChangePassword: false,
+		}
+		err := user_model.CreateUser(db.DefaultContext, user)
+		require.NoError(t, err)
+		assert.Equal(t, "fbsd-john", user.Name)
+	})
+
+	t.Run("Admin creation skips prefix", func(t *testing.T) {
+		user := &user_model.User{
+			Name:               "adminuser",
+			Email:              "adminuser-prefix@example.com",
+			Passwd:             "password123!",
+			MustChangePassword: false,
+		}
+		err := user_model.AdminCreateUser(db.DefaultContext, user)
+		require.NoError(t, err)
+		assert.Equal(t, "adminuser", user.Name)
+	})
+
+	t.Run("No double prefix", func(t *testing.T) {
+		user := &user_model.User{
+			Name:               "fbsd-already",
+			Email:              "already-prefix@example.com",
+			Passwd:             "password123!",
+			MustChangePassword: false,
+		}
+		err := user_model.CreateUser(db.DefaultContext, user)
+		require.NoError(t, err)
+		assert.Equal(t, "fbsd-already", user.Name)
+	})
+}
+
+func TestCreateUserWithoutUsernamePrefix(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	defer test.MockVariableValue(&setting.Service.UsernamePrefix, "")()
+
+	user := &user_model.User{
+		Name:               "noprefixuser",
+		Email:              "noprefix@example.com",
+		Passwd:             "password123!",
+		MustChangePassword: false,
+	}
+	err := user_model.CreateUser(db.DefaultContext, user)
+	require.NoError(t, err)
+	assert.Equal(t, "noprefixuser", user.Name)
 }
 
 func TestGetUserIDsByNames(t *testing.T) {
@@ -982,23 +1040,25 @@ func TestVerifyUserAuthorizationToken(t *testing.T) {
 	assert.True(t, ok)
 
 	t.Run("Wrong purpose", func(t *testing.T) {
-		u, _, err := user_model.VerifyUserAuthorizationToken(db.DefaultContext, code, auth.PasswordReset)
+		u, _, _, err := user_model.VerifyUserAuthorizationToken(db.DefaultContext, code, auth.PasswordReset)
 		require.NoError(t, err)
 		assert.Nil(t, u)
 	})
 
 	t.Run("No delete", func(t *testing.T) {
-		u, _, err := user_model.VerifyUserAuthorizationToken(db.DefaultContext, code, auth.UserActivation)
+		u, authToken, _, err := user_model.VerifyUserAuthorizationToken(db.DefaultContext, code, auth.UserActivation)
 		require.NoError(t, err)
 		assert.Equal(t, user.ID, u.ID)
+		require.NotNil(t, authToken)
+		assert.False(t, authToken.LoginSourceID.Has())
 
-		authToken, err := auth.FindAuthToken(db.DefaultContext, lookupKey, auth.UserActivation)
+		stored, err := auth.FindAuthToken(db.DefaultContext, lookupKey, auth.UserActivation)
 		require.NoError(t, err)
-		assert.NotNil(t, authToken)
+		assert.NotNil(t, stored)
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		u, deleteToken, err := user_model.VerifyUserAuthorizationToken(db.DefaultContext, code, auth.UserActivation)
+		u, _, deleteToken, err := user_model.VerifyUserAuthorizationToken(db.DefaultContext, code, auth.UserActivation)
 		require.NoError(t, err)
 		assert.Equal(t, user.ID, u.ID)
 		require.NoError(t, deleteToken())
@@ -1112,4 +1172,21 @@ func TestGetUserByEmailSimple(t *testing.T) {
 		require.ErrorIs(t, err, user_model.ErrUserNotExist{Name: "user1@noreply.example.org"})
 		assert.Nil(t, u)
 	})
+}
+
+func TestMustShowServiceMessage(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	u := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+	updated := timeutil.TimeStampNow()
+	confirmed := timeutil.TimeStampNow().Add(1)
+	sm := service_message_model.ServiceMessage{
+		Type:        service_message_module.SMType("modal"),
+		UpdatedUnix: updated,
+	}
+	assert.True(t, u.MustShowServiceMessage(sm.Type, sm.UpdatedUnix))
+	u.SetConfirm(sm.Type, confirmed)
+	assert.False(t, u.MustShowServiceMessage(sm.Type, sm.UpdatedUnix))
+	sm.UpdatedUnix = timeutil.TimeStampNow().Add(15)
+	u.SetConfirm(sm.Type, confirmed)
+	assert.True(t, u.MustShowServiceMessage(sm.Type, sm.UpdatedUnix))
 }

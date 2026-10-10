@@ -4,13 +4,22 @@
 package webhook
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	actions_model "forgejo.org/models/actions"
 	api "forgejo.org/modules/structs"
 
 	"github.com/stretchr/testify/assert"
 )
+
+var generalTestPayloadFormatter = webhookPayloadFormatter{
+	linkFormatter: noneLinkFormatter,
+	nameFormatter: noneNameFormatter,
+	withSender:    true,
+	withRepoName:  true,
+}
 
 func createTestPayload() *api.CreatePayload {
 	return &api.CreatePayload{
@@ -302,7 +311,7 @@ func pullRequestTestPayload() *api.PullRequestPayload {
 		PullRequest: &api.PullRequest{
 			ID:        12,
 			Index:     12,
-			URL:       "http://localhost:3000/test/repo/pulls/12",
+			URL:       "http://localhost:3000/api/v1/repos/test/repo/pulls/12",
 			HTMLURL:   "http://localhost:3000/test/repo/pulls/12",
 			Title:     "Fix bug",
 			Body:      "fixes bug #2",
@@ -476,7 +485,7 @@ func TestGetIssuesPayloadInfo(t *testing.T) {
 
 	for i, c := range cases {
 		p.Action = c.action
-		text, issueTitle, attachmentText, color := getIssuesPayloadInfo(p, noneLinkFormatter, noneNameFormatter, true)
+		text, issueTitle, attachmentText, color := generalTestPayloadFormatter.getIssuesPayloadInfo(p)
 		assert.Equal(t, c.text, text, "case %d", i)
 		assert.Equal(t, c.issueTitle, issueTitle, "case %d", i)
 		assert.Equal(t, c.attachmentText, attachmentText, "case %d", i)
@@ -575,7 +584,7 @@ func TestGetPullRequestPayloadInfo(t *testing.T) {
 
 	for i, c := range cases {
 		p.Action = c.action
-		text, issueTitle, attachmentText, color := getPullRequestPayloadInfo(p, noneLinkFormatter, noneNameFormatter, true)
+		text, issueTitle, attachmentText, color := generalTestPayloadFormatter.getPullRequestPayloadInfo(p)
 		assert.Equal(t, c.text, text, "case %d", i)
 		assert.Equal(t, c.issueTitle, issueTitle, "case %d", i)
 		assert.Equal(t, c.attachmentText, attachmentText, "case %d", i)
@@ -594,19 +603,19 @@ func TestGetWikiPayloadInfo(t *testing.T) {
 	}{
 		{
 			api.HookWikiCreated,
-			"[test/repo] New wiki page 'index' (Wiki change comment) by user1",
+			"[test/repo] New wiki page \"index\" (Wiki change comment) by user1",
 			greenColor,
 			"index",
 		},
 		{
 			api.HookWikiEdited,
-			"[test/repo] Wiki page 'index' edited (Wiki change comment) by user1",
+			"[test/repo] Wiki page \"index\" edited (Wiki change comment) by user1",
 			yellowColor,
 			"index",
 		},
 		{
 			api.HookWikiDeleted,
-			"[test/repo] Wiki page 'index' deleted by user1",
+			"[test/repo] Wiki page \"index\" deleted by user1",
 			redColor,
 			"index",
 		},
@@ -614,7 +623,7 @@ func TestGetWikiPayloadInfo(t *testing.T) {
 
 	for i, c := range cases {
 		p.Action = c.action
-		text, color, link := getWikiPayloadInfo(p, noneLinkFormatter, noneNameFormatter, true)
+		text, color, link := generalTestPayloadFormatter.getWikiPayloadInfo(p, true)
 		assert.Equal(t, c.text, text, "case %d", i)
 		assert.Equal(t, c.color, color, "case %d", i)
 		assert.Equal(t, c.link, link, "case %d", i)
@@ -648,7 +657,7 @@ func TestGetReleasePayloadInfo(t *testing.T) {
 
 	for i, c := range cases {
 		p.Action = c.action
-		text, color := getReleasePayloadInfo(p, noneLinkFormatter, noneNameFormatter, true)
+		text, color := generalTestPayloadFormatter.getReleasePayloadInfo(p)
 		assert.Equal(t, c.text, text, "case %d", i)
 		assert.Equal(t, c.color, color, "case %d", i)
 	}
@@ -685,7 +694,7 @@ func TestGetIssueCommentPayloadInfo(t *testing.T) {
 
 	for i, c := range cases {
 		p.Action = c.action
-		text, issueTitle, color := getIssueCommentPayloadInfo(p, noneLinkFormatter, noneNameFormatter, true)
+		text, issueTitle, color := generalTestPayloadFormatter.getIssueCommentPayloadInfo(p)
 		assert.Equal(t, c.text, text, "case %d", i)
 		assert.Equal(t, c.issueTitle, issueTitle, "case %d", i)
 		assert.Equal(t, c.color, color, "case %d", i)
@@ -719,8 +728,310 @@ func TestGetActionPayloadInfo(t *testing.T) {
 
 	for i, c := range cases {
 		p.Action = c.action
-		text, color := getActionPayloadInfo(p, noneLinkFormatter)
+		text, color := generalTestPayloadFormatter.getActionPayloadInfo(p)
 		assert.Equal(t, c.text, text, "case %d", i)
 		assert.Equal(t, c.color, color, "case %d", i)
+	}
+}
+
+func TestWebhookPayloadTextFormatter(t *testing.T) {
+	p := issueTestPayload()
+	p.Action = api.HookIssueOpened
+
+	formatterCases := []struct {
+		formatter    webhookPayloadFormatter
+		expectedText string
+	}{
+		{
+			formatter: webhookPayloadFormatter{
+				linkFormatter: noneLinkFormatter,
+				nameFormatter: noneNameFormatter,
+				withSender:    false,
+				withRepoName:  false,
+			},
+			expectedText: "Issue opened: #2 crash",
+		},
+		{
+			formatter: webhookPayloadFormatter{
+				linkFormatter: noneLinkFormatter,
+				nameFormatter: noneNameFormatter,
+				withSender:    true,
+				withRepoName:  false,
+			},
+			expectedText: "Issue opened: #2 crash by user1",
+		},
+		{
+			formatter: webhookPayloadFormatter{
+				linkFormatter: noneLinkFormatter,
+				nameFormatter: noneNameFormatter,
+				withSender:    false,
+				withRepoName:  true,
+			},
+			expectedText: "[test/repo] Issue opened: #2 crash",
+		},
+		{
+			formatter: webhookPayloadFormatter{
+				linkFormatter: noneLinkFormatter,
+				nameFormatter: noneNameFormatter,
+				withSender:    true,
+				withRepoName:  true,
+			},
+			expectedText: "[test/repo] Issue opened: #2 crash by user1",
+		},
+		{
+			formatter: webhookPayloadFormatter{
+				linkFormatter: func(url, text string) string {
+					return fmt.Sprintf("%s @ %s", text, url)
+				},
+				nameFormatter: noneNameFormatter,
+				withSender:    true,
+				withRepoName:  true,
+			},
+			expectedText: "[test/repo] Issue opened: #2 crash @ http://localhost:3000/test/repo/issues/2 by user1",
+		},
+		{
+			formatter: webhookPayloadFormatter{
+				linkFormatter: noneLinkFormatter,
+				nameFormatter: func(name string) string {
+					return fmt.Sprintf("!!! @%s !!!", name)
+				},
+				withSender:   true,
+				withRepoName: false,
+			},
+			expectedText: "Issue opened: #2 crash by !!! @user1 !!!",
+		},
+	}
+
+	for i, c := range formatterCases {
+		text, _, _, _ := c.formatter.getIssuesPayloadInfo(p)
+		assert.Equal(t, c.expectedText, text, "case %d", i)
+	}
+}
+
+func TestGetWorkflowRunPayloadInfo(t *testing.T) {
+	formatter := webhookPayloadFormatter{
+		linkFormatter: noneLinkFormatter,
+		nameFormatter: noneNameFormatter,
+		withSender:    true,
+		withRepoName:  true,
+	}
+
+	testCases := []struct {
+		runStatus      actions_model.Status
+		expectedColour int
+		expectedTitle  string
+		expectedBody   string
+	}{
+		{
+			runStatus:      actions_model.StatusBlocked,
+			expectedColour: yellowColor,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" is blocked`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+		{
+			runStatus:      actions_model.StatusCancelled,
+			expectedColour: greyColor,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" was cancelled`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+		{
+			runStatus:      actions_model.StatusFailure,
+			expectedColour: redColor,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" has failed`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+		{
+			runStatus:      actions_model.StatusRunning,
+			expectedColour: greenColorLight,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" has started running`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+		{
+			runStatus:      actions_model.StatusSkipped,
+			expectedColour: greyColor,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" was skipped`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+		{
+			runStatus:      actions_model.StatusSuccess,
+			expectedColour: greenColor,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" has completed successfully`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+		{
+			runStatus:      actions_model.StatusWaiting,
+			expectedColour: blueColor,
+			expectedTitle:  `[acme/test] Workflow run "Update README.md" is waiting`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+
+View details on https://example.com/acme/test/actions/runs/197719.
+`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.runStatus.String(), func(t *testing.T) {
+			payload := &api.WorkflowRunPayload{
+				Action: api.HookNewWorkflowRunAttempt,
+				Run: &api.ActionRun{
+					Title:   "Update README.md",
+					HTMLURL: "https://example.com/acme/test/actions/runs/197719",
+					Status:  testCase.runStatus.String(),
+					Repo: &api.Repository{
+						FullName: "acme/test",
+					},
+				},
+			}
+
+			title, body, colour := formatter.getWorkflowRunPayloadInfo(payload)
+
+			assert.Equal(t, testCase.expectedColour, colour)
+			assert.Equal(t, testCase.expectedTitle, title)
+			assert.Equal(t, testCase.expectedBody, body)
+		})
+	}
+}
+
+func TestGetWorkflowJobPayloadInfo(t *testing.T) {
+	formatter := webhookPayloadFormatter{
+		linkFormatter: noneLinkFormatter,
+		nameFormatter: noneNameFormatter,
+		withSender:    true,
+		withRepoName:  true,
+	}
+
+	testCases := []struct {
+		jobStatus      actions_model.Status
+		expectedColour int
+		expectedTitle  string
+		expectedBody   string
+	}{
+		{
+			jobStatus:      actions_model.StatusBlocked,
+			expectedColour: yellowColor,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" is blocked`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+		{
+			jobStatus:      actions_model.StatusCancelled,
+			expectedColour: greyColor,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" was cancelled`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+		{
+			jobStatus:      actions_model.StatusFailure,
+			expectedColour: redColor,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" has failed`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+		{
+			jobStatus:      actions_model.StatusRunning,
+			expectedColour: greenColorLight,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" has started running`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+		{
+			jobStatus:      actions_model.StatusSkipped,
+			expectedColour: greyColor,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" was skipped`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+		{
+			jobStatus:      actions_model.StatusSuccess,
+			expectedColour: greenColor,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" has completed successfully`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+		{
+			jobStatus:      actions_model.StatusWaiting,
+			expectedColour: blueColor,
+			expectedTitle:  `[acme/test] Workflow job "build-and-test" is waiting`,
+			expectedBody: `Repository: acme/test
+Run: Update README.md
+Job: build-and-test
+
+View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1.
+`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.jobStatus.String(), func(t *testing.T) {
+			payload := &api.WorkflowJobPayload{
+				Action: api.HookNewWorkflowJobAttempt,
+				Job: &api.ActionRunJob{
+					Name:    "build-and-test",
+					HTMLURL: "https://example.com/acme/test/actions/runs/196540/jobs/3/attempt/1",
+					Status:  testCase.jobStatus.String(),
+				},
+				Run: &api.ActionRun{
+					Title: "Update README.md",
+					Repo: &api.Repository{
+						FullName: "acme/test",
+					},
+				},
+			}
+
+			title, body, colour := formatter.getWorkflowJobPayloadInfo(payload)
+
+			assert.Equal(t, testCase.expectedColour, colour)
+			assert.Equal(t, testCase.expectedTitle, title)
+			assert.Equal(t, testCase.expectedBody, body)
+		})
 	}
 }

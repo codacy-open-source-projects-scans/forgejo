@@ -398,7 +398,16 @@ func visitNode(ctx *RenderContext, procs []processor, node *html.Node) {
 					continue
 				}
 				if len(attr.Val) > 0 && !IsLinkStr(attr.Val) && !strings.HasPrefix(attr.Val, "data:image/") {
-					attr.Val = util.URLJoin(ctx.Links.ResolveMediaLink(ctx.IsWiki), attr.Val)
+					// Skip URLs already resolved from markdown, they start with `/user/repo/media/branch/...`
+					// Only raw HTML <img> tags need processing here.
+					mediaBase := ctx.Links.ResolveMediaLink(ctx.IsWiki, true)
+					if !strings.HasPrefix(attr.Val, mediaBase+"/") {
+						isRootRelative := strings.HasPrefix(attr.Val, "/")
+						if isRootRelative && ctx.IsRepoFile() {
+							attr.Val = strings.TrimLeft(attr.Val, "/")
+						}
+						attr.Val = util.URLJoin(ctx.Links.ResolveMediaLink(ctx.IsWiki, isRootRelative && ctx.IsRepoFile()), attr.Val)
+					}
 				}
 				attr.Val = camoHandleLink(attr.Val)
 				node.Attr[i] = attr
@@ -764,7 +773,11 @@ func shortLinkProcessor(ctx *RenderContext, node *html.Node) {
 		}
 		if image {
 			if !absoluteLink {
-				link = util.URLJoin(ctx.Links.ResolveMediaLink(ctx.IsWiki), link)
+				isRootRelative := strings.HasPrefix(link, "/")
+				if isRootRelative && ctx.IsRepoFile() {
+					link = strings.TrimLeft(link, "/")
+				}
+				link = util.URLJoin(ctx.Links.ResolveMediaLink(ctx.IsWiki, isRootRelative && ctx.IsRepoFile()), link)
 			}
 			title := props["title"]
 			if title == "" {
@@ -786,8 +799,14 @@ func shortLinkProcessor(ctx *RenderContext, node *html.Node) {
 			}
 		} else {
 			if !absoluteLink {
+				isRootRelative := strings.HasPrefix(link, "/")
+				if isRootRelative && ctx.IsRepoFile() {
+					link = strings.TrimLeft(link, "/")
+				}
 				if ctx.IsWiki {
 					link = util.URLJoin(ctx.Links.WikiLink(), link)
+				} else if isRootRelative && ctx.IsRepoFile() {
+					link = util.URLJoin(ctx.Links.SrcLinkBase(), link)
 				} else {
 					link = util.URLJoin(ctx.Links.SrcLink(), link)
 				}
@@ -1125,7 +1144,7 @@ func fullHashPatternProcessor(ctx *RenderContext, node *html.Node) {
 		if hash != "" {
 			text += " (" + hash + ")"
 		}
-		replaceContent(node, start, end, createCodeLink(urlFull, text, "commit"))
+		replaceContent(node, start, end, createCodeLink(urlFull, text, ""))
 		node = node.NextSibling.NextSibling
 	}
 }
@@ -1409,7 +1428,7 @@ func hashCurrentPatternProcessor(ctx *RenderContext, node *html.Node) {
 		}
 
 		link := util.URLJoin(ctx.Links.Prefix(), ctx.Metas["user"], ctx.Metas["repo"], "commit", hash)
-		replaceContent(node, m[2], m[3], createCodeLink(link, base.ShortSha(hash), "commit"))
+		replaceContent(node, m[2], m[3], createCodeLink(link, base.ShortSha(hash), ""))
 		start = 0
 		node = node.NextSibling.NextSibling
 	}

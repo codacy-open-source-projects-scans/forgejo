@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -357,6 +358,11 @@ func getPullInfo(ctx *context.Context) (issue *issues_model.Issue, ok bool) {
 	ctx.Data["Title"] = fmt.Sprintf("#%d - %s", issue.Index, emoji.ReplaceAliases(issue.Title))
 	ctx.Data["Issue"] = issue
 
+	if setting.Other.EnableFeed {
+		ctx.Data["EnableFeed"] = true
+		ctx.Data["FeedURL"] = issue.HTMLURL()
+	}
+
 	if !issue.IsPull {
 		ctx.Redirect(issue.Link())
 		return nil, false
@@ -428,7 +434,6 @@ func GetPullDiffStats(ctx *context.Context) {
 		AfterCommitID:      headCommitID,
 		MaxLines:           setting.Git.MaxGitDiffLines,
 		MaxLineCharacters:  setting.Git.MaxGitDiffLineCharacters,
-		MaxFiles:           setting.Git.MaxGitDiffFiles,
 		WhitespaceBehavior: gitdiff.GetWhitespaceFlag(ctx.Data["WhitespaceBehavior"].(string)),
 	}
 
@@ -530,6 +535,11 @@ func PrepareMergedViewPullInfo(ctx *context.Context, issue *issues_model.Issue) 
 			ctx.Data["LatestCommitStatuses"] = commitStatuses
 			ctx.Data["LatestCommitStatus"] = git_model.CalcCommitStatus(commitStatuses)
 		}
+	}
+
+	PrepareViewPullInfoActions(ctx, pull)
+	if ctx.Written() {
+		return nil
 	}
 
 	return compareInfo
@@ -653,8 +663,18 @@ func PrepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 	}
 
 	if headBranchExist {
-		var err error
-		ctx.Data["UpdateAllowed"], ctx.Data["UpdateByRebaseAllowed"], err = pull_service.IsUserAllowedToUpdate(ctx, pull, ctx.Doer)
+		headRepoPerm, err := access_model.GetUserRepoPermission(ctx, pull.HeadRepo, ctx.Doer)
+		if err != nil {
+			ctx.ServerError("GetUserRepoPermission head", err)
+			return nil
+		}
+		baseRepoPerm, err := access_model.GetUserRepoPermission(ctx, pull.BaseRepo, ctx.Doer)
+		if err != nil {
+			ctx.ServerError("GetUserRepoPermission base", err)
+			return nil
+		}
+
+		ctx.Data["UpdateAllowed"], ctx.Data["UpdateByRebaseAllowed"], err = pull_service.IsUserAllowedToUpdate(ctx, pull, ctx.Doer, headRepoPerm, baseRepoPerm)
 		if err != nil {
 			ctx.ServerError("IsUserAllowedToUpdate", err)
 			return nil
@@ -959,9 +979,7 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 		var prevCommit, curCommit, nextCommit *git.Commit
 
 		// Iterate in reverse to properly map "previous" and "next" buttons
-		for i := len(prInfo.Commits) - 1; i >= 0; i-- {
-			commit := prInfo.Commits[i]
-
+		for _, commit := range slices.Backward(prInfo.Commits) {
 			if curCommit != nil {
 				nextCommit = commit
 				break
@@ -1058,19 +1076,34 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 	ctx.Data["Reponame"] = ctx.Repo.Repository.Name
 
 	fileOnly := ctx.FormBool("file-only")
-
-	maxLines, maxFiles := setting.Git.MaxGitDiffLines, setting.Git.MaxGitDiffFiles
 	files := ctx.FormStrings("files")
-	if fileOnly && (len(files) == 2 || len(files) == 1) {
-		maxLines, maxFiles = -1, -1
+	ctx.Data["FileSelection"] = files
+
+	maxLines := setting.Git.MaxGitDiffLines
+
+	var diff *gitdiff.Diff
+
+	var diffFileMetadata []*gitdiff.DiffFileMetadata
+	if willShowSpecifiedCommit {
+		diffFileMetadata, err = gitdiff.GetDiffNameStatus(ctx, gitRepo, "", endCommitID, setting.UI.DiffPagingNum, files...)
+	} else {
+		diffFileMetadata, err = gitdiff.GetDiffNameStatus(ctx, gitRepo, startCommitID, endCommitID, setting.UI.DiffPagingNum, files...)
+	}
+	if err != nil {
+		ctx.ServerError("GetDiffNameStatus", err)
+		return
+	}
+
+	pager, pagedFiles := utils.PaginateDiffFiles(ctx, diffFileMetadata)
+
+	if fileOnly && (len(diffFileMetadata) == 2 || len(diffFileMetadata) == 1) {
+		maxLines = -1
 	}
 
 	diffOptions := &gitdiff.DiffOptions{
 		AfterCommitID:      endCommitID,
-		SkipTo:             ctx.FormString("skip-to"),
 		MaxLines:           maxLines,
 		MaxLineCharacters:  setting.Git.MaxGitDiffLineCharacters,
-		MaxFiles:           maxFiles,
 		WhitespaceBehavior: gitdiff.GetWhitespaceFlag(ctx.Data["WhitespaceBehavior"].(string)),
 		FileOnly:           fileOnly,
 	}
@@ -1079,18 +1112,16 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 		diffOptions.BeforeCommitID = startCommitID
 	}
 
-	var methodWithError string
-	var diff *gitdiff.Diff
-
 	// if we're not logged in or only a single commit (or commit range) is shown we
 	// have to load only the diff and not get the viewed information
 	// as the viewed information is designed to be loaded only on latest PR
 	// diff and if you're signed in.
+	var methodWithError string
 	if !ctx.IsSigned || willShowSpecifiedCommit || willShowSpecifiedCommitRange {
-		diff, err = gitdiff.GetDiffFull(ctx, gitRepo, diffOptions, files...)
+		diff, err = gitdiff.GetDiffFull(ctx, gitRepo, diffOptions, pagedFiles...)
 		methodWithError = "GetDiff"
 	} else {
-		diff, err = gitdiff.SyncAndGetUserSpecificDiff(ctx, ctx.Doer.ID, pull, gitRepo, diffOptions, files...)
+		diff, err = gitdiff.SyncAndGetUserSpecificDiff(ctx, ctx.Doer.ID, pull, gitRepo, diffOptions, pagedFiles...)
 		methodWithError = "SyncAndGetUserSpecificDiff"
 	}
 	if err != nil {
@@ -1098,9 +1129,27 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 		return
 	}
 
+	var reviewState *pull_model.ReviewState
+	if ctx.IsSigned && !willShowSpecifiedCommit && !willShowSpecifiedCommitRange {
+		reviewState, err = pull_model.GetNewestReviewState(ctx, ctx.Doer.ID, pull.ID)
+		if err != nil {
+			ctx.ServerError("GetNewestReviewState", err)
+			return
+		}
+		diffFileMetadata = gitdiff.EnrichWithReview(reviewState, diffFileMetadata...)
+	}
+	diffMetadata, err := gitdiff.GetDiffMetadata(reviewState, pager.Paginater, len(diffFileMetadata))
+	if err != nil {
+		ctx.ServerError("GetDiffMetadata", err)
+		return
+	}
+
+	ctx.Data["DiffFileMetadata"] = diffFileMetadata
+	ctx.Data["DiffMetadata"] = diffMetadata
+
 	ctx.PageData["prReview"] = map[string]any{
-		"numberOfFiles":       diff.NumFiles,
-		"numberOfViewedFiles": diff.NumViewedFiles,
+		"numberOfFiles":       diffMetadata.TotalNumberOfFiles,
+		"numberOfViewedFiles": diffMetadata.NumberOfViewedFiles,
 	}
 
 	if err = diff.LoadComments(ctx, issue, ctx.Doer, ctx.Data["ShowOutdatedComments"].(bool), endCommitID); err != nil {
@@ -1124,7 +1173,7 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 	}
 
 	ctx.Data["Diff"] = diff
-	ctx.Data["DiffNotAvailable"] = diff.NumFiles == 0
+	ctx.Data["DiffNotAvailable"] = len(diff.Files) == 0
 
 	baseCommit, err := ctx.Repo.GitRepo.GetCommit(startCommitID)
 	if err != nil {
@@ -1139,12 +1188,12 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 
 	// determine if the user viewing the pull request can edit the head branch
 	if ctx.Doer != nil && pull.HeadRepo != nil && !pull.HasMerged {
-		headRepoPerm, err := access_model.GetUserRepoPermission(ctx, pull.HeadRepo, ctx.Doer)
+		editable, err := pull_service.CanEditHeadBranch(ctx, ctx.Doer, pull)
 		if err != nil {
-			ctx.ServerError("GetUserRepoPermission", err)
+			ctx.ServerError("CanEditHeadBranch", err)
 			return
 		}
-		ctx.Data["HeadBranchIsEditable"] = pull.HeadRepo.CanEnableEditor() && issues_model.CanMaintainerWriteToBranch(ctx, headRepoPerm, pull.HeadBranch, ctx.Doer) && pull.Flow != issues_model.PullRequestFlowAGit
+		ctx.Data["HeadBranchIsEditable"] = editable
 		ctx.Data["SourceRepoLink"] = pull.HeadRepo.Link()
 		ctx.Data["HeadBranch"] = pull.HeadBranch
 	}
@@ -1254,7 +1303,18 @@ func UpdatePullRequest(ctx *context.Context) {
 		return
 	}
 
-	allowedUpdateByMerge, allowedUpdateByRebase, err := pull_service.IsUserAllowedToUpdate(ctx, issue.PullRequest, ctx.Doer)
+	headRepoPerm, err := access_model.GetUserRepoPermission(ctx, issue.PullRequest.HeadRepo, ctx.Doer)
+	if err != nil {
+		ctx.ServerError("GetUserRepoPermission head", err)
+		return
+	}
+	baseRepoPerm, err := access_model.GetUserRepoPermission(ctx, issue.PullRequest.BaseRepo, ctx.Doer)
+	if err != nil {
+		ctx.ServerError("GetUserRepoPermission base", err)
+		return
+	}
+
+	allowedUpdateByMerge, allowedUpdateByRebase, err := pull_service.IsUserAllowedToUpdate(ctx, issue.PullRequest, ctx.Doer, headRepoPerm, baseRepoPerm)
 	if err != nil {
 		ctx.ServerError("IsUserAllowedToMerge", err)
 		return
@@ -1417,7 +1477,8 @@ func MergePullRequest(ctx *context.Context) {
 	// interactions, and all effective work should use `workCtx` instead.
 	workCtx, cancelWorkCtx := stdCtx.WithTimeout(
 		stdCtx.WithoutCancel(ctx),
-		time.Duration(setting.Git.Timeout.Default)*time.Second)
+		time.Duration(setting.Git.Timeout.Default)*time.Second,
+	)
 	defer cancelWorkCtx()
 
 	if err := pull_service.Merge(workCtx, pr, ctx.Doer, ctx.Repo.GitRepo, repo_model.MergeStyle(form.Do), form.HeadCommitID, message, false); err != nil {
@@ -1522,6 +1583,7 @@ func MergePullRequest(ctx *context.Context) {
 				ctx.Flash.Error(ctx.Tr("repo.pulls.delete_after_merge.head_branch.insufficient_branch"))
 			default:
 				ctx.ServerError("DeleteBranchAfterMerge", err)
+				return
 			}
 
 			ctx.JSONRedirect(issue.Link())
@@ -1671,16 +1733,13 @@ func CompareAndPullRequestPost(ctx *context.Context) {
 			log.Error("Unexpected error of NewPullRequest: %T %s", err, err)
 			ctx.ServerError("CompareAndPullRequest", err)
 		}
-		ctx.ServerError("NewPullRequest", err)
 		return
 	}
 
-	if projectID > 0 && ctx.Repo.CanWrite(unit.TypeProjects) {
-		if err := issues_model.IssueAssignOrRemoveProject(ctx, pullIssue, ctx.Doer, projectID, 0); err != nil {
-			if !errors.Is(err, util.ErrPermissionDenied) {
-				ctx.ServerError("IssueAssignOrRemoveProject", err)
-				return
-			}
+	if projectID > 0 {
+		updateIssueProject(ctx, pullIssue, projectID)
+		if ctx.Written() {
+			return
 		}
 	}
 
@@ -1983,6 +2042,7 @@ func PrepareViewPullInfoActionsTrust(ctx *context.Context, pull *issues_model.Pu
 	someRunsNeedApproval, err := actions_model.HasRunThatNeedApproval(ctx, pull.Issue.RepoID, pull.ID)
 	if err != nil {
 		ctx.ServerError("HasRunThatNeedApproval", err)
+		return
 	}
 	ctx.Data["SomePullRequestRunsNeedApproval"] = someRunsNeedApproval
 

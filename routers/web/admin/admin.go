@@ -131,10 +131,22 @@ func prepareDeprecatedWarningsAlert(ctx *context.Context) {
 func Dashboard(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.dashboard")
 	ctx.Data["PageIsAdminDashboard"] = true
-	ctx.Data["NeedUpdate"] = updatechecker.GetNeedUpdate(ctx)
-	ctx.Data["RemoteVersion"] = updatechecker.GetRemoteVersion(ctx)
 	updateSystemStatus()
 	ctx.Data["SysStatus"] = sysStatus
+
+	update, err := updatechecker.GetReleaseState(ctx)
+	if err != nil {
+		ctx.Data["UpdateCheckerError"] = err.Error()
+	} else {
+		if update.MajorReleaseState == updatechecker.MajorReleaseUnsupported {
+			ctx.Data["NeedMajorUpdate"] = true
+		} else if update.MinorReleaseState == updatechecker.MinorReleaseOutOfDate {
+			ctx.Data["NeedMinorUpdate"] = true
+		}
+		if hasRec, rec := update.RecommendedUpgrade.Get(); hasRec {
+			ctx.Data["RemoteVersion"] = rec
+		}
+	}
 
 	entries := []string{
 		"delete_inactive_accounts",
@@ -146,7 +158,6 @@ func Dashboard(ctx *context.Context) {
 		entries = append(entries, "resync_all_sshkeys", "resync_all_sshprincipals")
 	}
 	entries = append(entries, []string{
-		"resync_all_hooks",
 		"reinit_missing_repos",
 		"sync_external_users",
 		"repo_health_check",
@@ -233,11 +244,9 @@ func SelfCheck(ctx *context.Context) {
 		ctx.Data["DatabaseCheckHasProblems"] = hasProblem
 	}
 
-	elapsed, err := cache.Test()
+	_, err = cache.Test()
 	if err != nil {
 		ctx.Data["CacheError"] = err
-	} else if elapsed > cache.SlowCacheThreshold {
-		ctx.Data["CacheSlow"] = fmt.Sprint(elapsed)
 	}
 
 	ctx.HTML(http.StatusOK, tplSelfCheck)

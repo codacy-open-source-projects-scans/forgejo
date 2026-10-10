@@ -12,6 +12,7 @@ import (
 	"forgejo.org/models/db"
 	"forgejo.org/models/repo"
 	"forgejo.org/models/unittest"
+	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/timeutil"
 
 	"github.com/stretchr/testify/assert"
@@ -478,4 +479,119 @@ func TestRunner_FindRunnerOptionsToConds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeleteEphemeralRunner(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	persistentRunnerOne := &ActionRunner{
+		ID:        606526,
+		UUID:      "d53a1222-ae7a-4430-97f8-8fcb6efd04c9",
+		Name:      "persistent-runner-one",
+		OwnerID:   2,
+		RepoID:    0,
+		Ephemeral: false,
+		TokenHash: "J9YDsQL",
+	}
+	persistentRunnerTwo := &ActionRunner{
+		ID:        606527,
+		UUID:      "3dc23067-b2fd-4daf-b428-dddad80d7f37",
+		Name:      "persistent-runner-two",
+		OwnerID:   2,
+		RepoID:    0,
+		Ephemeral: false,
+		TokenHash: "jvIylZtHsS",
+	}
+	ephemeralRunnerOne := &ActionRunner{
+		ID:        606528,
+		UUID:      "2d9bc0a1-7019-4ed3-ba67-6415415ac2a9",
+		Name:      "ephemeral-runner-one",
+		OwnerID:   2,
+		RepoID:    0,
+		Ephemeral: true,
+		TokenHash: "t9C8L0kM3W",
+	}
+	ephemeralRunnerTwo := &ActionRunner{
+		ID:        606529,
+		UUID:      "da7a03f8-ab39-4c54-9ec9-2bd312fe3be1",
+		Name:      "ephemeral-runner-two",
+		OwnerID:   2,
+		RepoID:    0,
+		Ephemeral: true,
+		TokenHash: "g9oTOFM",
+	}
+
+	require.NoError(t, CreateRunner(t.Context(), persistentRunnerOne))
+	require.NoError(t, CreateRunner(t.Context(), persistentRunnerTwo))
+	require.NoError(t, CreateRunner(t.Context(), ephemeralRunnerOne))
+	require.NoError(t, CreateRunner(t.Context(), ephemeralRunnerTwo))
+
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: persistentRunnerOne.ID})
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: persistentRunnerTwo.ID})
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: ephemeralRunnerOne.ID})
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: ephemeralRunnerTwo.ID})
+
+	require.NoError(t, DeleteEphemeralRunner(t.Context(), persistentRunnerOne.ID))
+	require.NoError(t, DeleteEphemeralRunner(t.Context(), ephemeralRunnerOne.ID))
+
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: persistentRunnerOne.ID})
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: persistentRunnerTwo.ID})
+	unittest.AssertNotExistsBean(t, &ActionRunner{ID: ephemeralRunnerOne.ID})
+	unittest.AssertExistsAndLoadBean(t, &ActionRunner{ID: ephemeralRunnerTwo.ID})
+}
+
+func TestUpdateRunner(t *testing.T) {
+	t.Run("ownership is not altered", func(t *testing.T) {
+		require.NoError(t, unittest.PrepareTestDatabase())
+
+		runnerUUID := "86b2f19a-3fbb-410b-ace6-2a2ace078a28"
+
+		require.NoError(t, CreateRunner(t.Context(), &ActionRunner{UUID: runnerUUID, Name: "old name"}))
+
+		runner := unittest.AssertExistsAndLoadBean(t, &ActionRunner{UUID: runnerUUID})
+
+		assert.Zero(t, runner.OwnerID)
+		assert.Zero(t, runner.RepoID)
+		assert.Equal(t, "old name", runner.Name)
+
+		runner.Name = "new name"
+
+		require.NoError(t, UpdateRunner(t.Context(), runner))
+
+		runner = unittest.AssertExistsAndLoadBean(t, &ActionRunner{UUID: runnerUUID})
+
+		assert.Zero(t, runner.OwnerID)
+		assert.Zero(t, runner.RepoID)
+		assert.Equal(t, "new name", runner.Name)
+	})
+
+	t.Run("OwnerID and RepoID cannot be set simultaneously", func(t *testing.T) {
+		require.NoError(t, unittest.PrepareTestDatabase())
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo62 := unittest.AssertExistsAndLoadBean(t, &repo.Repository{ID: 62, OwnerID: user2.ID})
+		runnerUUID := "86b2f19a-3fbb-410b-ace6-2a2ace078a28"
+
+		require.NoError(t, CreateRunner(t.Context(), &ActionRunner{UUID: runnerUUID, OwnerID: user2.ID, Name: "old name"}))
+
+		runner := unittest.AssertExistsAndLoadBean(t, &ActionRunner{UUID: runnerUUID})
+
+		assert.Equal(t, user2.ID, runner.OwnerID)
+		assert.Zero(t, runner.RepoID)
+		assert.Equal(t, "old name", runner.Name)
+
+		// Attempt to violate scoping rules by simultaneously setting OwnerID and RepoID.
+		runner.RepoID = repo62.ID
+		runner.Name = "new name"
+
+		err := UpdateRunner(t.Context(), runner)
+		require.ErrorContains(t, err, "OwnerID (2) and RepoID (62) of runner")
+
+		// Verify that runner has not been changed.
+		runner = unittest.AssertExistsAndLoadBean(t, &ActionRunner{UUID: runnerUUID})
+
+		assert.Equal(t, user2.ID, runner.OwnerID)
+		assert.Zero(t, runner.RepoID)
+		assert.Equal(t, "old name", runner.Name)
+	})
 }

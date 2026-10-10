@@ -224,6 +224,32 @@ func TestNotifyWatchers(t *testing.T) {
 	})
 }
 
+func TestNotifySelectWatchers(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	action := &activities_model.Action{
+		ActUserID: 8,
+		RepoID:    5,
+		OpType:    activities_model.ActionPullReviewDismissed,
+	}
+	_, err := activities_model.NotifyWatchers(db.DefaultContext, action)
+	require.NoError(t, err)
+
+	unittest.AssertExistsAndLoadBean(t, &activities_model.Action{
+		ActUserID: action.ActUserID,
+		UserID:    5,
+		RepoID:    action.RepoID,
+		OpType:    action.OpType,
+	})
+	// Notice that user 9 isn't here because they don't watch PRs on this repo.
+	unittest.AssertNotExistsBean(t, &activities_model.Action{
+		ActUserID: action.ActUserID,
+		UserID:    4,
+		RepoID:    action.RepoID,
+		OpType:    action.OpType,
+	})
+}
+
 func TestGetFeedsCorrupted(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
@@ -369,5 +395,30 @@ func TestGetIssueInfos(t *testing.T) {
 		assert.Equal(t, test.field1, issueInfos[0])
 		assert.Equal(t, test.field2, issueInfos[1])
 		assert.Equal(t, test.field3, issueInfos[2])
+	}
+}
+
+func TestIsPrivate(t *testing.T) {
+	defer unittest.OverrideFixtures("models/activities/fixtures/TestIsPrivate")()
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	tt := []struct {
+		activityID int64
+		private    bool
+	}{
+		{1, true},  // private repo
+		{3, false}, // public activities, public repo
+		{11, true}, // private activities
+	}
+
+	for _, test := range tt {
+		ctx := t.Context()
+		action, err := activities_model.GetActivityByID(ctx, test.activityID)
+		require.NoError(t, err)
+
+		private, err := action.IsActionPrivate(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, test.private, private, "action ID: %d", test.activityID)
 	}
 }

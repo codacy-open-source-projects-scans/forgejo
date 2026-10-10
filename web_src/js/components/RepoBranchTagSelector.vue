@@ -1,10 +1,10 @@
 <script>
 import {nextTick} from 'vue';
 import $ from 'jquery';
-import {SvgIcon} from '../svg.js';
-import {pathEscapeSegments} from '../utils/url.js';
+import {SvgIcon} from '../svg.ts';
+import {pathEscapeSegments} from '../utils/url.ts';
 import {showErrorToast} from '../modules/toast.js';
-import {GET} from '../modules/fetch.js';
+import {GET} from '../modules/fetch.ts';
 
 export default {
   components: {SvgIcon},
@@ -287,8 +287,8 @@ export default {
 .branch-tag-item.active {
   border-color: var(--color-secondary);
   background: var(--color-menu);
-  border-top-left-radius: var(--border-radius);
-  border-top-right-radius: var(--border-radius);
+  border-start-start-radius: var(--border-radius);
+  border-start-end-radius: var(--border-radius);
 }
 
 .branch-tag-divider {

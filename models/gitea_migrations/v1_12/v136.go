@@ -15,7 +15,7 @@ import (
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 
-	"xorm.io/xorm"
+	"code.forgejo.org/xorm/xorm"
 )
 
 func AddCommitDivergenceToPulls(x *xorm.Engine) error {
@@ -116,7 +116,8 @@ func AddCommitDivergenceToPulls(x *xorm.Engine) error {
 				count,
 				float64(migrated)/float64(count)*100,
 				int(math.Ceil(float64(migrated)/float64(batchSize))),
-				count-int64(migrated))
+				count-int64(migrated),
+			)
 		default:
 		}
 	}

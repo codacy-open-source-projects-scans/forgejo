@@ -5,6 +5,8 @@ package actions
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 	"forgejo.org/modules/optional"
 	"forgejo.org/modules/timeutil"
 
-	"github.com/robfig/cron/v3"
+	"github.com/gdgvda/cron"
 )
 
 // ActionScheduleSpec represents a schedule spec of a workflow file
@@ -50,19 +52,19 @@ func NewActionScheduleSpec(cron string, tz optional.Option[string], referenceTim
 	return spec, nil
 }
 
+var ErrPersistentScheduling = errors.New("persistent scheduling error")
+
 // Parse parses the spec and returns a cron.Schedule
 // Unlike the default cron parser, Parse uses UTC timezone as the default if none is specified.
 func (s *ActionScheduleSpec) Parse() (cron.Schedule, error) {
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
-	schedule, err := parser.Parse(s.Spec)
+	parser, err := cron.NewDefaultParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	if err != nil {
 		return nil, err
 	}
 
-	specSchedule, ok := schedule.(*cron.SpecSchedule)
-	// If it's not a spec schedule, like "@every 5m", timezone is not relevant
-	if !ok {
-		return schedule, nil
+	schedule, err := parser.Parse(s.Spec)
+	if err != nil {
+		return nil, fmt.Errorf("spec parse error: %w (%w)", err, ErrPersistentScheduling)
 	}
 
 	// If `timezone` is not defined in the workflow, but the spec includes a timezone, use it.
@@ -74,15 +76,14 @@ func (s *ActionScheduleSpec) Parse() (cron.Schedule, error) {
 	if present, tz := s.TimeZone.Get(); present {
 		location, err = time.LoadLocation(tz)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unable to load time zone: %w (%w)", err, ErrPersistentScheduling)
 		}
 	} else {
 		// UTC is the default time zone.
 		location = time.UTC
 	}
 
-	specSchedule.Location = location
-	return specSchedule, nil
+	return schedule.WithLocation(location), nil
 }
 
 func init() {

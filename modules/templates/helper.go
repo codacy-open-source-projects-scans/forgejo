@@ -127,6 +127,10 @@ func NewFuncMap() template.FuncMap {
 			version, _, _ := strings.Cut(setting.AppVer, "+")
 			return version
 		},
+		"AppDocsURL": setting.AppDocsURL,
+		"AppNextDocsURL": func(path string) string {
+			return setting.AppVersionDocsURL("next", path)
+		},
 		"AppDomain": func() string { // documented in mail-templates.md
 			return setting.Domain
 		},
@@ -173,6 +177,7 @@ func NewFuncMap() template.FuncMap {
 			return !setting.ImportLocalPaths
 		},
 		"ThemeName": func(user *user_model.User) string {
+			// Guest user may not be nil on some pages, e.g. in org pages, so user.Theme check is also needed
 			if user == nil || user.Theme == "" {
 				return setting.UI.DefaultTheme
 			}
@@ -217,6 +222,7 @@ func NewFuncMap() template.FuncMap {
 		"ActionContent2Commits":    ActionContent2Commits,
 		"IsMultilineCommitMessage": IsMultilineCommitMessage,
 		"CommentMustAsDiff":        gitdiff.CommentMustAsDiff,
+		"SuggestionDiffs":          gitdiff.SuggestionDiffs,
 		"MirrorRemoteAddress":      mirrorRemoteAddress,
 
 		"FilenameIsImage": FilenameIsImage,

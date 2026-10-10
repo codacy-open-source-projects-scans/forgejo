@@ -10,9 +10,9 @@ import (
 	issues_model "forgejo.org/models/issues"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
-	actions_module "forgejo.org/modules/actions"
 	webhook_module "forgejo.org/modules/webhook"
 
+	gouuid "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,39 +28,35 @@ func TestActionsTrust_ChangeStatus(t *testing.T) {
 		PullRequestPosterID: pullRequestPosterID,
 		Status:              actions_model.StatusSuccess,
 	}
-	require.NoError(t, actions_model.InsertRun(t.Context(), runDone, nil))
+	require.NoError(t, actions_model.InsertRunWithoutNotification(t.Context(), runDone, nil))
 
 	runNotByPoster := &actions_model.ActionRun{
 		RepoID:              repoID,
 		PullRequestPosterID: 43243,
 		Status:              actions_model.StatusRunning,
 	}
-	require.NoError(t, actions_model.InsertRun(t.Context(), runNotByPoster, nil))
+	require.NoError(t, actions_model.InsertRunWithoutNotification(t.Context(), runNotByPoster, nil))
 
 	runNotInTheSameRepository := &actions_model.ActionRun{
 		RepoID:              5,
 		PullRequestPosterID: pullRequestPosterID,
 		Status:              actions_model.StatusSuccess,
 	}
-	require.NoError(t, actions_model.InsertRun(t.Context(), runNotInTheSameRepository, nil))
+	require.NoError(t, actions_model.InsertRunWithoutNotification(t.Context(), runNotInTheSameRepository, nil))
 
 	t.Run("RevokeTrust", func(t *testing.T) {
-		singleWorkflows, err := actions_module.JobParser([]byte(`
-jobs:
-  job:
-    runs-on: docker
-    steps:
-      - run: echo OK
-`))
-		require.NoError(t, err)
-		require.Len(t, singleWorkflows, 1)
 		runNotDone := &actions_model.ActionRun{
 			TriggerUserID:       2,
 			RepoID:              repoID,
 			Status:              actions_model.StatusWaiting,
 			PullRequestPosterID: pullRequestPosterID,
 		}
-		require.NoError(t, actions_model.InsertRun(t.Context(), runNotDone, singleWorkflows))
+		waitingJob := &actions_model.ActionRunJob{
+			Status: actions_model.StatusWaiting,
+			Handle: gouuid.New().String(),
+		}
+		jobs := []*actions_model.ActionRunJob{waitingJob}
+		require.NoError(t, actions_model.InsertRunWithoutNotification(t.Context(), runNotDone, jobs))
 		require.NoError(t, actions_model.InsertActionUser(t.Context(), &actions_model.ActionUser{
 			UserID:                  pullRequestPosterID,
 			RepoID:                  repoID,
@@ -68,7 +64,7 @@ jobs:
 		}))
 
 		previousCancelledCount := unittest.GetCount(t, &actions_model.ActionRun{Status: actions_model.StatusCancelled})
-		_, err = actions_model.GetActionUserByUserIDAndRepoIDAndUpdateAccess(t.Context(), pullRequestPosterID, repoID)
+		_, err := actions_model.GetActionUserByUserIDAndRepoIDAndUpdateAccess(t.Context(), pullRequestPosterID, repoID)
 		require.NoError(t, err)
 
 		require.NoError(t, RevokeTrust(t.Context(), repoID, pullRequestPosterID))
@@ -83,24 +79,17 @@ jobs:
 
 	createPullRequestRun := func(t *testing.T, pullRequestID, repoID int64) *actions_model.ActionRun {
 		t.Helper()
-		singleWorkflows, err := actions_module.JobParser([]byte(`
-jobs:
-  job:
-    runs-on: docker
-    steps:
-      - run: echo OK
-`))
-		require.NoError(t, err)
-		require.Len(t, singleWorkflows, 1)
 		runNotApproved := &actions_model.ActionRun{
 			TriggerUserID:       2,
 			RepoID:              repoID,
-			Status:              actions_model.StatusWaiting,
+			Status:              actions_model.StatusBlocked,
 			NeedApproval:        true,
 			PullRequestID:       pullRequestID,
 			PullRequestPosterID: pullRequestPosterID,
 		}
-		require.NoError(t, actions_model.InsertRun(t.Context(), runNotApproved, singleWorkflows))
+		waitingJob := &actions_model.ActionRunJob{Status: actions_model.StatusBlocked, Handle: gouuid.New().String()}
+		jobs := []*actions_model.ActionRunJob{waitingJob}
+		require.NoError(t, actions_model.InsertRunWithoutNotification(t.Context(), runNotApproved, jobs))
 		return runNotApproved
 	}
 
@@ -387,5 +376,19 @@ func TestActionsTrust_GetPullRequestUserIsTrustedWithActions(t *testing.T) {
 		assert.True(t, run.IsForkPullRequest)
 		assert.Equal(t, pr.Issue.PosterID, run.PullRequestPosterID)
 		assert.Equal(t, pr.ID, run.PullRequestID)
+	})
+
+	t.Run("no poster set on issue linked to pull request", func(t *testing.T) {
+		pr := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{ID: 6000})
+		posterTrust, err := GetPullRequestPosterIsTrustedWithActions(t.Context(), pr)
+		require.ErrorIs(t, err, issues_model.ErrNoPosterSetOnIssue)
+		require.Equal(t, UserIsNotTrustedWithActions, posterTrust)
+	})
+
+	t.Run("poster set on issue linked to pull request does not exist", func(t *testing.T) {
+		pr := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{ID: 7000})
+		posterTrust, err := GetPullRequestPosterIsTrustedWithActions(t.Context(), pr)
+		require.ErrorIs(t, err, user_model.ErrUserNotExist{UID: 666})
+		require.Equal(t, UserIsNotTrustedWithActions, posterTrust)
 	})
 }

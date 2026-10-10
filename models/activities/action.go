@@ -32,8 +32,8 @@ import (
 	"forgejo.org/modules/structs"
 	"forgejo.org/modules/timeutil"
 
+	"code.forgejo.org/xorm/xorm/schemas"
 	"xorm.io/builder"
-	"xorm.io/xorm/schemas"
 )
 
 // ActionType represents the type of an action.
@@ -131,6 +131,68 @@ func (at ActionType) String() string {
 	}
 }
 
+func (at ActionType) WatchSelection() repo_model.WatchSelection {
+	// WatchAllSelection generally means that there is no granular enough setting for this.
+	switch at {
+	case ActionCreateRepo:
+		return repo_model.WatchAllSelection
+	case ActionRenameRepo:
+		return repo_model.WatchAllSelection
+	case ActionStarRepo:
+		return repo_model.WatchAllSelection
+	case ActionWatchRepo:
+		return repo_model.WatchAllSelection
+	case ActionCommitRepo:
+		return repo_model.WatchAllSelection
+	case ActionCreateIssue:
+		return repo_model.WatchSelection{Issues: true, PullRequests: false, Releases: false}
+	case ActionCreatePullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionTransferRepo:
+		return repo_model.WatchAllSelection
+	case ActionPushTag:
+		return repo_model.WatchAllSelection
+	case ActionCommentIssue:
+		return repo_model.WatchSelection{Issues: true, PullRequests: false, Releases: false}
+	case ActionMergePullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionCloseIssue:
+		return repo_model.WatchSelection{Issues: true, PullRequests: false, Releases: false}
+	case ActionReopenIssue:
+		return repo_model.WatchSelection{Issues: true, PullRequests: false, Releases: false}
+	case ActionClosePullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionReopenPullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionDeleteTag:
+		return repo_model.WatchAllSelection
+	case ActionDeleteBranch:
+		return repo_model.WatchAllSelection
+	case ActionMirrorSyncPush:
+		return repo_model.WatchAllSelection
+	case ActionMirrorSyncCreate:
+		return repo_model.WatchAllSelection
+	case ActionMirrorSyncDelete:
+		return repo_model.WatchAllSelection
+	case ActionApprovePullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionRejectPullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionCommentPull:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionPublishRelease:
+		return repo_model.WatchSelection{Issues: false, PullRequests: false, Releases: true}
+	case ActionPullReviewDismissed:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionPullRequestReadyForReview:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	case ActionAutoMergePullRequest:
+		return repo_model.WatchSelection{Issues: false, PullRequests: true, Releases: false}
+	default:
+		return repo_model.WatchAllSelection
+	}
+}
+
 func (at ActionType) InActions(actions ...string) bool {
 	return slices.Contains(actions, at.String())
 }
@@ -208,7 +270,7 @@ func (a *Action) LoadActUser(ctx context.Context) {
 	}
 }
 
-func (a *Action) loadRepo(ctx context.Context) {
+func (a *Action) LoadRepo(ctx context.Context) {
 	if a.Repo != nil {
 		return
 	}
@@ -258,13 +320,13 @@ func (a *Action) GetActDisplayNameTitle(ctx context.Context) string {
 
 // GetRepo returns the repository of the action.
 func (a *Action) GetRepo(ctx context.Context) *repo_model.Repository {
-	a.loadRepo(ctx)
+	a.LoadRepo(ctx)
 	return a.Repo
 }
 
 // GetRepoUserName returns the name of the action repository owner.
 func (a *Action) GetRepoUserName(ctx context.Context) string {
-	a.loadRepo(ctx)
+	a.LoadRepo(ctx)
 	if a.Repo == nil {
 		return "(non-existing-repo)"
 	}
@@ -279,7 +341,7 @@ func (a *Action) ShortRepoUserName(ctx context.Context) string {
 
 // GetRepoName returns the name of the action repository.
 func (a *Action) GetRepoName(ctx context.Context) string {
-	a.loadRepo(ctx)
+	a.LoadRepo(ctx)
 	if a.Repo == nil {
 		return "(non-existing-repo)"
 	}
@@ -314,7 +376,7 @@ func (a *Action) GetRepoAbsoluteLink(ctx context.Context) string {
 	return setting.AppURL + url.PathEscape(a.GetRepoUserName(ctx)) + "/" + url.PathEscape(a.GetRepoName(ctx))
 }
 
-func (a *Action) loadComment(ctx context.Context) (err error) {
+func (a *Action) LoadComment(ctx context.Context) (err error) {
 	if a.CommentID == 0 || a.Comment != nil {
 		return nil
 	}
@@ -327,7 +389,7 @@ func (a *Action) GetCommentHTMLURL(ctx context.Context) string {
 	if a == nil {
 		return "#"
 	}
-	_ = a.loadComment(ctx)
+	_ = a.LoadComment(ctx)
 	if a.Comment != nil {
 		return a.Comment.HTMLURL(ctx)
 	}
@@ -347,7 +409,7 @@ func (a *Action) GetCommentLink(ctx context.Context) string {
 	if a == nil {
 		return "#"
 	}
-	_ = a.loadComment(ctx)
+	_ = a.LoadComment(ctx)
 	if a.Comment != nil {
 		return a.Comment.Link(ctx)
 	}
@@ -474,6 +536,7 @@ type GetFeedsOptions struct {
 	RequestedUser        *user_model.User       // the user we want activity for
 	RequestedTeam        *organization.Team     // the team we want activity for
 	RequestedRepo        *repo_model.Repository // the repo we want activity for
+	RequestedIssue       *issues_model.Issue    // the issue we want activity for
 	Actor                *user_model.User       // the user viewing the activity
 	IncludePrivate       bool                   // include private actions
 	OnlyPerformedBy      bool                   // only actions performed by requested user
@@ -483,8 +546,8 @@ type GetFeedsOptions struct {
 
 // GetFeeds returns actions according to the provided options
 func GetFeeds(ctx context.Context, opts GetFeedsOptions) (ActionList, int64, error) {
-	if opts.RequestedUser == nil && opts.RequestedTeam == nil && opts.RequestedRepo == nil {
-		return nil, 0, errors.New("need at least one of these filters: RequestedUser, RequestedTeam, RequestedRepo")
+	if opts.RequestedUser == nil && opts.RequestedTeam == nil && opts.RequestedRepo == nil && opts.RequestedIssue == nil {
+		return nil, 0, errors.New("need at least one of these filters: RequestedUser, RequestedTeam, RequestedRepo, RequestedIssue")
 	}
 
 	cond, err := activityQueryCondition(ctx, opts)
@@ -543,7 +606,8 @@ func activityQueryCondition(ctx context.Context, opts GetFeedsOptions) (builder.
 	} else if !opts.Actor.IsAdmin {
 		uidCond := builder.Select("`user`.id").From("`user`").Where(
 			builder.Eq{"keep_activity_private": false}.
-				And(builder.In("visibility", structs.VisibleTypePublic, structs.VisibleTypeLimited))).
+				And(builder.In("visibility", structs.VisibleTypePublic, structs.VisibleTypeLimited)),
+		).
 			Or(builder.Eq{"id": opts.Actor.ID})
 
 		if opts.RequestedUser != nil {
@@ -588,6 +652,20 @@ func activityQueryCondition(ctx context.Context, opts GetFeedsOptions) (builder.
 		if opts.OnlyPerformedBy {
 			cond = cond.And(builder.Eq{"act_user_id": opts.RequestedUser.ID})
 		}
+	}
+
+	if opts.RequestedIssue != nil {
+		if opts.RequestedRepo != nil && opts.RequestedRepo.ID != opts.RequestedIssue.RepoID {
+			return nil, errors.New("requested repository id does not match requested issue repository id")
+		}
+
+		cond = cond.And(
+			builder.Eq{"repo_id": opts.RequestedIssue.RepoID},
+			builder.Or(
+				builder.Like{"content", "[\"" + strconv.FormatInt(opts.RequestedIssue.Index, 10) + "\"%"}, // JSON, ["IssueIndex"...
+				builder.Like{"content", strconv.FormatInt(opts.RequestedIssue.Index, 10) + "|%"},          // "IssueIndex|content..."
+			),
+		)
 	}
 
 	if !opts.IncludePrivate {
@@ -636,7 +714,7 @@ func NotifyWatchers(ctx context.Context, actions ...*Action) ([]Action, error) {
 
 		if repoChanged {
 			// Add feeds for user self and all watchers.
-			watchers, err = repo_model.GetWatchers(ctx, act.RepoID)
+			watchers, err = repo_model.GetSelectWatchers(ctx, act.RepoID, act.GetOpType().WatchSelection())
 			if err != nil {
 				return nil, fmt.Errorf("get watchers: %w", err)
 			}
@@ -665,7 +743,11 @@ func NotifyWatchers(ctx context.Context, actions ...*Action) ([]Action, error) {
 		out = append(out, *act)
 
 		if repoChanged {
-			act.loadRepo(ctx)
+			act.LoadRepo(ctx)
+			if act.Repo == nil {
+				return nil, repo_model.ErrRepoNotExist{}
+			}
+
 			repo = act.Repo
 
 			// check repo owner exist.
@@ -787,8 +869,9 @@ func DeleteIssueActions(ctx context.Context, repoID, issueID, issueIndex int64) 
 	_, err := e.Where("repo_id = ?", repoID).
 		In("op_type", ActionCreateIssue, ActionCreatePullRequest).
 		Where(builder.Or(
-			builder.Like{"content", strconv.FormatInt(issueIndex, 10) + "|%"},            // "IssueIndex|content..."
-			builder.Like{"content", "[\"" + strconv.FormatInt(issueIndex, 10) + "\"%"})). // JSON, ["IssueIndex"...
+			builder.Like{"content", strconv.FormatInt(issueIndex, 10) + "|%"}, // "IssueIndex|content..."
+			builder.Like{"content", "[\"" + strconv.FormatInt(issueIndex, 10) + "\"%"},
+		)). // JSON, ["IssueIndex"...
 		Delete(&Action{})
 	return err
 }
@@ -811,4 +894,37 @@ func FixActionCreatedUnixString(ctx context.Context) (int64, error) {
 		return res.RowsAffected()
 	}
 	return 0, nil
+}
+
+func (a *Action) IsActionPrivate(ctx context.Context) (bool, error) {
+	if a.IsPrivate {
+		return true, nil
+	}
+
+	a.LoadRepo(ctx)
+	if a.Repo == nil {
+		return true, repo_model.ErrRepoNotExist{}
+	}
+
+	repo := a.Repo
+	err := repo.LoadOwner(ctx)
+	if err != nil {
+		return true, err
+	}
+
+	if repo.IsPrivate || repo.Owner.KeepActivityPrivate || repo.Owner.Visibility != structs.VisibleTypePublic {
+		return true, nil
+	}
+
+	a.LoadActUser(ctx)
+	if a.ActUser == nil {
+		return true, user_model.ErrUserNotExist{}
+	}
+
+	user := a.ActUser
+	if user.KeepActivityPrivate || user.Visibility != structs.VisibleTypePublic {
+		return true, nil
+	}
+
+	return false, nil
 }

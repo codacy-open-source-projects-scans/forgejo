@@ -43,7 +43,7 @@ import (
 	"forgejo.org/services/mailer"
 	mailer_incoming "forgejo.org/services/mailer/incoming"
 	markup_service "forgejo.org/services/markup"
-	migrations_service "forgejo.org/services/migrations"
+	migrations_allowlist "forgejo.org/services/migrations/allowlist"
 	mirror_service "forgejo.org/services/mirror"
 	pull_service "forgejo.org/services/pull"
 	release_service "forgejo.org/services/release"
@@ -150,7 +150,7 @@ func InitWebInstalled(ctx context.Context) {
 	mustInit(pull_service.Init)
 	mustInit(automerge.Init)
 	mustInit(task.Init)
-	mustInit(migrations_service.Init)
+	mustInit(migrations_allowlist.Init)
 	eventsource.GetManager().Init()
 	mustInitCtx(ctx, mailer_incoming.Init)
 
@@ -179,7 +179,6 @@ func NormalRoutes() *web.Route {
 	r.Mount("/", web_routers.Routes())
 	r.Mount("/api/v1", apiv1.Routes())
 	r.Mount("/api/forgejo/v1", forgejo.Routes())
-	r.Mount("/api/internal", private.Routes())
 
 	r.Post("/-/fetch-redirect", common.FetchRedirectDelegate)
 
@@ -203,5 +202,12 @@ func NormalRoutes() *web.Route {
 		r.Mount(prefix, actions_router.ArtifactsV4Routes(prefix))
 	}
 
+	return r
+}
+
+func InternalRoutes() *web.Route {
+	r := web.NewRoute()
+	r.Use(common.ProtocolMiddlewares()...)
+	r.Mount("/api/internal/", private.Routes())
 	return r
 }

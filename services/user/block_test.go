@@ -13,8 +13,8 @@ import (
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
-	actions_module "forgejo.org/modules/actions"
 
+	gouuid "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +46,7 @@ func TestBlockUser(t *testing.T) {
 
 		// Blocked user watch repository of doer.
 		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{OwnerID: doer.ID})
-		require.NoError(t, repo_model.WatchRepo(db.DefaultContext, blockedUser.ID, repo.ID, true))
+		require.NoError(t, repo_model.WatchRepoExplicitly(db.DefaultContext, blockedUser.ID, repo.ID, repo_model.WatchAllSelection))
 
 		repo = unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{OwnerID: doer.ID})
 		oldNumWatchers := repo.NumWatches
@@ -54,7 +54,7 @@ func TestBlockUser(t *testing.T) {
 		require.NoError(t, BlockUser(db.DefaultContext, doer.ID, blockedUser.ID))
 
 		// Ensure blocked user isn't following doer's repository.
-		assert.False(t, repo_model.IsWatching(db.DefaultContext, blockedUser.ID, repo.ID))
+		assert.False(t, repo_model.IsWatcher(db.DefaultContext, blockedUser.ID, repo.ID))
 
 		// Ensure the watcher count was reduced by one.
 		repo = unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{OwnerID: doer.ID})
@@ -127,22 +127,15 @@ func TestBlockUser(t *testing.T) {
 		defer user_model.UnblockUser(db.DefaultContext, doer.ID, blockedUser.ID)
 
 		pullRequestPosterID := blockedUser.ID
-		singleWorkflows, err := actions_module.JobParser([]byte(`
-jobs:
-  job:
-    runs-on: docker
-    steps:
-      - run: echo OK
-`))
-		require.NoError(t, err)
-		require.Len(t, singleWorkflows, 1)
 		runWaiting := &actions_model.ActionRun{
 			TriggerUserID:       2,
 			RepoID:              repo.ID,
 			Status:              actions_model.StatusWaiting,
 			PullRequestPosterID: pullRequestPosterID,
 		}
-		require.NoError(t, actions_model.InsertRun(t.Context(), runWaiting, singleWorkflows))
+		job := &actions_model.ActionRunJob{Status: actions_model.StatusWaiting, Handle: gouuid.New().String()}
+		jobs := []*actions_model.ActionRunJob{job}
+		require.NoError(t, actions_model.InsertRunWithoutNotification(t.Context(), runWaiting, jobs))
 
 		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: runWaiting.ID})
 		require.Equal(t, actions_model.StatusWaiting.String(), run.Status.String())

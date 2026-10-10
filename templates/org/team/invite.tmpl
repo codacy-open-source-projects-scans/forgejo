@@ -2,19 +2,27 @@
 <div role="main" aria-label="{{.Title}}" class="page-content organization invite">
 	<div class="ui container">
 		{{template "base/alert" .}}
-		<div class="ui centered card">
-			<div class="image">
-				{{ctx.AvatarUtils.Avatar .Organization 140}}
-			</div>
-			<div class="content">
-				<div class="header">{{ctx.Locale.Tr "org.teams.invite.title" .Team.Name .Organization.Name}}</div>
-				<div class="meta">{{ctx.Locale.Tr "org.teams.invite.by" .Inviter.Name}}</div>
-				<div class="description">{{ctx.Locale.Tr "org.teams.invite.description"}}</div>
-			</div>
-			<div class="extra content">
-				<form class="ui form" action="" method="post">
-					<button class="fluid ui primary button">{{ctx.Locale.Tr "org.teams.join"}}</button>
-				</form>
+		<div class="invite-content">
+			<hgroup>
+				<div>{{ctx.AvatarUtils.Avatar .Organization 140}}</div>
+				<h2>{{ctx.Locale.Tr "org.teams.invite.title" .Team.Name .Organization.Name}}</h2>
+			</hgroup>
+
+			<p>{{ctx.Locale.Tr "org.teams.invite.by" .Inviter.Name}}</p>
+
+			<div class="ui form">
+				<form id="accept_form" action="" method="post"></form>
+				<form id="decline_form" action="{{.DeclineURL}}" method="post"></form>
+				<fieldset>
+					<label>
+					<input type="checkbox" form="accept_form" name="hide_membership" id="hide_membership" {{if .HiddenMembership}}checked{{end}} />
+						{{ctx.Locale.Tr "org.teams.hide_membership_to_org" .Organization.Name}}
+					</label>
+				</fieldset>
+				<div class="button-sequence tw-justify-center">
+					<button class="secondary button" form="decline_form">{{ctx.Locale.Tr "org.teams.decline_invitation"}}</button>
+					<button class="primary button" form="accept_form">{{ctx.Locale.Tr "org.teams.join"}}</button>
+				</div>
 			</div>
 		</div>
 	</div>

@@ -8,7 +8,9 @@ import (
 
 	"forgejo.org/models/auth"
 	"forgejo.org/models/db"
+	"forgejo.org/models/organization"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/optional"
 )
 
 // DeleteSource deletes a AuthSource record in DB.
@@ -35,6 +37,17 @@ func DeleteSource(ctx context.Context, source *auth.Source) error {
 		if err := registerableSource.UnregisterSource(); err != nil {
 			return err
 		}
+	}
+
+	if _, err := db.GetEngine(ctx).Where("login_source_id = ?", source.ID).Delete(new(auth.AuthorizationToken)); err != nil {
+		return err
+	}
+
+	if _, err := db.GetEngine(ctx).
+		Where("created_by_login_source_id = ?", source.ID).
+		Cols("created_by_login_source_id").
+		Update(organization.TeamUser{CreatedByLoginSourceID: optional.None[int64]()}); err != nil {
+		return err
 	}
 
 	_, err = db.GetEngine(ctx).ID(source.ID).Delete(new(auth.Source))

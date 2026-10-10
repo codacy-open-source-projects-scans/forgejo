@@ -94,9 +94,10 @@ func CreateRepositoryByExample(ctx context.Context, doer, u *user_model.User, re
 				Type:   tp,
 				Config: &repo_model.PullRequestsConfig{
 					AllowMerge: true, AllowRebase: true, AllowRebaseMerge: true, AllowSquash: true, AllowFastForwardOnly: true,
-					DefaultMergeStyle:  repo_model.MergeStyle(setting.Repository.PullRequest.DefaultMergeStyle),
-					DefaultUpdateStyle: repo_model.UpdateStyle(setting.Repository.PullRequest.DefaultUpdateStyle),
-					AllowRebaseUpdate:  true,
+					DefaultMergeStyle:          repo_model.MergeStyle(setting.Repository.PullRequest.DefaultMergeStyle),
+					DefaultUpdateStyle:         repo_model.UpdateStyle(setting.Repository.PullRequest.DefaultUpdateStyle),
+					AllowRebaseUpdate:          true,
+					DefaultAllowMaintainerEdit: true,
 				},
 			})
 		default:
@@ -143,7 +144,7 @@ func CreateRepositoryByExample(ctx context.Context, doer, u *user_model.User, re
 			if err = AddCollaborator(ctx, repo, doer); err != nil {
 				return fmt.Errorf("AddCollaborator: %w", err)
 			}
-			if err = repo_model.ChangeCollaborationAccessMode(ctx, repo, doer.ID, perm.AccessModeAdmin); err != nil {
+			if err = ChangeCollaborationAccessMode(ctx, repo, doer.ID, perm.AccessModeAdmin); err != nil {
 				return fmt.Errorf("ChangeCollaborationAccessModeCtx: %w", err)
 			}
 		}
@@ -153,7 +154,7 @@ func CreateRepositoryByExample(ctx context.Context, doer, u *user_model.User, re
 	}
 
 	if setting.Service.AutoWatchNewRepos {
-		if err = repo_model.WatchRepo(ctx, doer.ID, repo.ID, true); err != nil {
+		if err = repo_model.WatchIfAutoWatchNewRepos(ctx, doer.ID, repo.ID); err != nil {
 			return fmt.Errorf("WatchRepo: %w", err)
 		}
 	}

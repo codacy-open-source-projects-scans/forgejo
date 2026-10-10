@@ -30,14 +30,14 @@ import (
 	"xorm.io/builder"
 )
 
-// deleteUser deletes models associated to an user.
+// deleteUser deletes models associated to a user.
 func deleteUser(ctx context.Context, u *user_model.User, purge bool) (err error) {
 	e := db.GetEngine(ctx)
 
 	// ***** START: Watch *****
 	watchedRepoIDs, err := db.FindIDs(ctx, "watch", "watch.repo_id",
 		builder.Eq{"watch.user_id": u.ID}.
-			And(builder.Neq{"watch.mode": repo_model.WatchModeDont}))
+			And(repo_model.BuilderWatchAnything()))
 	if err != nil {
 		return fmt.Errorf("get all watches: %w", err)
 	}
@@ -74,6 +74,32 @@ func deleteUser(ctx context.Context, u *user_model.User, purge bool) (err error)
 	}
 	// ***** END: Follow *****
 
+	// Before deleting all access tokens owned by the user, delete all the AccessTokenResourceRepo records for those
+	// access tokens:
+	accessTokenIDs, err := db.FindIDs(ctx, "access_token", "access_token.id", builder.Eq{"access_token.uid": u.ID})
+	if err != nil {
+		return fmt.Errorf("get all access tokens for user: %w", err)
+	}
+	if len(accessTokenIDs) > 0 {
+		_, err = e.Table(&auth_model.AccessTokenResourceRepo{}).Where(builder.In("token_id", accessTokenIDs)).Delete()
+		if err != nil {
+			return fmt.Errorf("delete access_token_resource_repo: %w", err)
+		}
+	}
+
+	// Before deleting all authorized integrations owned by the user, delete all the AuthorizedIntegResourceRepo records
+	// for those authorized integrations:
+	authorizedIntegrationIDs, err := db.FindIDs(ctx, "authorized_integration", "authorized_integration.id", builder.Eq{"authorized_integration.user_id": u.ID})
+	if err != nil {
+		return fmt.Errorf("get all authorized integrations for user: %w", err)
+	}
+	if len(authorizedIntegrationIDs) > 0 {
+		_, err = e.Table(&auth_model.AuthorizedIntegResourceRepo{}).Where(builder.In("integ_id", authorizedIntegrationIDs)).Delete()
+		if err != nil {
+			return fmt.Errorf("delete authorized_integ_resource_repo: %w", err)
+		}
+	}
+
 	if err = db.DeleteBeans(ctx,
 		&auth_model.AccessToken{UID: u.ID},
 		&repo_model.Collaboration{UserID: u.ID},
@@ -88,6 +114,8 @@ func deleteUser(ctx context.Context, u *user_model.User, purge bool) (err error)
 		&user_model.UserOpenID{UID: u.ID},
 		&issues_model.Reaction{UserID: u.ID},
 		&organization.TeamUser{UID: u.ID},
+		&organization.TeamInvite{InviterID: u.ID},
+		&organization.TeamInvite{InvitedID: optional.Some(u.ID)},
 		&issues_model.Stopwatch{UserID: u.ID},
 		&user_model.Setting{UserID: u.ID},
 		&user_model.UserBadge{UserID: u.ID},
@@ -100,6 +128,7 @@ func deleteUser(ctx context.Context, u *user_model.User, purge bool) (err error)
 		&user_model.BlockedUser{UserID: u.ID},
 		&actions_model.ActionRunnerToken{OwnerID: optional.Some(u.ID)},
 		&auth_model.AuthorizationToken{UID: u.ID},
+		&auth_model.AuthorizedIntegration{UserID: u.ID},
 	); err != nil {
 		return fmt.Errorf("deleteBeans: %w", err)
 	}
@@ -135,7 +164,7 @@ func deleteUser(ctx context.Context, u *user_model.User, purge bool) (err error)
 		}
 
 		// Delete Reactions
-		if err = issues_model.DeleteReaction(ctx, &issues_model.ReactionOptions{DoerID: u.ID}); err != nil {
+		if _, err = issues_model.DeleteReaction(ctx, &issues_model.ReactionOptions{DoerID: u.ID}); err != nil {
 			return err
 		}
 	}
@@ -220,6 +249,17 @@ func deleteUser(ctx context.Context, u *user_model.User, purge bool) (err error)
 	if err = user_model.IfNeededCreateShadowCopyForUser(ctx, u.ID, u); err != nil {
 		return err
 	}
+
+	// ***** START: TeamUser ******
+	// Remove references to the deleted user in team membership provenance
+	if _, err := db.GetEngine(ctx).
+		Table("team_user").
+		Cols("created_by_user_id").
+		Update(organization.TeamUser{CreatedByUserID: optional.None[int64]()},
+			organization.TeamUser{CreatedByUserID: optional.Some(u.ID)}); err != nil {
+		return err
+	}
+	// ***** END: TeamUser *****
 
 	if _, err = db.DeleteByID[user_model.User](ctx, u.ID); err != nil {
 		return fmt.Errorf("delete: %w", err)

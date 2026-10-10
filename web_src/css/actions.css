@@ -3,23 +3,7 @@
 }
 
 .runner-container .ui.table.segment {
-  overflow-x: auto;
-}
-
-.runner-container .runner-ops > a {
-  margin-left: 0.5em;
-}
-
-.runner-container .runner-ops-delete {
-  color: var(--color-red-light);
-}
-
-.runner-container .runner-new-text {
-  color: var(--color-white);
-}
-
-.runner-container #runner-new:hover .runner-new-text {
-  color: var(--color-white) !important;
+  overflow-inline: auto;
 }
 
 .runner-container .task-status-success {
@@ -124,7 +108,7 @@
   flex: none;
   font-weight: var(--font-weight-medium);
   width: 12rem;
-  padding-right: 1.5rem;
+  padding-inline-end: 1.5rem;
 }
 
 .runner-container dl dd {
@@ -177,13 +161,12 @@
   white-space: nowrap;
 }
 #workflow_dispatch_dropdown .menu {
+  /* FIXME: max-height is ineffective without `overflow:`, but clipping overflow breaks dropdown menus */
   max-height: 500px;
-  overflow-x: auto;
 }
 @media (max-width: 640px) or (767.98px < width < 854px) {
   #workflow_dispatch_dropdown .menu {
-    left: auto;
-    right: 0;
+    inset-inline: auto 0;
   }
 }
 
@@ -210,7 +193,7 @@
 .ui.vertical.menu.actions-menu .item .error {
   display: flex;
   align-items: center;
-  margin-left: 1rem;
+  margin-inline-start: 1rem;
 }
 
 .ui.vertical.menu.actions-menu .item .label {

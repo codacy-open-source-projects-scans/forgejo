@@ -17,7 +17,9 @@ import (
 	repo_model "forgejo.org/models/repo"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/log"
+	"forgejo.org/modules/optional"
 	"forgejo.org/modules/setting"
+	"forgejo.org/modules/timeutil"
 	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
@@ -54,7 +56,7 @@ func InsertTeamRepository(ctx context.Context, t *organization.Team, repo *repo_
 			return nil, fmt.Errorf("getMembers: %w", err)
 		}
 		for _, u := range t.Members {
-			if err = repo_model.WatchRepo(ctx, u.ID, repo.ID, true); err != nil {
+			if err = repo_model.WatchIfAutoWatchNewRepos(ctx, u.ID, repo.ID); err != nil {
 				return nil, fmt.Errorf("watchRepo: %w", err)
 			}
 		}
@@ -120,6 +122,14 @@ func RemoveAllRepositories(ctx context.Context, t *organization.Team) (err error
 // Note: Shall not be called if team includes all repositories
 func removeAllRepositories(ctx context.Context, t *organization.Team) (err error) {
 	e := db.GetEngine(ctx)
+
+	if err := t.LoadRepositories(ctx); err != nil {
+		return fmt.Errorf("load repositories failed: %w", err)
+	}
+	if err := t.LoadMembers(ctx); err != nil {
+		return fmt.Errorf("load repositories failed: %w", err)
+	}
+
 	// Delete all accesses.
 	for _, repo := range t.Repos {
 		if err := access_model.RecalculateTeamAccesses(ctx, repo, t.ID); err != nil {
@@ -135,7 +145,7 @@ func removeAllRepositories(ctx context.Context, t *organization.Team) (err error
 				continue
 			}
 
-			if err = repo_model.WatchRepo(ctx, user.ID, repo.ID, false); err != nil {
+			if err = repo_model.WatchRepoExplicitly(ctx, user.ID, repo.ID, repo_model.WatchNoneSelection); err != nil {
 				return err
 			}
 
@@ -334,10 +344,8 @@ func DeleteTeam(ctx context.Context, t *organization.Team) error {
 		}
 	}
 
-	if !t.IncludesAllRepositories {
-		if err := removeAllRepositories(ctx, t); err != nil {
-			return err
-		}
+	if err := removeAllRepositories(ctx, t); err != nil {
+		return err
 	}
 
 	if err := db.DeleteBeans(ctx,
@@ -364,14 +372,19 @@ func DeleteTeam(ctx context.Context, t *organization.Team) error {
 	return committer.Commit()
 }
 
-func AddTeamMember(ctx context.Context, team *organization.Team, userID int64) error {
-	_, err := InsertTeamMember(ctx, team, userID)
+func AddTeamMemberByCooptation(ctx context.Context, team *organization.Team, userID, inviterID int64) error {
+	_, err := InsertTeamMember(ctx, team, userID, organization.MembershipReasonAddedByUser, optional.Some(inviterID), optional.None[int64]())
+	return err
+}
+
+func AddTeamMemberByLoginSource(ctx context.Context, team *organization.Team, userID, loginSourceID int64) error {
+	_, err := InsertTeamMember(ctx, team, userID, organization.MembershipReasonAddedByAuthProvider, optional.None[int64](), optional.Some(loginSourceID))
 	return err
 }
 
 // AddTeamMember adds new membership of given team to given organization,
 // the user will have membership to given organization automatically when needed.
-func InsertTeamMember(ctx context.Context, team *organization.Team, userID int64) (*organization.TeamUser, error) {
+func InsertTeamMember(ctx context.Context, team *organization.Team, userID int64, reason organization.MembershipReason, inviterID, loginSourceID optional.Option[int64]) (*organization.TeamUser, error) {
 	isAlreadyMember, err := organization.IsTeamMember(ctx, team.OrgID, team.ID, userID)
 	if err != nil || isAlreadyMember {
 		return nil, err
@@ -382,9 +395,13 @@ func InsertTeamMember(ctx context.Context, team *organization.Team, userID int64
 	}
 
 	teamUser := &organization.TeamUser{
-		UID:    userID,
-		OrgID:  team.OrgID,
-		TeamID: team.ID,
+		UID:                    userID,
+		OrgID:                  team.OrgID,
+		TeamID:                 team.ID,
+		Reason:                 reason,
+		CreatedByUserID:        inviterID,
+		CreatedByLoginSourceID: loginSourceID,
+		CreatedUnix:            optional.Some(timeutil.TimeStampNow()),
 	}
 
 	err = db.WithTx(ctx, func(ctx context.Context) error {
@@ -404,36 +421,17 @@ func InsertTeamMember(ctx context.Context, team *organization.Team, userID int64
 
 		team.NumMembers++
 
-		// Give access to team repositories.
-		// update exist access if mode become bigger
-		subQuery := builder.Select("repo_id").From("team_repo").
-			Where(builder.Eq{"team_id": team.ID})
-
-		if _, err := sess.Where("user_id=?", userID).
-			In("repo_id", subQuery).
-			And("mode < ?", team.AccessMode).
-			SetExpr("mode", team.AccessMode).
-			Update(new(access_model.Access)); err != nil {
-			return fmt.Errorf("update user accesses: %w", err)
+		if err := team.LoadRepositories(ctx); err != nil {
+			return fmt.Errorf("load repositories: %w", err)
+		}
+		repoIDs := make([]int64, len(team.Repos))
+		for i, r := range team.Repos {
+			repoIDs[i] = r.ID
+		}
+		if err := access_model.RecalculateUserAccessForRepos(ctx, userID, repoIDs); err != nil {
+			return fmt.Errorf("error recalculating user access: %w", err)
 		}
 
-		// for not exist access
-		var repoIDs []int64
-		accessSubQuery := builder.Select("repo_id").From("access").Where(builder.Eq{"user_id": userID})
-		if err := sess.SQL(subQuery.And(builder.NotIn("repo_id", accessSubQuery))).Find(&repoIDs); err != nil {
-			return fmt.Errorf("select id accesses: %w", err)
-		}
-
-		accesses := make([]*access_model.Access, 0, 100)
-		for i, repoID := range repoIDs {
-			accesses = append(accesses, &access_model.Access{RepoID: repoID, UserID: userID, Mode: team.AccessMode})
-			if (i%100 == 0 || i == len(repoIDs)-1) && len(accesses) > 0 {
-				if err = db.Insert(ctx, accesses); err != nil {
-					return fmt.Errorf("insert new user accesses: %w", err)
-				}
-				accesses = accesses[:0]
-			}
-		}
 		return nil
 	})
 	if err != nil {
@@ -450,7 +448,7 @@ func InsertTeamMember(ctx context.Context, team *organization.Team, userID int64
 		// FIXME: in the goroutine, it can't access the "ctx", it could only use db.DefaultContext at the moment
 		go func(repos []*repo_model.Repository) {
 			for _, repo := range repos {
-				if err = repo_model.WatchRepo(db.DefaultContext, userID, repo.ID, true); err != nil {
+				if err = repo_model.WatchIfAutoWatchNewRepos(db.DefaultContext, userID, repo.ID); err != nil {
 					log.Error("watch repo failed: %v", err)
 				}
 			}
@@ -559,7 +557,7 @@ func ReconsiderWatches(ctx context.Context, repo *repo_model.Repository, uid int
 	if has, err := access_model.HasAccess(ctx, uid, repo); err != nil || has {
 		return err
 	}
-	if err := repo_model.WatchRepo(ctx, uid, repo.ID, false); err != nil {
+	if err := repo_model.WatchRepoExplicitly(ctx, uid, repo.ID, repo_model.WatchNoneSelection); err != nil {
 		return err
 	}
 

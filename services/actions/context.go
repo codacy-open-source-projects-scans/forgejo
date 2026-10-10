@@ -6,6 +6,7 @@ package actions
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	actions_model "forgejo.org/models/actions"
 	"forgejo.org/models/db"
@@ -15,7 +16,7 @@ import (
 	"forgejo.org/modules/json"
 	"forgejo.org/modules/setting"
 
-	"code.forgejo.org/forgejo/runner/v12/act/model"
+	"code.forgejo.org/forgejo/runner/v13/act/model"
 )
 
 func generateGiteaContextForRun(run *actions_model.ActionRun) *model.GithubContext {
@@ -97,25 +98,29 @@ func GenerateGiteaContext(run *actions_model.ActionRun, job *actions_model.Actio
 	gitContext, _ := githubContextToMap(gitContextObj)
 
 	// standard contexts, see https://docs.github.com/en/actions/learn-github-actions/contexts#github-context
-	gitContext["action_status"] = ""                                    // string, For a composite action, the current result of the composite action.
-	gitContext["actor"] = run.TriggerUser.Name                          // string, The username of the user that triggered the initial workflow run. If the workflow run is a re-run, this value may differ from github.triggering_actor. Any workflow re-runs will use the privileges of github.actor, even if the actor initiating the re-run (github.triggering_actor) has different privileges.
-	gitContext["env"] = ""                                              // string, Path on the runner to the file that sets environment variables from workflow commands. This file is unique to the current step and is a different file for each step in a job. For more information, see "Workflow commands for GitHub Actions."
-	gitContext["path"] = ""                                             // string, Path on the runner to the file that sets system PATH variables from workflow commands. This file is unique to the current step and is a different file for each step in a job. For more information, see "Workflow commands for GitHub Actions."
-	gitContext["ref_protected"] = false                                 // boolean, true if branch protections are configured for the ref that triggered the workflow run.
-	gitContext["repository_owner"] = run.Repo.OwnerName                 // string, The repository owner's name. For example, Codertocat.
-	gitContext["repository"] = run.Repo.OwnerName + "/" + run.Repo.Name // string, The owner and repository name. For example, Codertocat/Hello-World.
-	gitContext["repositoryUrl"] = run.Repo.HTMLURL()                    // string, The Git URL to the repository. For example, git://github.com/codertocat/hello-world.git.
-	gitContext["secret_source"] = "Actions"                             // string, The source of a secret used in a workflow. Possible values are None, Actions, Dependabot, or Codespaces.
-	gitContext["server_url"] = setting.AppURL                           // string, The URL of the GitHub server. For example: https://github.com.
-	gitContext["triggering_actor"] = ""                                 // string, The username of the user that initiated the workflow run. If the workflow run is a re-run, this value may differ from github.actor. Any workflow re-runs will use the privileges of github.actor, even if the actor initiating the re-run (github.triggering_actor) has different privileges.
-	gitContext["workflow"] = run.WorkflowID                             // string, The name of the workflow. If the workflow file doesn't specify a name, the value of this property is the full path of the workflow file in the repository.
+	gitContext["action_status"] = ""                                            // string, For a composite action, the current result of the composite action.
+	gitContext["actor"] = run.TriggerUser.Name                                  // string, The username of the user that triggered the initial workflow run. If the workflow run is a re-run, this value may differ from github.triggering_actor. Any workflow re-runs will use the privileges of github.actor, even if the actor initiating the re-run (github.triggering_actor) has different privileges.
+	gitContext["actor_id"] = strconv.FormatInt(run.TriggerUserID, 10)           // string, Immutable unique identifier of the triggering user (unlike actor, which can be renamed)
+	gitContext["env"] = ""                                                      // string, Path on the runner to the file that sets environment variables from workflow commands. This file is unique to the current step and is a different file for each step in a job. For more information, see "Workflow commands for GitHub Actions."
+	gitContext["path"] = ""                                                     // string, Path on the runner to the file that sets system PATH variables from workflow commands. This file is unique to the current step and is a different file for each step in a job. For more information, see "Workflow commands for GitHub Actions."
+	gitContext["ref_protected"] = false                                         // boolean, true if branch protections are configured for the ref that triggered the workflow run.
+	gitContext["repository_owner"] = run.Repo.OwnerName                         // string, The repository owner's name. For example, Codertocat.
+	gitContext["repository_owner_id"] = strconv.FormatInt(run.Repo.OwnerID, 10) // string, Immutable unique identifier for the repository owner (unlike repository_owner, which can change with a user rename)
+	gitContext["repository"] = run.Repo.OwnerName + "/" + run.Repo.Name         // string, The owner and repository name. For example, Codertocat/Hello-World.
+	gitContext["repository_id"] = strconv.FormatInt(run.RepoID, 10)             // string, Immutable unique identifier for the repository (unlike repository, which can be renamed)
+	gitContext["repositoryUrl"] = run.Repo.HTMLURL()                            // string, The Git URL to the repository. For example, git://github.com/codertocat/hello-world.git.
+	gitContext["secret_source"] = "Actions"                                     // string, The source of a secret used in a workflow. Possible values are None, Actions, Dependabot, or Codespaces.
+	gitContext["server_url"] = setting.AppURL                                   // string, The URL of the GitHub server. For example: https://github.com.
+	gitContext["triggering_actor"] = ""                                         // string, The username of the user that initiated the workflow run. If the workflow run is a re-run, this value may differ from github.actor. Any workflow re-runs will use the privileges of github.actor, even if the actor initiating the re-run (github.triggering_actor) has different privileges.
+	gitContext["workflow"] = run.WorkflowID                                     // string, The name of the workflow. If the workflow file doesn't specify a name, the value of this property is the full path of the workflow file in the repository.
 
 	// additional contexts
-	gitContext["gitea_default_actions_url"] = setting.Actions.DefaultActionsURL.URL()
+	gitContext["gitea_default_actions_url"] = setting.Actions.DefaultActionsURL.URL() // Remove after Forgejo 19.
+	gitContext["forgejo_default_actions_url"] = setting.Actions.DefaultActionsURL.URL()
 	gitContext["forgejo_server_version"] = setting.AppVer
 
 	if job != nil {
-		gitContext["job"] = job.JobID
+		gitContext["job"] = string(job.JobID)
 		gitContext["run_id"] = fmt.Sprint(job.RunID)
 		gitContext["run_attempt"] = fmt.Sprint(job.Attempt)
 	}
@@ -144,23 +149,24 @@ type TaskNeed struct {
 }
 
 // FindTaskNeeds finds the `needs` for the task by the task's job
-func FindTaskNeeds(ctx context.Context, job *actions_model.ActionRunJob) (map[string]*TaskNeed, error) {
+func FindTaskNeeds(ctx context.Context, job *actions_model.ActionRunJob) (map[actions_model.NamespacedJobIdentifier]*TaskNeed, error) {
 	if len(job.Needs) == 0 {
-		return nil, nil
+		return make(map[actions_model.NamespacedJobIdentifier]*TaskNeed), nil
 	}
-	needs := container.SetOf(job.Needs...)
+	needs := container.SetOf(job.NamespacedNeeds()...)
 
 	jobs, err := db.Find[actions_model.ActionRunJob](ctx, actions_model.FindRunJobOptions{RunID: job.RunID})
 	if err != nil {
 		return nil, fmt.Errorf("FindRunJobs: %w", err)
 	}
 
-	jobIDJobs := make(map[string][]*actions_model.ActionRunJob)
+	jobIDJobs := make(map[actions_model.NamespacedJobIdentifier][]*actions_model.ActionRunJob)
 	for _, job := range jobs {
-		jobIDJobs[job.JobID] = append(jobIDJobs[job.JobID], job)
+		nsJobID := job.NamespacedJobID()
+		jobIDJobs[nsJobID] = append(jobIDJobs[nsJobID], job)
 	}
 
-	ret := make(map[string]*TaskNeed, len(needs))
+	ret := make(map[actions_model.NamespacedJobIdentifier]*TaskNeed, len(needs))
 	for jobID, jobsWithSameID := range jobIDJobs {
 		if !needs.Contains(jobID) {
 			continue

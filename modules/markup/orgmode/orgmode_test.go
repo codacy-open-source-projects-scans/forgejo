@@ -1,15 +1,20 @@
-// Copyright 2017 The Gitea Authors. All rights reserved.
+// Copyright 2017 The Gitea Authors. All rights
+// Copyright 2026 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package markup
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"forgejo.org/modules/git"
 	"forgejo.org/modules/markup"
 	"forgejo.org/modules/setting"
+	"forgejo.org/modules/test"
 	"forgejo.org/modules/util"
 
 	"github.com/stretchr/testify/assert"
@@ -89,6 +94,43 @@ func TestRender_BaseLinks(t *testing.T) {
 		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/deep/nested/folder/src">./src/</a></p>`)
 }
 
+func TestRender_SearchSuffix(t *testing.T) {
+	setting.AppURL = AppURL
+	setting.AppSubURL = AppSubURL
+
+	test := func(input, expected string) {
+		buffer, err := RenderString(&markup.RenderContext{
+			Ctx: git.DefaultContext,
+			Links: markup.Links{
+				Base:       setting.AppSubURL,
+				BranchPath: "branch/main",
+			},
+		}, input)
+		require.NoError(t, err)
+		assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(buffer))
+	}
+
+	// `::N` line search becomes an `#L<n>` anchor.
+	test("[[./file.el::35][line 35]]",
+		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/file.el#L35">line 35</a></p>`)
+	test("[[file:./file.el::35][line 35]]",
+		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/file.el#L35">line 35</a></p>`)
+
+	// Other search types are ignored.
+	test("[[./file.org::*Heading][heading]]",
+		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/file.org">heading</a></p>`)
+	test("[[./file.org::#custom-id][heading]]",
+		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/file.org">heading</a></p>`)
+	test("[[./file.el::/regex/][regex]]",
+		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/file.el">regex</a></p>`)
+	test("[[file:./file.el::][no search]]",
+		`<p><a href="http://localhost:3000/gogits/gogs/src/branch/main/file.el">no search</a></p>`)
+
+	// Absolute URLs that happen to contain `::` are unchanged.
+	test("[[https://example.com/foo::35][ext]]",
+		`<p><a href="https://example.com/foo::35">ext</a></p>`)
+}
+
 func TestRender_Media(t *testing.T) {
 	setting.AppURL = AppURL
 	setting.AppSubURL = AppSubURL
@@ -98,6 +140,20 @@ func TestRender_Media(t *testing.T) {
 			Ctx: git.DefaultContext,
 			Links: markup.Links{
 				Base: setting.AppSubURL,
+			},
+		}, input)
+		require.NoError(t, err)
+		assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(buffer))
+	}
+
+	testBranchTree := func(input, expected string) {
+		buffer, err := RenderString(&markup.RenderContext{
+			Ctx:          git.DefaultContext,
+			RelativePath: "deep/nested/folder/image.org",
+			Links: markup.Links{
+				Base:       setting.AppSubURL,
+				BranchPath: "branch/main",
+				TreePath:   "deep/nested/folder",
 			},
 		}, input)
 		require.NoError(t, err)
@@ -131,6 +187,16 @@ func TestRender_Media(t *testing.T) {
 		`<p><a href="http://localhost:3000/gogits/gogs/lem-post.png"><img src="http://localhost:3000/gogits/gogs/lem-post.png" alt="http://localhost:3000/gogits/gogs/lem-post.png" /></a></p>`)
 	test("[[file:./lem-post.mp4][file:./lem-post.mp4]]",
 		`<p><a href="http://localhost:3000/gogits/gogs/lem-post.mp4"><video src="http://localhost:3000/gogits/gogs/lem-post.mp4">http://localhost:3000/gogits/gogs/lem-post.mp4</video></a></p>`)
+
+	mediaBase := util.URLJoin(AppSubURL, "media", "branch", "main")
+	mediaTree := util.URLJoin(mediaBase, "deep", "nested", "folder")
+
+	testBranchTree("[[file:/image.jpg]]",
+		`<p><img src="`+mediaBase+`/image.jpg" alt="`+mediaBase+`/image.jpg" /></p>`)
+	testBranchTree("[[file:image.jpg]]",
+		`<p><img src="`+mediaTree+`/image.jpg" alt="`+mediaTree+`/image.jpg" /></p>`)
+	testBranchTree("[[file:./image.jpg]]",
+		`<p><img src="`+mediaTree+`/image.jpg" alt="`+mediaTree+`/image.jpg" /></p>`)
 }
 
 func TestRender_Source(t *testing.T) {
@@ -157,4 +223,27 @@ func HelloWorld() {
 </span><span class="w">	</span><span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;Hello World&#34;</span><span class="p">)</span><span class="w">
 </span><span class="p">}</span></code></pre>
 </div>`)
+}
+
+func TestRender_Includes(t *testing.T) {
+	defer test.MockVariableValue(&setting.AppURL, AppURL)()
+	defer test.MockVariableValue(&setting.AppSubURL, AppSubURL)()
+
+	fileName := filepath.Join(t.TempDir(), "includes.org")
+	require.NoError(t, os.WriteFile(fileName, []byte(`#+begin_src go
+// HelloWorld prints "Hello World"
+func HelloWorld() {
+	fmt.Println("Hello World")
+}
+#+end_src`), 0o644))
+
+	output, err := RenderString(&markup.RenderContext{
+		Ctx: t.Context(),
+	}, fmt.Sprintf(`#+INCLUDE: "%s" src org`, fileName))
+	require.NoError(t, err)
+	assert.Equal(t, `<div class="src src-org">
+<pre><code class="chroma language-org"></code></pre>
+</div>
+`,
+		output)
 }

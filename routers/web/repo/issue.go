@@ -42,6 +42,7 @@ import (
 	"forgejo.org/modules/markup"
 	"forgejo.org/modules/markup/markdown"
 	"forgejo.org/modules/optional"
+	project_module "forgejo.org/modules/project"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
 	"forgejo.org/modules/templates"
@@ -50,6 +51,7 @@ import (
 	"forgejo.org/modules/util"
 	"forgejo.org/modules/web"
 	"forgejo.org/routers/utils"
+	"forgejo.org/routers/web/feed"
 	asymkey_service "forgejo.org/services/asymkey"
 	"forgejo.org/services/context"
 	"forgejo.org/services/context/upload"
@@ -179,18 +181,20 @@ func issues(ctx *context.Context, milestoneID, projectID int64, isPullOption opt
 	// 1,-2 means including label 1 and excluding label 2
 	// 0 means issues with no label
 	// blank means labels will not be filtered for issues
+
 	selectLabels := ctx.FormString("labels")
-	switch selectLabels {
-	case "":
-		ctx.Data["AllLabels"] = true
-	case "0":
-		ctx.Data["NoLabel"] = true
-	}
 	if len(selectLabels) > 0 {
 		labelIDs, err = base.StringsToInt64s(strings.Split(selectLabels, ","))
 		if err != nil {
 			ctx.Flash.Error(ctx.Tr("invalid_data", selectLabels), true)
 		}
+		if slices.Contains(labelIDs, 0) {
+			labelIDs = []int64{0}
+			ctx.Data["NoLabel"] = true
+		}
+	}
+	if len(labelIDs) == 0 {
+		ctx.Data["AllLabels"] = true
 	}
 
 	keyword := strings.Trim(ctx.FormString("q"), " ")
@@ -599,22 +603,22 @@ func RetrieveRepoMilestonesAndAssignees(ctx *context.Context, repo *repo_model.R
 func retrieveProjects(ctx *context.Context, repo *repo_model.Repository) {
 	// Distinguish whether the owner of the repository
 	// is an individual or an organization
-	repoOwnerType := project_model.TypeIndividual
+	repoOwnerType := project_module.TypeIndividual
 	if repo.Owner.IsOrganization() {
-		repoOwnerType = project_model.TypeOrganization
+		repoOwnerType = project_module.TypeOrganization
 	}
 	var err error
-	projects, err := db.Find[project_model.Project](ctx, project_model.SearchOptions{
+	repositoryProjects, err := db.Find[project_model.Project](ctx, project_model.SearchOptions{
 		ListOptions: db.ListOptionsAll,
 		RepoID:      repo.ID,
 		IsClosed:    optional.Some(false),
-		Type:        project_model.TypeRepository,
+		Type:        project_module.TypeRepository,
 	})
 	if err != nil {
 		ctx.ServerError("GetProjects", err)
 		return
 	}
-	projects2, err := db.Find[project_model.Project](ctx, project_model.SearchOptions{
+	ownerProjects, err := db.Find[project_model.Project](ctx, project_model.SearchOptions{
 		ListOptions: db.ListOptionsAll,
 		OwnerID:     repo.OwnerID,
 		IsClosed:    optional.Some(false),
@@ -625,19 +629,20 @@ func retrieveProjects(ctx *context.Context, repo *repo_model.Repository) {
 		return
 	}
 
-	ctx.Data["OpenProjects"] = append(projects, projects2...)
+	ownerHasOpenProjects := len(ownerProjects) > 0
+	ctx.Data["OpenProjects"] = append(repositoryProjects, ownerProjects...)
 
-	projects, err = db.Find[project_model.Project](ctx, project_model.SearchOptions{
+	repositoryProjects, err = db.Find[project_model.Project](ctx, project_model.SearchOptions{
 		ListOptions: db.ListOptionsAll,
 		RepoID:      repo.ID,
 		IsClosed:    optional.Some(true),
-		Type:        project_model.TypeRepository,
+		Type:        project_module.TypeRepository,
 	})
 	if err != nil {
 		ctx.ServerError("GetProjects", err)
 		return
 	}
-	projects2, err = db.Find[project_model.Project](ctx, project_model.SearchOptions{
+	ownerProjects, err = db.Find[project_model.Project](ctx, project_model.SearchOptions{
 		ListOptions: db.ListOptionsAll,
 		OwnerID:     repo.OwnerID,
 		IsClosed:    optional.Some(true),
@@ -648,7 +653,8 @@ func retrieveProjects(ctx *context.Context, repo *repo_model.Repository) {
 		return
 	}
 
-	ctx.Data["ClosedProjects"] = append(projects, projects2...)
+	ctx.Data["OwnerHasProjects"] = ownerHasOpenProjects || len(ownerProjects) > 0
+	ctx.Data["ClosedProjects"] = append(repositoryProjects, ownerProjects...)
 }
 
 // repoReviewerSelection items to bee shown
@@ -968,6 +974,14 @@ func NewIssue(ctx *context.Context) {
 
 	isProjectsEnabled := ctx.Repo.CanRead(unit.TypeProjects)
 	ctx.Data["IsProjectsEnabled"] = isProjectsEnabled
+
+	// Individuals always have projects unit enabled
+	isOwnerProjectsEnabled := true
+	if ctx.Repo.Owner.IsOrganization() {
+		isOwnerProjectsEnabled = ctx.Org.CanReadUnit(ctx, unit.TypeProjects)
+	}
+	ctx.Data["IsOwnerProjectsEnabled"] = isOwnerProjectsEnabled
+
 	ctx.Data["IsAttachmentEnabled"] = setting.Attachment.Enabled
 	upload.AddUploadContext(ctx, "comment")
 
@@ -983,17 +997,10 @@ func NewIssue(ctx *context.Context) {
 	}
 
 	projectID := ctx.FormInt64("project")
-	if projectID > 0 && isProjectsEnabled {
-		project, err := project_model.GetProjectByID(ctx, projectID)
-		if err != nil {
-			log.Error("GetProjectByID: %d: %v", projectID, err)
-		} else if !project.CanBeAccessedByOwnerRepo(ctx.Repo.Repository.OwnerID, ctx.Repo.Repository) {
-			log.Error("GetProjectByID: %d: %v", projectID,
-				fmt.Errorf("project[%d] neither in repo[%d] nor has the same owner (project: [%d] ./. repo: [%d])",
-					project.ID, ctx.Repo.Repository.ID, project.OwnerID, ctx.Repo.Repository.OwnerID))
-		} else {
-			ctx.Data["project_id"] = projectID
-			ctx.Data["Project"] = project
+	if projectID > 0 {
+		context.ReqProjectIDAssignableToIssueAndSetData(ctx, projectID)
+		if ctx.Written() {
+			return
 		}
 
 		if len(ctx.Req.URL.Query().Get("project")) > 0 {
@@ -1156,18 +1163,10 @@ func ValidateRepoMetas(ctx *context.Context, form forms.CreateIssueForm, isPull 
 	}
 
 	if form.ProjectID > 0 {
-		p, err := project_model.GetProjectByID(ctx, form.ProjectID)
-		if err != nil {
-			ctx.ServerError("GetProjectByID", err)
+		context.ReqProjectIDAssignableToIssueAndSetData(ctx, form.ProjectID)
+		if ctx.Written() {
 			return nil, nil, 0, 0
 		}
-		if p.RepoID != ctx.Repo.Repository.ID && p.OwnerID != ctx.Repo.Repository.OwnerID {
-			ctx.NotFound("", nil)
-			return nil, nil, 0, 0
-		}
-
-		ctx.Data["Project"] = p
-		ctx.Data["project_id"] = form.ProjectID
 	}
 
 	// Check assignees
@@ -1205,6 +1204,17 @@ func ValidateRepoMetas(ctx *context.Context, form forms.CreateIssueForm, isPull 
 	}
 
 	return labelIDs, assigneeIDs, milestoneID, form.ProjectID
+}
+
+func updateIssueProject(ctx *context.Context, issue *issues_model.Issue, projectID int64) {
+	context.ReqProjectIDAssignableToIssue(ctx, projectID)
+	if ctx.Written() {
+		return
+	}
+	if err := issues_model.IssueAssignOrRemoveProject(ctx, issue, ctx.Doer, projectID, 0); err != nil {
+		ctx.ServerError("IssueAssignOrRemoveProject", err)
+		return
+	}
 }
 
 // NewIssuePost response for creating new issue
@@ -1276,13 +1286,8 @@ func NewIssuePost(ctx *context.Context) {
 	}
 
 	if projectID > 0 {
-		if !ctx.Repo.CanRead(unit.TypeProjects) {
-			// User must also be able to see the project.
-			ctx.Error(http.StatusBadRequest, "user hasn't permissions to read projects")
-			return
-		}
-		if err := issues_model.IssueAssignOrRemoveProject(ctx, issue, ctx.Doer, projectID, 0); err != nil {
-			ctx.ServerError("IssueAssignOrRemoveProject", err)
+		updateIssueProject(ctx, issue, projectID)
+		if ctx.Written() {
 			return
 		}
 	}
@@ -1291,10 +1296,10 @@ func NewIssuePost(ctx *context.Context) {
 	if ctx.FormString("redirect_after_creation") == "project" && projectID > 0 {
 		project, err := project_model.GetProjectByID(ctx, projectID)
 		if err == nil {
-			if project.Type == project_model.TypeOrganization {
-				ctx.JSONRedirect(project_model.ProjectLinkForOrg(ctx.Repo.Owner, project.ID))
+			if project.Type == project_module.TypeOrganization {
+				ctx.JSONRedirect(project_module.ProjectLinkForOrg(ctx.Repo.Owner.HomeLink(), project.ID))
 			} else {
-				ctx.JSONRedirect(project_model.ProjectLinkForRepo(repo, project.ID))
+				ctx.JSONRedirect(project_module.ProjectLinkForRepo(repo.Link(), project.ID))
 			}
 			return
 		}
@@ -1477,7 +1482,8 @@ func ViewIssue(ctx *context.Context) {
 	}
 
 	ctx.Data["IsModerationEnabled"] = setting.Moderation.Enabled
-	ctx.Data["IsProjectsEnabled"] = ctx.Repo.CanRead(unit.TypeProjects)
+	isProjectsEnabled := ctx.Repo.CanRead(unit.TypeProjects)
+	ctx.Data["IsProjectsEnabled"] = isProjectsEnabled
 	ctx.Data["IsAttachmentEnabled"] = setting.Attachment.Enabled
 	upload.AddUploadContext(ctx, "comment")
 
@@ -1546,6 +1552,7 @@ func ViewIssue(ctx *context.Context) {
 	}
 	ctx.Data["Labels"] = labels
 
+	isOwnerProjectsEnabled := true
 	if repo.Owner.IsOrganization() {
 		orgLabels, err := issues_model.GetLabelsByOrgID(ctx, repo.Owner.ID, ctx.FormString("sort"), db.ListOptions{})
 		if err != nil {
@@ -1553,9 +1560,11 @@ func ViewIssue(ctx *context.Context) {
 			return
 		}
 		ctx.Data["OrgLabels"] = orgLabels
-
 		labels = append(labels, orgLabels...)
+
+		isOwnerProjectsEnabled = ctx.Org.CanReadUnit(ctx, unit.TypeProjects)
 	}
+	ctx.Data["IsOwnerProjectsEnabled"] = isOwnerProjectsEnabled
 
 	hasSelected := false
 	for i := range labels {
@@ -1569,7 +1578,9 @@ func ViewIssue(ctx *context.Context) {
 	// Check milestone and assignee.
 	if ctx.Repo.CanWriteIssuesOrPulls(issue.IsPull) {
 		RetrieveRepoMilestonesAndAssignees(ctx, repo)
-		retrieveProjects(ctx, repo)
+		if isProjectsEnabled || isOwnerProjectsEnabled {
+			retrieveProjects(ctx, repo)
+		}
 
 		if ctx.Written() {
 			return
@@ -1859,6 +1870,11 @@ func ViewIssue(ctx *context.Context) {
 					ctx.ServerError("GetUserRepoPermission", err)
 					return
 				}
+				// determine if the user viewing the pull request can edit the head branch (used to gate the "Apply suggestion" button)
+				if ctx.Data["HeadBranchIsEditable"], err = pull_service.CanEditHeadBranch(ctx, ctx.Doer, pull); err != nil {
+					ctx.ServerError("CanEditHeadBranch", err)
+					return
+				}
 				if perm.CanWrite(unit.TypeCode) {
 					// Check if branch is not protected
 					if pull.HeadBranch != pull.HeadRepo.DefaultBranch {
@@ -2073,6 +2089,11 @@ func ViewIssue(ctx *context.Context) {
 		pinAllowed = true
 	}
 
+	if setting.Other.EnableFeed {
+		ctx.Data["EnableFeed"] = true
+		ctx.Data["FeedURL"] = issue.HTMLURL()
+	}
+
 	ctx.Data["Participants"] = participants
 	ctx.Data["NumParticipants"] = len(participants)
 	ctx.Data["Issue"] = issue
@@ -2112,6 +2133,22 @@ func ViewIssue(ctx *context.Context) {
 	ctx.Data["Tags"] = tags
 
 	ctx.HTML(http.StatusOK, tplIssueView)
+}
+
+// IssueFeedRSS get feeds for issues in RSS format
+func IssueFeedRSS(ctx *context.Context) {
+	issueFeed(ctx, "rss")
+}
+
+// IssueFeedAtom get feeds for issues in Atom format
+func IssueFeedAtom(ctx *context.Context) {
+	issueFeed(ctx, "atom")
+}
+
+func issueFeed(ctx *context.Context, formatType string) {
+	issue := GetActionIssue(ctx)
+
+	feed.ShowIssueFeed(ctx, issue, formatType)
 }
 
 // checkBlockedByIssues return canRead and notPermitted
@@ -2441,6 +2478,7 @@ func UpdateIssueMilestone(ctx *context.Context) {
 		has, err := db.GetEngine(ctx).Where("issue_id = ? AND type = ?", issue.ID, issues_model.CommentTypeMilestone).OrderBy("id DESC").Limit(1).Get(comment)
 		if !has || err != nil {
 			ctx.ServerError("GetLatestMilestoneComment", err)
+			return
 		}
 		if err := comment.LoadMilestone(ctx); err != nil {
 			ctx.ServerError("LoadMilestone", err)
@@ -2559,7 +2597,8 @@ func UpdatePullReviewRequest(ctx *context.Context) {
 			if team.OrgID != issue.Repo.OwnerID {
 				log.Warn(
 					"UpdatePullReviewRequest: refusing to add team review request for UID[%d] team %s to %s#%d owned by UID[%d]",
-					team.OrgID, team.Name, issue.Repo.FullName(), issue.Index, issue.Repo.ID)
+					team.OrgID, team.Name, issue.Repo.FullName(), issue.Index, issue.Repo.ID,
+				)
 				ctx.Status(http.StatusForbidden)
 				return
 			}
@@ -2924,6 +2963,7 @@ func ListIssues(ctx *context.Context) {
 				continue
 			}
 			ctx.Error(http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
 
@@ -3065,7 +3105,7 @@ func UpdateIssueStatus(ctx *context.Context) {
 			continue
 		}
 		if issue.IsClosed != isClosed {
-			if err := issue_service.ChangeStatus(ctx, issue, ctx.Doer, "", isClosed); err != nil {
+			if err := issue_service.ChangeStatus(ctx, issue, ctx.Doer, &issues_model.PRNotificationInfo{MergedCommitID: ""}, isClosed); err != nil {
 				if issues_model.IsErrDependenciesLeft(err) {
 					ctx.JSON(http.StatusPreconditionFailed, map[string]any{
 						"error": ctx.Tr("repo.issues.dependency.issue_batch_close_blocked", issue.Index),
@@ -3210,7 +3250,7 @@ func NewComment(ctx *context.Context) {
 				ctx.Flash.Info(ctx.Tr("repo.pulls.open_unmerged_pull_exists", pr.Index))
 			} else {
 				isClosed := form.Status == "close"
-				if err := issue_service.ChangeStatus(ctx, issue, ctx.Doer, "", isClosed); err != nil {
+				if err := issue_service.ChangeStatus(ctx, issue, ctx.Doer, &issues_model.PRNotificationInfo{MergedCommitID: ""}, isClosed); err != nil {
 					if errors.Is(err, user_model.ErrBlockedByUser) {
 						if issue.IsPull {
 							ctx.JSONError(ctx.Tr("repo.pulls.blocked_by_user"))
@@ -3303,6 +3343,18 @@ func UpdateCommentContent(ctx *context.Context) {
 	newContent := ctx.FormString("content")
 	contentVersion := ctx.FormInt("content_version")
 
+	// a code comment may carry at most one suggestion
+	if comment.Type == issues_model.CommentTypeCode {
+		if err := pull_service.ValidateCodeCommentSuggestions(newContent); err != nil {
+			if errors.Is(err, pull_service.ErrMultipleSuggestions) {
+				ctx.JSONError(ctx.Tr("repo.issues.review.one_suggestion_per_comment"))
+				return
+			}
+			ctx.ServerError("ValidateCodeCommentSuggestions", err)
+			return
+		}
+	}
+
 	comment.Content = newContent
 	if err = issue_service.UpdateComment(ctx, comment, contentVersion, ctx.Doer, oldContent); err != nil {
 		if errors.Is(err, issues_model.ErrCommentAlreadyChanged) {
@@ -3339,10 +3391,34 @@ func UpdateCommentContent(ctx *context.Context) {
 		return
 	}
 
+	var suggestions template.HTML
+	if comment.Type == issues_model.CommentTypeCode {
+		editable, err := headBranchIsEditable(ctx, comment.Issue)
+		if err != nil {
+			ctx.ServerError("headBranchIsEditable", err)
+			return
+		}
+		root := map[string]any{
+			"HeadBranchIsEditable": editable,
+			"RepoLink":             ctx.Repo.RepoLink,
+			"Issue":                comment.Issue,
+		}
+		// the editor declares its context (Files tab vs Conversation); anything else => no batch button
+		batchMode := ctx.FormString("batch_mode")
+		if batchMode != "active" && batchMode != "disabled" {
+			batchMode = ""
+		}
+		if suggestions, err = ctx.RenderToHTML("repo/diff/suggestion_diffs", map[string]any{"comment": comment, "root": root, "batchMode": batchMode}); err != nil {
+			ctx.ServerError("RenderToHTML", err)
+			return
+		}
+	}
+
 	ctx.JSON(http.StatusOK, map[string]any{
 		"content":        content,
 		"contentVersion": comment.ContentVersion,
 		"attachments":    attachmentsHTML(ctx, comment.Attachments, comment.Content),
+		"suggestions":    suggestions,
 	})
 }
 
@@ -3430,7 +3506,7 @@ func ChangeIssueReaction(ctx *context.Context) {
 
 		log.Trace("Reaction for issue created: %d/%d/%d", ctx.Repo.Repository.ID, issue.ID, reaction.ID)
 	case "unreact":
-		if err := issues_model.DeleteIssueReaction(ctx, ctx.Doer.ID, issue.ID, form.Content); err != nil {
+		if err := issue_service.DeleteIssueReaction(ctx, ctx.Doer, issue, form.Content); err != nil {
 			ctx.ServerError("DeleteIssueReaction", err)
 			return
 		}
@@ -3531,7 +3607,7 @@ func ChangeCommentReaction(ctx *context.Context) {
 
 		log.Trace("Reaction for comment created: %d/%d/%d/%d", ctx.Repo.Repository.ID, comment.Issue.ID, comment.ID, reaction.ID)
 	case "unreact":
-		if err := issues_model.DeleteCommentReaction(ctx, ctx.Doer.ID, comment.Issue.ID, comment.ID, form.Content); err != nil {
+		if err := issue_service.DeleteCommentReaction(ctx, ctx.Doer, comment, form.Content); err != nil {
 			ctx.ServerError("DeleteCommentReaction", err)
 			return
 		}

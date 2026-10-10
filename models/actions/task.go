@@ -6,18 +6,17 @@ package actions
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"time"
 
 	auth_model "forgejo.org/models/auth"
 	"forgejo.org/models/db"
 	"forgejo.org/models/unit"
-	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/timeutil"
 	"forgejo.org/modules/util"
 
-	"code.forgejo.org/forgejo/runner/v12/act/jobparser"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"xorm.io/builder"
 )
@@ -161,19 +160,8 @@ func (task *ActionTask) UpdateToken(ctx context.Context) error {
 	return UpdateTask(ctx, task, "token_hash", "token_salt", "token_last_eight")
 }
 
-// Retrieve all the attempts from the same job as the target `ActionTask`.  Limited fields are queried to avoid loading
-// the LogIndexes blob when not needed.
-func (task *ActionTask) GetAllAttempts(ctx context.Context) ([]*ActionTask, error) {
-	var attempts []*ActionTask
-	err := db.GetEngine(ctx).
-		Cols("id", "attempt", "status", "started").
-		Where("job_id=?", task.JobID).
-		Desc("attempt").
-		Find(&attempts)
-	if err != nil {
-		return nil, err
-	}
-	return attempts, nil
+func (task *ActionTask) HasLogs() bool {
+	return task.LogFilename != ""
 }
 
 func GetTaskByID(ctx context.Context, id int64) (*ActionTask, error) {
@@ -192,6 +180,15 @@ func HasTaskForRunner(ctx context.Context, runnerID int64) (bool, error) {
 	return db.GetEngine(ctx).Where("runner_id = ?", runnerID).Exist(&ActionTask{})
 }
 
+func GetTasksOfJob(ctx context.Context, jobID int64) ([]*ActionTask, error) {
+	var tasks []*ActionTask
+	err := db.GetEngine(ctx).Where("job_id=?", jobID).Find(&tasks)
+	if err != nil {
+		return nil, fmt.Errorf("cannot fetch tasks of job %d: %w", jobID, err)
+	}
+	return tasks, nil
+}
+
 func GetTaskByJobAttempt(ctx context.Context, jobID, attempt int64) (*ActionTask, error) {
 	var task ActionTask
 	has, err := db.GetEngine(ctx).Where("job_id=?", jobID).Where("attempt=?", attempt).Get(&task)
@@ -205,7 +202,7 @@ func GetTaskByJobAttempt(ctx context.Context, jobID, attempt int64) (*ActionTask
 }
 
 func GetRunningTaskByToken(ctx context.Context, token string) (*ActionTask, error) {
-	errNotExist := fmt.Errorf("task with token %q: %w", token, util.ErrNotExist)
+	errNotExist := fmt.Errorf("task with the provided token: %w", util.ErrNotExist)
 	if token == "" {
 		return nil, errNotExist
 	}
@@ -297,7 +294,9 @@ func getConcurrencyCondition() builder.Cond {
 			builder.Eq{"inner_run.status": StatusRunning}.Or(
 				// Blocking runs are pending execution, & are younger than the outer_run
 				builder.In("inner_run.status", PendingStatuses()).
-					And(builder.Lt{"inner_run.`index`": builder.Expr("outer_run.`index`")})))
+					And(builder.Lt{"inner_run.`index`": builder.Expr("outer_run.`index`")}),
+			),
+		)
 
 	// OK to pick if there are no blocking runs
 	concurrencyCond = concurrencyCond.Or(builder.NotExists(subQuery))
@@ -313,10 +312,10 @@ func GetAvailableJobsForRunner(e db.Engine, runner *ActionRunner) ([]*ActionRunJ
 	if runner.RepoID != 0 {
 		jobCond = builder.Eq{"repo_id": runner.RepoID}
 	} else if runner.OwnerID != 0 {
-		jobCond = builder.In("repo_id", builder.Select("`repository`.id").From("repository").
-			Join("INNER", "repo_unit", "`repository`.id = `repo_unit`.repo_id").
-			Where(builder.Eq{"`repository`.owner_id": runner.OwnerID, "`repo_unit`.type": unit.TypeActions}))
+		jobCond = builder.Exists(builder.Select("`repository`.id").From("repository").
+			Where(builder.Expr("`repository`.owner_id = ? AND repo_id = `repository`.id", runner.OwnerID)))
 	}
+
 	// Concurrency group checks for queuing one run behind the last run in the concurrency group are more
 	// computationally expensive on the database. To manage the risk that this might have on large-scale deployments
 	// When this feature is initially released, it can be disabled in the ini file by setting
@@ -341,114 +340,23 @@ func GetAvailableJobsForRunner(e db.Engine, runner *ActionRunner) ([]*ActionRunJ
 	}
 
 	var jobs []*ActionRunJob
-	if err := e.Where("task_id=? AND status=?", 0, StatusWaiting).And(jobCond).Asc("updated", "id").Find(&jobs); err != nil {
+	if err := e.
+		Join("INNER", "action_run", "action_run_job.run_id = action_run.id").
+		Join("INNER", "repo_unit", "action_run_job.repo_id = repo_unit.repo_id").
+		Where("task_id=? AND action_run_job.status=? AND `repo_unit`.type=?", 0, StatusWaiting, unit.TypeActions).
+		And(jobCond).
+		Desc("action_run.priority").
+		Asc("action_run_job.updated", "action_run_job.id").
+		Find(&jobs); err != nil {
 		return nil, err
 	}
 	return jobs, nil
 }
 
-func CreateTaskForRunner(ctx context.Context, runner *ActionRunner, requestKey, handle *string) (*ActionTask, bool, error) {
-	ctx, committer, err := db.TxContext(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	defer committer.Close()
-
-	e := db.GetEngine(ctx)
-
-	jobs, err := GetAvailableJobsForRunner(e, runner)
-	if err != nil {
-		return nil, false, err
-	}
-
-	// TODO: a more efficient way to filter labels
-	var job *ActionRunJob
-	log.Trace("runner labels: %v", runner.AgentLabels)
-	for _, j := range jobs {
-		if j.IsRequestedByRunner(handle) && j.ItRunsOn(runner.AgentLabels) {
-			job = j
-			break
-		}
-	}
-	if job == nil {
-		return nil, false, nil
-	}
-	if err := job.LoadAttributes(ctx); err != nil {
-		return nil, false, err
-	}
-
-	now := timeutil.TimeStampNow()
-	job.Started = now
-	job.Status = StatusRunning
-
-	task := &ActionTask{
-		JobID:             job.ID,
-		Attempt:           job.Attempt,
-		RunnerID:          runner.ID,
-		Started:           now,
-		Status:            StatusRunning,
-		RepoID:            job.RepoID,
-		OwnerID:           job.OwnerID,
-		CommitSHA:         job.CommitSHA,
-		IsForkPullRequest: job.IsForkPullRequest,
-	}
-	if requestKey != nil {
-		task.RunnerRequestKey = *requestKey
-	}
-	task.GenerateToken()
-
-	var workflowJob *jobparser.Job
-	if gots, err := jobparser.Parse(job.WorkflowPayload, false); err != nil {
-		return nil, false, fmt.Errorf("parse workflow of job %d: %w", job.ID, err)
-	} else if len(gots) != 1 {
-		return nil, false, fmt.Errorf("workflow of job %d: not single workflow", job.ID)
-	} else { //nolint:revive
-		_, workflowJob = gots[0].Job()
-	}
-
-	if _, err := e.Insert(task); err != nil {
-		return nil, false, err
-	}
-
-	task.LogFilename = logFileName(job.Run.Repo.FullName(), task.ID)
-	if err := UpdateTask(ctx, task, "log_filename"); err != nil {
-		return nil, false, err
-	}
-
-	if len(workflowJob.Steps) > 0 {
-		steps := make([]*ActionTaskStep, len(workflowJob.Steps))
-		for i, v := range workflowJob.Steps {
-			name, _ := util.SplitStringAtByteN(v.String(), 255)
-			steps[i] = &ActionTaskStep{
-				Name:   name,
-				TaskID: task.ID,
-				Index:  int64(i),
-				RepoID: task.RepoID,
-				Status: StatusWaiting,
-			}
-		}
-		if _, err := e.Insert(steps); err != nil {
-			return nil, false, err
-		}
-		task.Steps = steps
-	}
-
-	job.TaskID = task.ID
-	// We never have to send a notification here because the job is started with a not done status.
-	if n, err := UpdateRunJobWithoutNotification(ctx, job, builder.Eq{"task_id": 0}); err != nil {
-		return nil, false, err
-	} else if n != 1 {
-		return nil, false, nil
-	}
-
-	task.Job = job
-
-	if err := committer.Commit(); err != nil {
-		return nil, false, err
-	}
-
-	return task, true, nil
-}
+var (
+	ErrNoMatchingJobFound = errors.New("no matching job found")
+	ErrNoJobUpdated       = errors.New("no job updated")
+)
 
 // Placeholder tasks are created when the status/content of an [ActionRunJob] is resolved by Forgejo without dispatch to
 // a runner, specifically in the case of a workflow call's outer job.
@@ -497,6 +405,30 @@ func UpdateTask(ctx context.Context, task *ActionTask, cols ...string) error {
 	return err
 }
 
+// DeleteTask removes the given task including all its steps, outputs and summaries.
+// Removing logs and ephemeral runners is the caller's responsibility.
+func DeleteTask(ctx context.Context, taskID int64) error {
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		if err := DeleteTaskStepSummaries(ctx, taskID); err != nil {
+			return fmt.Errorf("unable to delete step summaries of task %d: %w", taskID, err)
+		}
+		var err error
+		_, err = db.GetEngine(ctx).Delete(&ActionTaskStep{TaskID: taskID})
+		if err != nil {
+			return fmt.Errorf("unable to delete steps of task %d: %w", taskID, err)
+		}
+		_, err = db.GetEngine(ctx).Delete(&ActionTaskOutput{TaskID: taskID})
+		if err != nil {
+			return fmt.Errorf("unable to delete outputs of task %d: %w", taskID, err)
+		}
+		_, err = db.GetEngine(ctx).Delete(&ActionTask{ID: taskID})
+		if err != nil {
+			return fmt.Errorf("unable to delete task %d: %w", taskID, err)
+		}
+		return nil
+	})
+}
+
 func FindOldTasksToExpire(ctx context.Context, olderThan timeutil.TimeStamp, limit int) ([]*ActionTask, error) {
 	e := db.GetEngine(ctx)
 
@@ -505,16 +437,6 @@ func FindOldTasksToExpire(ctx context.Context, olderThan timeutil.TimeStamp, lim
 	return tasks, e.Where("stopped > 0 AND stopped < ? AND log_expired = ?", olderThan, false).
 		Limit(limit).
 		Find(&tasks)
-}
-
-func logFileName(repoFullName string, taskID int64) string {
-	ret := fmt.Sprintf("%s/%02x/%d.log", repoFullName, taskID%256, taskID)
-
-	if setting.Actions.LogCompression.IsZstd() {
-		ret += ".zst"
-	}
-
-	return ret
 }
 
 func getTaskIDFromCache(token string) int64 {
